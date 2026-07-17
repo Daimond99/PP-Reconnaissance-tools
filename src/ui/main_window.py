@@ -3,9 +3,9 @@ Recon Tool - Main Window Module
 หน้าต่างหลักของแอปพลิเคชัน
 """
 
-from PyQt5.QtWidgets import QMainWindow, QWidget, QFrame, QAction, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
-from PyQt5.QtCore import Qt, QRect, QPoint
-from PyQt5.QtGui import QCursor
+from PySide6.QtWidgets import QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
+from PySide6.QtCore import Qt, QRect, QPoint
+from PySide6.QtGui import QAction, QCursor
 
 from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
