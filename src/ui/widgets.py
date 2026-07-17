@@ -7,13 +7,13 @@ import platform
 import subprocess
 import threading
 
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
     QTextEdit, QTabWidget, QGridLayout, QHBoxLayout, QVBoxLayout,
     QSizePolicy,
 )
-from PyQt5.QtCore import pyqtSignal, QObject, Qt
-from PyQt5.QtGui import QFont, QColor, QTextCharFormat
+from PySide6.QtCore import Signal, QObject, Qt
+from PySide6.QtGui import QFont, QColor, QTextCharFormat
 
 from src.config import (
     TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE,
@@ -32,7 +32,7 @@ from src.core.tool_manager import get_tool_manager
 
 class TerminalSignals(QObject):
     """Signal สำหรับ thread-safe output"""
-    output = pyqtSignal(str)
+    output = Signal(str)
 
 
 # ============================================================================
@@ -174,7 +174,7 @@ class TopBar(QFrame):
 class WizardConsoleTab(QWidget):
     """Tab สำหรับ Wizard Console - Hydra-style interactive interface"""
     
-    commandEntered = pyqtSignal(str)
+    commandEntered = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -501,7 +501,7 @@ Attack Types:
 class RawOutputTab(QWidget):
     """Tab สำหรับ Raw Output Console - พิมพ์คำสั่งตรง terminal ได้เลย"""
     
-    commandEntered = pyqtSignal(str)
+    commandEntered = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -745,7 +745,7 @@ class CommandEditorTab(QWidget):
 class LLMModeTab(QWidget):
     """Tab สำหรับ LLM Mode"""
     
-    commandEntered = pyqtSignal(str)
+    commandEntered = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
