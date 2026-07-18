@@ -4,26 +4,26 @@ Recon Tool - Configuration Module
 """
 
 WINDOW_TITLE = "Wizard Console Evil-WinRM - Windows Access"
-WINDOW_WIDTH = 1200
-WINDOW_HEIGHT = 850
-WINDOW_MIN_WIDTH = 1000
-WINDOW_MIN_HEIGHT = 700
+WINDOW_WIDTH = 1080
+WINDOW_HEIGHT = 760
+WINDOW_MIN_WIDTH = 860
+WINDOW_MIN_HEIGHT = 580
 
 # ============================================================================
 # COLOR PALETTE - ตาม Design Reference
 # ============================================================================
 
-BG           = "#1e1e1e"
-BG_DARKER    = "#161616"
-PANEL        = "#262626"
-PANEL_LIGHT  = "#2d2d2d"
-PURPLE       = "#6b2fa0"
-BLUE         = "#2b6fd6"
-TEXT         = "#e6e6e6"
-TEXT_DIM     = "#9a9a9a"
-BORDER       = "#3a3a3a"
+BG           = "#282a36"
+BG_DARKER    = "#21222c"
+PANEL        = "#303241"
+PANEL_LIGHT  = "#3a3d4d"
+PURPLE       = "#bd93f9"
+BLUE         = "#bd93f9"
+TEXT         = "#f8f8f2"
+TEXT_DIM     = "#b8b8c4"
+BORDER       = "#44475a"
 CONSOLE_BG   = "#050505"
-CONSOLE_TEXT = "#cfcfcf"
+CONSOLE_TEXT = "#f8f8f2"
 
 # ============================================================================
 # STYLESHEET - สไตล์หลักของแอป (แปลงจาก Design Reference)
@@ -71,9 +71,12 @@ QMenu::item:selected {{
 }}
 
 #TopBar {{
-    background-color: {BG};
-    border-bottom: 1px solid {BORDER};
-    min-height: 120px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(48, 55, 67, 230), stop:1 rgba(34, 39, 48, 230));
+    border: 1px solid rgba(103, 116, 135, 105);
+    border-top: 1px solid rgba(212, 220, 235, 48);
+    border-radius: 12px;
+    min-height: 106px;
 }}
 
 #CommandInput {{
@@ -96,11 +99,12 @@ QMenu::item:selected {{
 }}
 
 QLineEdit {{
-    background-color: {PANEL_LIGHT};
-    border: 1px solid {BORDER};
+    background-color: {BG};
+    border: 1px solid #16191e;
+    border-top: 1px solid #343b47;
     color: {TEXT};
-    padding: 8px 10px;
-    border-radius: 4px;
+    padding: 9px 12px;
+    border-radius: 10px;
     font-size: 13px;
 }}
 QLineEdit:focus {{
@@ -109,11 +113,12 @@ QLineEdit:focus {{
 }}
 
 QComboBox {{
-    background-color: {PANEL_LIGHT};
-    border: 1px solid {BORDER};
+    background-color: {PANEL};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3a4350;
     color: {TEXT};
     padding: 8px 10px;
-    border-radius: 4px;
+    border-radius: 10px;
     font-size: 13px;
     min-width: 160px;
 }}
@@ -146,50 +151,88 @@ QComboBox QAbstractItemView::item:hover {{
 }}
 
 QPushButton {{
-    border-radius: 4px;
-    padding: 9px 16px;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #333a46, stop:1 #272d36);
+    color: {TEXT};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3e4754;
+    border-radius: 8px;
+    padding: 8px 14px;
     font-size: 13px;
     font-weight: 700;
 }}
 
+#ContentCard {{
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(48, 54, 65, 238), stop:1 rgba(36, 41, 50, 238));
+    border: 1px solid rgba(113, 126, 145, 110);
+    border-top: 1px solid rgba(196, 207, 224, 62);
+    border-radius: 12px;
+}}
+#SearchInput {{
+    background-color: {BG};
+    border: 1px solid #16191e;
+    border-top: 1px solid #343b47;
+    border-radius: 10px;
+    padding: 9px 12px;
+}}
+QPushButton:hover {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #3b4452, stop:1 #2c333e);
+    border-top-color: #4a5666;
+}}
+QPushButton:pressed {{
+    background-color: #1c2027;
+    border-top-color: #171a20;
+    border-bottom-color: #3a4350;
+    padding-top: 10px;
+    padding-bottom: 8px;
+}}
+
 #ExecuteButton {{
-    background-color: {BLUE};
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #718ddd, stop:1 #4e6ab8);
     color: #ffffff;
-    border: none;
+    border: 1px solid #31457d;
+    border-top: 1px solid #8199dc;
     padding: 9px 16px;
-    border-radius: 4px;
+    border-radius: 8px;
     font-size: 13px;
     font-weight: 700;
     min-width: 130px;
 }}
 #ExecuteButton:hover {{
-    background-color: #3a7fe0;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #819be5, stop:1 #5c79c8);
 }}
 #ExecuteButton:pressed {{
-    background-color: #1e5bb5;
+    background-color: #405a9d;
 }}
 
 #BrowseButton {{
-    background-color: {BLUE};
-    color: #ffffff;
-    border: none;
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #333a46, stop:1 #272d36);
+    color: {TEXT};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3e4754;
     padding: 9px 16px;
-    border-radius: 4px;
+    border-radius: 8px;
     font-size: 13px;
     font-weight: 700;
 }}
 #BrowseButton:hover {{
-    background-color: #3a7fe0;
+    background-color: #323945;
 }}
 #BrowseButton:pressed {{
-    background-color: #1e5bb5;
+    background-color: #1c2027;
 }}
 
 #Sidebar {{
-    background-color: {BG};
-    border-right: 1px solid {BORDER};
-    min-width: 240px;
-    max-width: 280px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(45, 51, 62, 248), stop:1 rgba(34, 39, 47, 248));
+    border-right: 1px solid #15181d;
+    min-width: 210px;
+    max-width: 250px;
     padding: 0px;
 }}
 #SidebarSection {{
@@ -199,16 +242,27 @@ QPushButton {{
     padding: 16px 16px 8px 16px;
     background: transparent;
 }}
+#ChatItem {{
+    background-color: transparent;
+    border: none;
+    color: {TEXT_DIM};
+    text-align: left;
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-weight: 500;
+}}
+#ChatItem:hover {{ background-color: #343b47; color: {TEXT}; }}
 #SidebarItem {{
     background-color: {PANEL};
     color: {TEXT};
-    border: 1px solid {BORDER};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3e4754;
     text-align: left;
     padding: 12px 14px;
     font-size: 13px;
     font-weight: 600;
-    border-radius: 6px;
-    margin: 2px 16px;
+    border-radius: 8px;
+    margin: 2px 0;
     min-height: 20px;
 }}
 #SidebarItem:hover {{
@@ -277,20 +331,21 @@ QTabBar::tab:hover {{
 }}
 
 #ActionButton {{
-    background-color: {BLUE};
-    color: #ffffff;
-    border: none;
+    background-color: {PANEL};
+    color: {TEXT};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3e4754;
     padding: 10px 20px;
-    border-radius: 4px;
+    border-radius: 10px;
     font-size: 13px;
     font-weight: 700;
     min-width: 130px;
 }}
 #ActionButton:hover {{
-    background-color: #3a7fe0;
+    background-color: #323945;
 }}
 #ActionButton:pressed {{
-    background-color: #1e5bb5;
+    background-color: #1c2027;
 }}
 
 #InputField {{
@@ -353,6 +408,13 @@ QTabBar::tab:hover {{
     border-top-right-radius: 12px;
     border-bottom: 1px solid {BORDER};
 }}
+#TitleMark {{
+    background-color: #516fc0;
+    color: white;
+    border-radius: 9px;
+    font-weight: 800;
+    padding: 3px 8px;
+}}
 #TitleBarLabel {{
     color: {TEXT};
     font-size: 13px;
@@ -361,11 +423,12 @@ QTabBar::tab:hover {{
 #WinControlBtn {{
     color: {TEXT_DIM};
     font-size: 14px;
-    background: transparent;
-    border: none;
-    width: 34px;
-    height: 24px;
-    border-radius: 4px;
+    background: {PANEL};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3e4754;
+    width: 30px;
+    height: 26px;
+    border-radius: 8px;
 }}
 #WinControlBtn:hover {{
     background-color: {PANEL_LIGHT};
@@ -375,6 +438,117 @@ QTabBar::tab:hover {{
     background-color: #c0392b;
     color: #ffffff;
 }}
+
+/* Dracula theme overrides: visual styling only, no layout changes. */
+QMainWindow, QWidget {{
+    background-color: #282a36;
+    color: #f8f8f2;
+}}
+QLabel {{ color: #f8f8f2; }}
+QMenuBar, QMenu {{
+    background-color: #282a36;
+    color: #f8f8f2;
+    border-color: #44475a;
+}}
+QMenu::item:selected {{ background-color: #44475a; color: #f8f8f2; }}
+QPushButton {{
+    background-color: #303241;
+    color: #f8f8f2;
+    border: 1px solid #44475a;
+    border-radius: 7px;
+}}
+QPushButton:hover {{ background-color: #44475a; border-color: #6272a4; }}
+QPushButton:pressed {{ background-color: #252633; border-color: #bd93f9; }}
+#ExecuteButton, #ActionButton {{
+    background-color: #6272a4;
+    color: #f8f8f2;
+    border: 1px solid #bd93f9;
+    border-radius: 7px;
+}}
+#ExecuteButton:hover, #ActionButton:hover {{ background-color: #7182b5; }}
+#ExecuteButton:pressed, #ActionButton:pressed {{ background-color: #4f5c83; }}
+#BrowseButton, #SidebarItem {{
+    background-color: #303241;
+    color: #f8f8f2;
+    border: 1px solid #44475a;
+    border-radius: 7px;
+}}
+#BrowseButton:hover, #SidebarItem:hover {{ background-color: #44475a; border-color: #6272a4; }}
+#BrowseButton:pressed, #SidebarItem:pressed {{ background-color: #252633; }}
+#SidebarItem:checked, #SidebarItem[selected="true"] {{
+    border-left: 3px solid #bd93f9;
+    background-color: #44475a;
+}}
+QLineEdit, #CommandInput, #SearchInput, QTextEdit#EditCommandArea {{
+    background-color: #282a36;
+    color: #f8f8f2;
+    border: 1px solid #44475a;
+    border-radius: 7px;
+}}
+QLineEdit:focus, #CommandInput:focus, #SearchInput:focus, QTextEdit#EditCommandArea:focus {{
+    border: 1px solid #bd93f9;
+}}
+QComboBox {{
+    background-color: #303241;
+    color: #f8f8f2;
+    border: 1px solid #44475a;
+    border-radius: 7px;
+    padding: 8px 10px;
+}}
+QComboBox:hover {{ border-color: #6272a4; }}
+QComboBox:focus {{ border-color: #bd93f9; }}
+QComboBox::drop-down {{ border-left: 1px solid #44475a; width: 26px; }}
+QComboBox QAbstractItemView, QListWidget {{
+    background-color: #282a36;
+    color: #f8f8f2;
+    border: 1px solid #44475a;
+    border-radius: 7px;
+    outline: none;
+    padding: 3px;
+}}
+QComboBox QAbstractItemView::item, QListWidget::item {{
+    min-height: 22px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #44475a;
+}}
+QComboBox QAbstractItemView::item:hover, QListWidget::item:hover {{ background-color: #44475a; }}
+QComboBox QAbstractItemView::item:selected, QListWidget::item:selected {{
+    background-color: #bd93f9;
+    color: #282a36;
+    border-left: 3px solid #bd93f9;
+}}
+QTabWidget::pane {{ background-color: #282a36; border: 1px solid #44475a; border-radius: 7px; }}
+QTabBar::tab {{
+    background-color: #303241;
+    color: #b8b8c4;
+    border: 1px solid #44475a;
+    border-bottom: none;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+}}
+QTabBar::tab:hover {{ background-color: #44475a; color: #f8f8f2; }}
+QTabBar::tab:selected {{ background-color: #282a36; color: #f8f8f2; border-top: 2px solid #bd93f9; }}
+#Sidebar, #TopBar, #ContentCard, #TitleBar {{ background-color: #282a36; border-color: #44475a; }}
+#ConsoleArea, QTextEdit {{ background-color: #050505; color: #f8f8f2; }}
+#CommandPreviewBox {{ background-color: #050505; color: #f8f8f2; border-color: #44475a; border-radius: 7px; }}
+#WinControlCloseBtn:hover {{ background-color: #44475a; color: #f8f8f2; }}
+QStatusBar, #StatusBar {{ max-height: 0px; min-height: 0px; border: none; padding: 0; }}
+#StatusBar {{
+    background-color: {BG_DARKER};
+    border-top: 1px solid #101216;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+}}
+#StatusLabel {{ color: {TEXT_DIM}; font-size: 12px; padding: 0 12px; }}
+#StatusDot {{ color: #61c28b; font-size: 14px; padding-left: 12px; }}
+QToolButton#IconButton {{
+    background-color: {PANEL};
+    border: 1px solid #171a20;
+    border-top: 1px solid #3e4754;
+    border-radius: 8px;
+    padding: 5px;
+}}
+QToolButton#IconButton:hover {{ background-color: #343b47; }}
 """
 
 # ============================================================================

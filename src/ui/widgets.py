@@ -12,8 +12,9 @@ from PySide6.QtWidgets import (
     QTextEdit, QTabWidget, QGridLayout, QHBoxLayout, QVBoxLayout,
     QSizePolicy,
 )
-from PySide6.QtCore import Signal, QObject, Qt
-from PySide6.QtGui import QFont, QColor, QTextCharFormat
+from PySide6.QtCore import Signal, QObject, Qt, QByteArray
+from PySide6.QtGui import QFont, QColor, QTextCharFormat, QIcon, QPixmap, QPainter
+from PySide6.QtSvg import QSvgRenderer
 
 from src.config import (
     TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE,
@@ -35,11 +36,27 @@ class TerminalSignals(QObject):
     output = Signal(str)
 
 
+def svg_icon(path: str, color: str = "#edf0f5", size: int = 16) -> QIcon:
+    """Build a crisp, dependency-free SVG icon for custom controls."""
+    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+        <path d="{path}" fill="none" stroke="{color}" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>'''
+    renderer = QSvgRenderer(QByteArray(svg.encode()))
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
+
+
 # ============================================================================
 # SIDEBAR - แถบด้านข้าง
 # ============================================================================
 
 class Sidebar(QFrame):
+    navigate = Signal(int)
     """แถบด้านข้างสำหรับ Quick Actions และ Recent Scans"""
     
     def __init__(self, parent=None):
@@ -50,7 +67,7 @@ class Sidebar(QFrame):
     def _build(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(0)
+        layout.setSpacing(8)
 
         def section(title):
             lbl = QLabel(title)
@@ -65,13 +82,45 @@ class Sidebar(QFrame):
             btn.setCursor(Qt.PointingHandCursor if hasattr(Qt, "PointingHandCursor") else Qt.ArrowCursor)
             return btn
 
+        self.search_input = QLineEdit()
+        self.search_input.setObjectName("SearchInput")
+        self.search_input.setPlaceholderText("Search tools or sessions…")
+        self.search_input.textChanged.connect(self._filter_sessions)
+        layout.addWidget(self.search_input)
         layout.addWidget(section("Quick Actions"))
-        layout.addSpacing(2)
-        for t in ["New Scan", "Load Profile", "View History"]:
-            layout.addWidget(item(t))
-            layout.addSpacing(10)
+
+        self.nav_buttons = []
+        for index, title in enumerate(["New Scan", "Input Management", "Command Editor"]):
+            button = item(title)
+            button.setProperty("selected", index == 0)
+            button.clicked.connect(lambda _=False, i=index: self._select_nav(i))
+            self.nav_buttons.append(button)
+            layout.addWidget(button)
+
+        layout.addSpacing(12)
+        layout.addWidget(section("Recent Sessions"))
+        self.session_buttons = []
+        for title in ("Web surface review", "SSH service audit", "Windows assessment"):
+            button = QPushButton(title)
+            button.setObjectName("ChatItem")
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda _=False: self.navigate.emit(0))
+            self.session_buttons.append(button)
+            layout.addWidget(button)
 
         layout.addStretch()
+
+    def _select_nav(self, index: int) -> None:
+        for item_index, button in enumerate(self.nav_buttons):
+            button.setProperty("selected", item_index == index)
+            button.style().unpolish(button)
+            button.style().polish(button)
+        self.navigate.emit(index)
+
+    def _filter_sessions(self, text: str) -> None:
+        query = text.strip().casefold()
+        for button in (*self.nav_buttons, *self.session_buttons):
+            button.setVisible(not query or query in button.text().casefold())
 
 
 # ============================================================================
@@ -309,6 +358,7 @@ class WizardConsoleTab(QWidget):
     
     def _append_colored(self, text: str, color: str):
         """เพิ่ม text สี"""
+        color = CONSOLE_TEXT
         cursor = self.output_area.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         fmt = QTextCharFormat()

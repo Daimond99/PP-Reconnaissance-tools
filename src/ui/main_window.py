@@ -4,14 +4,14 @@ Recon Tool - Main Window Module
 """
 
 from PySide6.QtWidgets import QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
-from PySide6.QtCore import Qt, QRect, QPoint
+from PySide6.QtCore import Qt, QRect, QEvent
 from PySide6.QtGui import QAction, QCursor
 
 from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     WARHEAD_COMMANDS, TOOL_COMMANDS, DIRECT_TOOL_CONTENT, WIZARD_CONTENT,
 )
-from src.ui.widgets import Sidebar, TopBar, MainContentArea
+from src.ui.widgets import Sidebar, TopBar, MainContentArea, svg_icon
 class ReconMainWindow(QMainWindow):
     """หน้าต่างหลักของ Recon Tool"""
     
@@ -62,10 +62,12 @@ class ReconMainWindow(QMainWindow):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setCursor(Qt.ArrowCursor)
+        self.menuBar().hide()
 
         central = QWidget()
         central.setObjectName("CentralWidget")
         self.setCentralWidget(central)
+        central.installEventFilter(self)
 
         # Main Layout
         root = QVBoxLayout(central)
@@ -75,15 +77,17 @@ class ReconMainWindow(QMainWindow):
         # Title Bar
         self.title_bar = QFrame()
         self.title_bar.setObjectName("TitleBar")
-        self.title_bar.setFixedHeight(34)
+        self.title_bar.setFixedHeight(42)
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(10, 0, 0, 0)
         title_layout.setSpacing(0)
 
-        dummy = QLabel()
-        dummy.setFixedWidth(60)
+        brand = QLabel("TR")
+        brand.setObjectName("TitleMark")
+        brand.setAlignment(Qt.AlignCenter)
+        brand.setFixedSize(30, 28)
 
-        title_text = QLabel(WINDOW_TITLE)
+        title_text = QLabel("TheRecon  /  Authorized Security Workspace")
         title_text.setObjectName("TitleBarLabel")
         title_text.setAlignment(Qt.AlignCenter)
 
@@ -92,25 +96,34 @@ class ReconMainWindow(QMainWindow):
         
         btn_min = QPushButton("—")
         btn_min.setObjectName("WinControlBtn")
+        btn_min.setIcon(svg_icon("M5 12h14"))
+        btn_min.setText("")
         btn_min.clicked.connect(self.showMinimized)
         
         btn_max = QPushButton("☐")
         btn_max.setObjectName("WinControlBtn")
+        btn_max.setIcon(svg_icon("M5 5h14v14H5z"))
+        btn_max.setText("")
         btn_max.clicked.connect(self._toggle_maximize)
         
         btn_close = QPushButton("✕")
         btn_close.setObjectName("WinControlBtn")
         btn_close.setProperty("class", "close")
         btn_close.setObjectName("WinControlCloseBtn")
+        btn_close.setIcon(svg_icon("M6 6l12 12M18 6L6 18"))
+        btn_close.setText("")
         btn_close.clicked.connect(self.close)
 
         controls_layout.addWidget(btn_min)
         controls_layout.addWidget(btn_max)
         controls_layout.addWidget(btn_close)
 
-        title_layout.addWidget(dummy)
+        title_layout.addWidget(brand)
         title_layout.addWidget(title_text, 1)
         title_layout.addLayout(controls_layout)
+        self._drag_widgets = (self.title_bar, brand, title_text)
+        for widget in self._drag_widgets:
+            widget.installEventFilter(self)
 
         root.addWidget(self.title_bar)
 
@@ -123,8 +136,8 @@ class ReconMainWindow(QMainWindow):
 
         # Body
         body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setContentsMargins(12, 12, 12, 12)
+        body.setSpacing(12)
 
         self.sidebar = Sidebar()
         self.main_area = MainContentArea()
@@ -135,8 +148,75 @@ class ReconMainWindow(QMainWindow):
         vline.setFixedWidth(1)
         body.addWidget(vline)
 
-        body.addWidget(self.main_area, 1)
+        content_card = QFrame()
+        content_card.setObjectName("ContentCard")
+        content_layout = QVBoxLayout(content_card)
+        content_layout.setContentsMargins(10, 10, 10, 10)
+        content_layout.addWidget(self.main_area)
+        body.addWidget(content_card, 1)
         root.addLayout(body, 1)
+
+        status_bar = QFrame()
+        status_bar.setObjectName("StatusBar")
+        status_bar.setFixedHeight(28)
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(0, 0, 12, 0)
+        dot = QLabel("●")
+        dot.setObjectName("StatusDot")
+        status_layout.addWidget(dot)
+        status = QLabel("Ready — authorized targets only")
+        status.setObjectName("StatusLabel")
+        status_layout.addWidget(status)
+        status_layout.addStretch()
+        environment = QLabel("PySide6 • Local session")
+        environment.setObjectName("StatusLabel")
+        status_layout.addWidget(environment)
+        status_bar.hide()
+        root.addWidget(status_bar)
+
+    def eventFilter(self, watched, event):
+        """Make the frameless window drag and resize like a native window."""
+        if event.type() not in (
+            QEvent.MouseButtonPress, QEvent.MouseButtonDblClick,
+            QEvent.MouseMove, QEvent.MouseButtonRelease,
+        ):
+            return super().eventFilter(watched, event)
+
+        pos = watched.mapTo(self, event.position().toPoint())
+        if event.type() == QEvent.MouseButtonDblClick and watched in self._drag_widgets:
+            self._toggle_maximize()
+            return True
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            direction = self._get_resize_direction(pos)
+            if direction and not self.isMaximized():
+                self.is_resizing = True
+                self.resize_direction = direction
+                self.drag_start_pos = event.globalPosition().toPoint()
+                self.drag_start_geometry = QRect(self.geometry())
+                return True
+            if watched in self._drag_widgets:
+                self.dragPos = event.globalPosition().toPoint()
+                return True
+
+        if event.type() == QEvent.MouseMove:
+            self._update_cursor(pos)
+            if event.buttons() & Qt.LeftButton:
+                if self.is_resizing:
+                    self._handle_resize(event.globalPosition().toPoint())
+                    return True
+                if self.dragPos is not None:
+                    current = event.globalPosition().toPoint()
+                    self.move(self.pos() + current - self.dragPos)
+                    self.dragPos = current
+                    return True
+
+        if event.type() == QEvent.MouseButtonRelease:
+            self.is_resizing = False
+            self.resize_direction = None
+            self.dragPos = None
+            self.drag_start_pos = None
+            self.drag_start_geometry = None
+        return super().eventFilter(watched, event)
 
     def _toggle_maximize(self):
         if self.isMaximized():
@@ -301,6 +381,7 @@ class ReconMainWindow(QMainWindow):
         self.setGeometry(geometry)
 
     def _connect_signals(self):
+        self.sidebar.navigate.connect(self._on_sidebar_navigation)
         self.top_bar.opmode_combo.currentTextChanged.connect(self._on_opmode_change)
         self.top_bar.warhead_combo.currentTextChanged.connect(self._on_warhead_change)
         self.top_bar.tool_combo.currentTextChanged.connect(self._on_tool_change)
@@ -310,7 +391,7 @@ class ReconMainWindow(QMainWindow):
 
         ma = self.main_area
         ma.wizard_tab.commandEntered.connect(self._on_terminal_command)
-        ma.raw_output_tab.commandEntered.connect(self._on_terminal_command)
+        ma.raw_output_tab.commandEntered.connect(self._on_raw_command)
         ma.llm_tab.commandEntered.connect(self._on_terminal_command)
 
         self.new_scan_action.triggered.connect(self._on_new_scan)
@@ -323,6 +404,12 @@ class ReconMainWindow(QMainWindow):
 
         self._on_tool_change(self.top_bar.tool_combo.currentText())
         self._on_warhead_change(self.top_bar.warhead_combo.currentText())
+
+    def _on_sidebar_navigation(self, index: int):
+        if index == 0:
+            self.main_area.tab_widget.setCurrentIndex(0)
+            return
+        self.main_area.tab_widget.setCurrentIndex(index)
 
     def _on_opmode_change(self, mode):
         self.main_area.tab_widget.setCurrentIndex(0)
@@ -369,6 +456,10 @@ class ReconMainWindow(QMainWindow):
         if cmd.strip():
             self.main_area.tab_widget.setCurrentIndex(3)
             self.main_area.raw_output_tab.write_command(cmd.strip())
+
+    def _on_raw_command(self, _cmd: str):
+        """Raw terminal commands are already sent by the terminal widget."""
+        self.main_area.tab_widget.setCurrentIndex(3)
 
     def _on_new_scan(self):
         self._on_execute_clicked()
