@@ -1,776 +1,1046 @@
 """
-Recon Tool - Wizard Engine Module
-ระบบ Wizard แบบ interactive คล้าย Hydra wizard mode
-นำผู้ใช้ผ่าน attack chain step-by-step
+Recon Tool - Interactive Wizard Engine
+Guided shell state machine (Hydra wizard / msfconsole style).
 """
 
+from __future__ import annotations
+
 import platform
-from typing import Dict, List, Optional, Callable, Any
+import shutil
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from src.core.wizard_safety import (
+    AUTHORIZED_SCOPE_WARNING,
+    audit_log_confirmation,
+    build_nmap_command,
+    format_confirmation_box,
+    generate_impact_description,
+    quote_arg,
+    validate_custom_nmap_flags,
+    validate_exact_confirmation,
+    validate_file_path,
+    validate_port_range,
+    validate_target,
+    validate_url,
+    validate_username,
+    validate_password,
+    validate_yes_no,
+)
 
-class WizardStep(Enum):
-    """ขั้นตอนต่างๆ ใน wizard"""
-    TARGET_INPUT = "target_input"
-    SCAN_TYPE = "scan_type"
-    TOOL_SELECTION = "tool_selection"
-    OPTIONS_CONFIG = "options_config"
-    CREDENTIAL_CONFIG = "credential_config"
-    OUTPUT_CONFIG = "output_config"
-    PREVIEW = "preview"
-    EXECUTE = "execute"
+DEMO_TOOL_RESTRICTION_NOTICE = (
+    "[!] เครื่องมือนี้ยังไม่เปิดใช้งานในเวอร์ชัน demo ปัจจุบัน\n"
+    "    ขณะนี้รองรับเฉพาะ Nmap เท่านั้น"
+)
+
+CHAIN_DISABLED_NOTICE = (
+    "[i] การ chain ไปยังเครื่องมืออื่น (gobuster/dirb/hydra/evil-winrm) "
+    "ถูกปิดใช้งานชั่วคราวในเวอร์ชัน demo — จะรันเฉพาะคำสั่ง nmap เท่านั้น"
+)
 
 
 class AttackType(Enum):
-    """ประเภทของการโจมตี"""
     WEB_SERVERS = "web_servers"
-    SSH_SERVICES = "ssh_services"
+    SSH_SERVERS = "ssh_services"
     WINDOWS_SYSTEMS = "windows_systems"
     DATABASES = "databases"
     FULL_NETWORK = "full_network"
     CUSTOM_SCAN = "custom_scan"
 
 
+class WizardStep(Enum):
+    TOOL_SELECT = "tool_select"
+    ATTACK_MENU = "attack_menu"
+    TARGET = "target"
+    SCAN_LEVEL = "scan_level"
+    SUGGESTION = "suggestion"
+    SUGGESTION_EDIT = "suggestion_edit"
+    WEB_DIR_SCAN = "web_dir_scan"
+    WEB_DIR_TOOL = "web_dir_tool"
+    WEB_URL = "web_url"
+    WEB_WORDLIST = "web_wordlist"
+    SSH_PORT_RANGE = "ssh_port_range"
+    SSH_BRUTE = "ssh_brute"
+    SSH_USERLIST = "ssh_userlist"
+    SSH_PASSLIST = "ssh_passlist"
+    WIN_WINRM = "win_winrm"
+    WIN_USERNAME = "win_username"
+    WIN_PASSWORD = "win_password"
+    DB_TYPE = "db_type"
+    CUSTOM_FLAGS = "custom_flags"
+    PREVIEW = "preview"
+    EXECUTING = "executing"
+
+
+# ---------------------------------------------------------------------------
+# Scan Level definitions — grouped by AttackType
+# Each entry: (id, label, flags_list, reason, is_aggressive)
+# ---------------------------------------------------------------------------
+
+ScanLevelDef = Tuple[int, str, List[str], str, bool]
+
+
+def _scan_levels_for(attack: AttackType) -> List[ScanLevelDef]:
+    """Return scan level definitions appropriate for the given attack type."""
+    # Stealth group (shared across all)
+    stealth: List[ScanLevelDef] = [
+        (1, "Stealth SYN scan",               ["-sS", "-T2", "--open"],
+         "ส่ง packet แบบ half-open ไม่ครบ handshake ตรวจจับยากกว่า scan ปกติ", False),
+        (2, "Fragmented stealth",             ["-sS", "-f", "-T2"],
+         "แบ่ง packet เป็นชิ้นเล็กเพื่อหลบ firewall/IDS พื้นฐาน", False),
+    ]
+    # Verbose group (shared across all)
+    verbose: List[ScanLevelDef] = [
+        (3, "Verbose service scan",           ["-sV", "-v", "--version-all", "--open"],
+         "ดึงข้อมูล service/version ละเอียดที่สุด พร้อมแสดง progress แบบ real-time", False),
+        (4, "Verbose + script scan",          ["-sV", "-sC", "-v"],
+         "รัน default NSE script ร่วมด้วยเพื่อเก็บข้อมูลเพิ่มเติม เช่น banner, algorithm", False),
+    ]
+
+    if attack == AttackType.WEB_SERVERS:
+        aggressive: List[ScanLevelDef] = [
+            (5, "Aggressive full detect",     ["-A", "-T4"],
+             "รวม OS detection, script scan, traceroute ในคำสั่งเดียว ส่ง traffic เยอะและตรวจจับได้ง่ายมาก ใช้เฉพาะ lab/sandbox เท่านั้น", True),
+            (6, "Brute-timing critical",      ["-T5", "--open", "-Pn"],
+             "scan เร็วสุดขีดและข้าม host discovery (-Pn) อาจทำให้เครือข่ายที่มี IDS/IPS แจ้งเตือนทันที หรือทำให้ target ที่ทรัพยากรจำกัดหน่วงได้", True),
+            (7, "Vulnerability script scan",  ["--script", "http-vuln*", "-sV"],
+             "รัน NSE script ตรวจสอบช่องโหว่เว็บ อาจส่งผลกระทบต่อ service ที่ไม่เสถียร (บาง script อาจทำให้ service ค้างหรือ crash ได้)", True),
+        ]
+    elif attack == AttackType.SSH_SERVERS:
+        aggressive: List[ScanLevelDef] = [
+            (5, "Aggressive full detect",     ["-A", "-T4"],
+             "รวม OS detection, script scan, traceroute ในคำสั่งเดียว ส่ง traffic เยอะและตรวจจับได้ง่ายมาก ใช้เฉพาะ lab/sandbox เท่านั้น", True),
+            (6, "Brute-timing critical",      ["-T5", "--open", "-Pn"],
+             "scan เร็วสุดขีดและข้าม host discovery (-Pn) อาจทำให้เครือข่ายที่มี IDS/IPS แจ้งเตือนทันที หรือทำให้ target ที่ทรัพยากรจำกัดหน่วงได้", True),
+            (7, "Vulnerability script scan",  ["--script", "ssh*", "-sV"],
+             "รัน NSE script ตรวจสอบช่องโหว่ SSH อาจส่งผลกระทบต่อ service ที่ไม่เสถียร", True),
+        ]
+    elif attack == AttackType.WINDOWS_SYSTEMS:
+        aggressive: List[ScanLevelDef] = [
+            (5, "Aggressive full detect",     ["-A", "-T4"],
+             "รวม OS detection, script scan, traceroute ในคำสั่งเดียว ส่ง traffic เยอะและตรวจจับได้ง่ายมาก ใช้เฉพาะ lab/sandbox เท่านั้น", True),
+            (6, "Brute-timing critical",      ["-T5", "--open", "-Pn"],
+             "scan เร็วสุดขีดและข้าม host discovery (-Pn) อาจทำให้เครือข่ายที่มี IDS/IPS แจ้งเตือนทันที หรือทำให้ target ที่ทรัพยากรจำกัดหน่วงได้", True),
+            (7, "Vulnerability script scan",  ["--script", "smb-vuln*", "-sV"],
+             "รัน NSE script ตรวจสอบช่องโหว่ Windows (SMB) อาจส่งผลกระทบต่อ service ที่ไม่เสถียร", True),
+        ]
+    elif attack == AttackType.DATABASES:
+        aggressive: List[ScanLevelDef] = [
+            (5, "Aggressive full detect",     ["-A", "-T4"],
+             "รวม OS detection, script scan, traceroute ในคำสั่งเดียว ส่ง traffic เยอะและตรวจจับได้ง่ายมาก ใช้เฉพาะ lab/sandbox เท่านั้น", True),
+            (6, "Brute-timing critical",      ["-T5", "--open", "-Pn"],
+             "scan เร็วสุดขีดและข้าม host discovery (-Pn) อาจทำให้เครือข่ายที่มี IDS/IPS แจ้งเตือนทันที หรือทำให้ target ที่ทรัพยากรจำกัดหน่วงได้", True),
+            (7, "Vulnerability script scan",  ["--script", "ms-sql*", "-sV"],
+             "รัน NSE script ตรวจสอบช่องโหว่ DB (MSSQL) อาจส่งผลกระทบต่อ service ที่ไม่เสถียร", True),
+        ]
+    elif attack == AttackType.FULL_NETWORK:
+        aggressive: List[ScanLevelDef] = [
+            (5, "Aggressive full detect",     ["-A", "-T4"],
+             "รวม OS detection, script scan, traceroute ในคำสั่งเดียว ส่ง traffic เยอะและตรวจจับได้ง่ายมาก ใช้เฉพาะ lab/sandbox เท่านั้น", True),
+            (6, "Brute-timing critical",      ["-T5", "--open", "-Pn"],
+             "scan เร็วสุดขีดและข้าม host discovery (-Pn) อาจทำให้เครือข่ายที่มี IDS/IPS แจ้งเตือนทันที หรือทำให้ target ที่ทรัพยากรจำกัดหน่วงได้", True),
+            (7, "Vulnerability script scan",  ["--script", "vuln", "-sV"],
+             "รัน NSE script ตรวจสอบช่องโหว่ทั่วไป อาจส่งผลกระทบต่อ service ที่ไม่เสถียร (บาง script อาจทำให้ service ค้างหรือ crash ได้)", True),
+        ]
+    else:
+        aggressive = []
+
+    return stealth + verbose + aggressive
+
+
+def _get_base_ports_for(attack: AttackType) -> str:
+    """Return the default port list for the given attack type."""
+    mapping = {
+        AttackType.WEB_SERVERS: "80,443,8080,8443",
+        AttackType.SSH_SERVERS: "22",
+        AttackType.WINDOWS_SYSTEMS: "445,3389,5985",
+        AttackType.DATABASES: "1433,3306,5432,27017",
+        AttackType.FULL_NETWORK: "",
+    }
+    return mapping.get(attack, "")
+
+
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class WizardState:
-    """เก็บสถานะปัจจุบันของ wizard"""
-    current_step: WizardStep = WizardStep.TARGET_INPUT
+    """Current wizard session: step, choices, and assembled command chain."""
+
+    current_step: WizardStep = WizardStep.TOOL_SELECT
+    selected_tool: Optional[str] = None
     attack_type: Optional[AttackType] = None
-    target: str = ""
-    target_type: str = "CIDR"
-    selected_tool: str = ""
-    tool_options: Dict[str, Any] = field(default_factory=dict)
-    credentials: Dict[str, str] = field(default_factory=dict)
-    output_format: str = "normal"
-    output_file: str = ""
-    command: str = ""
-    
-    # History สำหรับ back navigation
+    choices: Dict[str, Any] = field(default_factory=dict)
+    command_parts: List[str] = field(default_factory=list)
     step_history: List[WizardStep] = field(default_factory=list)
-    
+    # Track the current cancel target for audit logging
+    current_cancel_command: str = ""
+
+    def reset_flow(self) -> None:
+        self.current_step = WizardStep.TOOL_SELECT
+        self.selected_tool = None
+        self.attack_type = None
+        self.choices.clear()
+        self.command_parts.clear()
+        self.step_history.clear()
+        self.current_cancel_command = ""
+
     def go_back(self) -> bool:
-        """ย้อนกลับไป step ก่อนหน้า"""
-        if self.step_history:
-            self.current_step = self.step_history.pop()
-            return True
-        return False
-    
-    def advance_to(self, step: WizardStep):
-        """ไปยัง step ถัดไป"""
+        if not self.step_history:
+            return False
+        self.current_step = self.step_history.pop()
+        return True
+
+    def advance_to(self, step: WizardStep) -> None:
         self.step_history.append(self.current_step)
         self.current_step = step
 
+    @property
+    def command_chain(self) -> str:
+        return " && ".join(self.command_parts)
+
+    def rebuild_primary_scan(self) -> None:
+        """Rebuild the first scan command from attack type + target + scan level."""
+        if not self.attack_type or "target" not in self.choices:
+            return
+
+        target = self.choices["target"]
+        attack = self.attack_type
+        scan_level = self.choices.get("scan_level")
+
+        if scan_level:
+            # Use the flags from the selected scan level
+            levels = _scan_levels_for(attack)
+            level_map = {lid: flags for lid, _name, flags, _reason, _agg in levels}
+            flags = level_map.get(scan_level)
+            if flags:
+                ports = _get_base_ports_for(attack)
+                final_flags = list(flags)
+                if ports:
+                    # Insert -p before any other flags if ports matter
+                    final_flags = ["-p", ports] + final_flags
+                cmd = build_nmap_command(final_flags, target)
+                if self.command_parts:
+                    self.command_parts[0] = cmd
+                else:
+                    self.command_parts.append(cmd)
+                return
+
+        # Fallback: original logic
+        if attack == AttackType.WEB_SERVERS:
+            cmd = build_nmap_command(
+                ["-p", "80,443,8080", "-sV", "--script", "http-title,http-headers"],
+                target,
+            )
+        elif attack == AttackType.SSH_SERVERS:
+            cmd = build_nmap_command(["-p", "22", "-sV", "--open"], target)
+        elif attack == AttackType.WINDOWS_SYSTEMS:
+            cmd = build_nmap_command(["-p", "445,3389,5985", "-sV"], target)
+        elif attack == AttackType.DATABASES:
+            cmd = build_nmap_command(["-p", "1433,3306,5432,27017", "-sV"], target)
+        elif attack == AttackType.FULL_NETWORK:
+            cmd = build_nmap_command(["-sV", "-O"], target)
+        elif attack == AttackType.CUSTOM_SCAN:
+            flags = self.choices.get("custom_flags", "-sV")
+            cmd = f"nmap {flags} {quote_arg(target)}"
+        else:
+            cmd = build_nmap_command(["-sV"], target)
+
+        if self.command_parts:
+            self.command_parts[0] = cmd
+        else:
+            self.command_parts.append(cmd)
+
 
 @dataclass
-class WizardOption:
-    """ตัวเลือกใน wizard prompt"""
-    key: str
-    label: str
-    description: str
-    value: Any = None
-    is_default: bool = False
+class WizardResult:
+    success: bool
+    lines: List[str] = field(default_factory=list)
+    prompt: str = "Select>"
+    action: Optional[str] = None
+    commands: List[str] = field(default_factory=list)
 
 
-@dataclass
-class WizardPrompt:
-    """Prompt สำหรับ wizard step"""
-    title: str
-    message: str
-    options: List[WizardOption] = field(default_factory=list)
-    input_type: str = "choice"  # choice, text, password, file
-    default_value: str = ""
-    allow_back: bool = True
-    allow_custom: bool = False
+SUGGESTION_REASONS = {
+    AttackType.WEB_SERVERS: "สแกน port เว็บที่พบบ่อยที่สุด พร้อมดึงชื่อหน้าเว็บและ header เพื่อระบุเทคโนโลยีที่ใช้",
+    AttackType.SSH_SERVERS: "เช็คเฉพาะ port SSH มาตรฐาน และแสดงเฉพาะ host ที่เปิดใช้งานจริง",
+    AttackType.WINDOWS_SYSTEMS: "ตรวจ SMB, RDP, WinRM ซึ่งเป็น service หลักที่ Windows มักเปิดใช้",
+    AttackType.DATABASES: "ตรวจ MSSQL, MySQL, PostgreSQL, MongoDB port มาตรฐาน",
+    AttackType.FULL_NETWORK: "สแกนแบบละเอียดทั้ง service version และ OS detection ครอบคลุมทุก port ที่เปิด",
+}
 
 
 class WizardEngine:
-    """Engine หลักสำหรับ wizard mode"""
-    
-    def __init__(self):
+    """Interactive guided wizard with branching attack chains."""
+
+    TOOL_MENU = """WIZARD MODE - Select Tool
+{warning}
+
+เลือกเครื่องมือที่จะใช้:
+
+ 1. Nmap
+ 2. Masscan
+ 3. Hydra
+ 4. Ncrack
+ 5. Evil-WinRM
+ 6. Auto Chain (Recon → Action)
+
+Select option (1-6):"""
+
+    ATTACK_MENU = """WIZARD MODE - Expert Attack Chain Guide
+{warning}
+
+What do you want to find?
+
+ 1. Web Servers
+ 2. SSH Services
+ 3. Windows Systems
+ 4. Databases
+ 5. Full Network Scan
+ 6. Custom Scan
+
+Type: check | install | help | reset | back
+Select option (1-6):"""
+
+    DB_OPTIONS = """Select database focus:
+
+ 1. Microsoft SQL (1433)
+ 2. MySQL (3306)
+ 3. PostgreSQL (5432)
+ 4. MongoDB (27017)
+ 5. All common DB ports
+
+Select option (1-5):"""
+
+    def __init__(self) -> None:
         self.state = WizardState()
         self.is_windows = platform.system() == "Windows"
-        self._setup_attack_chains()
-    
-    def _setup_attack_chains(self):
-        """กำหนด attack chains สำหรับแต่ละประเภท"""
-        
-        # Attack chain definitions
-        # แต่ละ attack type จะมี sequence ของ steps ที่ต้องผ่าน
-        self.attack_chains = {
-            AttackType.WEB_SERVERS: [
-                WizardStep.TARGET_INPUT,
-                WizardStep.SCAN_TYPE,
-                WizardStep.OPTIONS_CONFIG,
-                WizardStep.OUTPUT_CONFIG,
-                WizardStep.PREVIEW,
-                WizardStep.EXECUTE
-            ],
-            AttackType.SSH_SERVICES: [
-                WizardStep.TARGET_INPUT,
-                WizardStep.SCAN_TYPE,
-                WizardStep.CREDENTIAL_CONFIG,
-                WizardStep.OUTPUT_CONFIG,
-                WizardStep.PREVIEW,
-                WizardStep.EXECUTE
-            ],
-            AttackType.WINDOWS_SYSTEMS: [
-                WizardStep.TARGET_INPUT,
-                WizardStep.SCAN_TYPE,
-                WizardStep.TOOL_SELECTION,
-                WizardStep.CREDENTIAL_CONFIG,
-                WizardStep.OUTPUT_CONFIG,
-                WizardStep.PREVIEW,
-                WizardStep.EXECUTE
-            ],
-            AttackType.DATABASES: [
-                WizardStep.TARGET_INPUT,
-                WizardStep.SCAN_TYPE,
-                WizardStep.OPTIONS_CONFIG,
-                WizardStep.OUTPUT_CONFIG,
-                WizardStep.PREVIEW,
-                WizardStep.EXECUTE
-            ],
-            AttackType.FULL_NETWORK: [
-                WizardStep.TARGET_INPUT,
-                WizardStep.SCAN_TYPE,
-                WizardStep.OUTPUT_CONFIG,
-                WizardStep.PREVIEW,
-                WizardStep.EXECUTE
-            ],
-            AttackType.CUSTOM_SCAN: [
-                WizardStep.TARGET_INPUT,
-                WizardStep.TOOL_SELECTION,
-                WizardStep.OPTIONS_CONFIG,
-                WizardStep.OUTPUT_CONFIG,
-                WizardStep.PREVIEW,
-                WizardStep.EXECUTE
-            ]
-        }
-    
-    def reset(self):
-        """รีเซ็ต wizard state"""
-        self.state = WizardState()
-    
-    def get_current_prompt(self) -> WizardPrompt:
-        """ดึง prompt สำหรับ step ปัจจุบัน"""
-        
-        if self.state.current_step == WizardStep.TARGET_INPUT:
-            return self._prompt_target_input()
-        
-        elif self.state.current_step == WizardStep.SCAN_TYPE:
-            return self._prompt_scan_type()
-        
-        elif self.state.current_step == WizardStep.TOOL_SELECTION:
-            return self._prompt_tool_selection()
-        
-        elif self.state.current_step == WizardStep.OPTIONS_CONFIG:
-            return self._prompt_options_config()
-        
-        elif self.state.current_step == WizardStep.CREDENTIAL_CONFIG:
-            return self._prompt_credential_config()
-        
-        elif self.state.current_step == WizardStep.OUTPUT_CONFIG:
-            return self._prompt_output_config()
-        
-        elif self.state.current_step == WizardStep.PREVIEW:
-            return self._prompt_preview()
-        
-        elif self.state.current_step == WizardStep.EXECUTE:
-            return self._prompt_execute()
-        
-        return WizardPrompt(title="Unknown", message="Unknown step")
-    
-    def _prompt_target_input(self) -> WizardPrompt:
-        """Prompt สำหรับกรอก target"""
-        return WizardPrompt(
-            title="TARGET INPUT",
-            message="What is your target?\n\nExamples:\n  - Single IP: 192.168.1.1\n  - CIDR Range: 192.168.1.0/24\n  - Multiple: 192.168.1.1-100\n  - Hostname: target.example.com",
-            input_type="text",
-            default_value="192.168.1.0/24",
-            allow_back=False
-        )
-    
-    def _prompt_scan_type(self) -> WizardPrompt:
-        """Prompt สำหรับเลือก scan type"""
-        options = [
-            WizardOption("1", "Quick Scan", "Fast scan of common ports (top 100)", is_default=True),
-            WizardOption("2", "Full Port Scan", "Scan all 65535 ports"),
-            WizardOption("3", "Service Detection", "Detect service versions"),
-            WizardOption("4", "Stealth Scan", "SYN stealth scan (requires root/admin)"),
-            WizardOption("5", "Aggressive Scan", "Enable OS detection, version detection, script scanning"),
-            WizardOption("6", "Vulnerability Scan", "Run vulnerability scripts"),
-        ]
-        
-        if self.state.attack_type == AttackType.SSH_SERVICES:
-            options.append(WizardOption("7", "SSH Brute Force", "Attempt to brute force SSH"))
-        
-        elif self.state.attack_type == AttackType.WINDOWS_SYSTEMS:
-            options.append(WizardOption("7", "WinRM Attack", "Attack via WinRM service"))
-            options.append(WizardOption("8", "SMB Enumeration", "Enumerate SMB shares and users"))
-        
-        return WizardPrompt(
-            title="SCAN TYPE",
-            message="Select scan type:",
-            options=options,
-            input_type="choice",
-            allow_back=True
-        )
-    
-    def _prompt_tool_selection(self) -> WizardPrompt:
-        """Prompt สำหรับเลือก tool"""
-        options = []
-        
-        # Network Scanners
-        options.append(WizardOption("1", "Nmap", "Full-featured network scanner", is_default=True))
-        options.append(WizardOption("2", "Masscan", "Fast asynchronous port scanner"))
-        
-        # Connection Tools
-        options.append(WizardOption("3", "Ncat", "Network connectivity tool"))
-        
-        # Password Attack Tools
-        if self.state.attack_type in [AttackType.SSH_SERVICES, AttackType.WINDOWS_SYSTEMS]:
-            options.append(WizardOption("4", "Hydra", "Fast network logon cracker"))
-            options.append(WizardOption("5", "Ncrack", "Network authentication cracker"))
-        
-        # Windows Attack Tools
-        if self.state.attack_type == AttackType.WINDOWS_SYSTEMS:
-            options.append(WizardOption("6", "Evil-WinRM", "WinRM shell for hacking"))
-        
-        return WizardPrompt(
-            title="TOOL SELECTION",
-            message="Select tool to use:",
-            options=options,
-            input_type="choice",
-            allow_back=True
-        )
-    
-    def _prompt_options_config(self) -> WizardPrompt:
-        """Prompt สำหรับ configure options"""
-        tool = self.state.selected_tool.lower()
-        options = []
-        
-        if tool == "nmap":
-            options = [
-                WizardOption("1", "Default Options", "Use recommended default options", is_default=True),
-                WizardOption("2", "Custom Ports", "Specify ports to scan"),
-                WizardOption("3", "Timing Template", "Set timing template (T0-T5)"),
-                WizardOption("4", "Script Selection", "Choose NSE scripts to run"),
-                WizardOption("5", "Advanced Options", "Set advanced flags"),
-            ]
-        
-        elif tool == "masscan":
-            options = [
-                WizardOption("1", "Default Rate (10000 pps)", "Recommended for most networks", is_default=True),
-                WizardOption("2", "Slow Rate (1000 pps)", "For sensitive networks"),
-                WizardOption("3", "Fast Rate (100000 pps)", "For fast networks only"),
-                WizardOption("4", "Custom Rate", "Specify packets per second"),
-            ]
-        
-        elif tool == "hydra":
-            options = [
-                WizardOption("1", "Use Wordlist", "Specify username/password wordlists"),
-                WizardOption("2", "Single User", "Try single username with wordlist"),
-                WizardOption("3", "Single Password", "Try single password with userlist"),
-                WizardOption("4", "Custom Options", "Set advanced Hydra options"),
-            ]
-        
-        elif tool == "ncrack":
-            options = [
-                WizardOption("1", "Default Options", "Use recommended defaults", is_default=True),
-                WizardOption("2", "Custom Wordlists", "Specify user/pass wordlists"),
-                WizardOption("3", "Timing Options", "Set timing and threads"),
-            ]
-        
-        elif tool == "evil-winrm":
-            options = [
-                WizardOption("1", "Password Authentication", "Login with password"),
-                WizardOption("2", "Hash Authentication", "Login with NTLM hash"),
-                WizardOption("3", "Certificate", "Login with certificate"),
-                WizardOption("4", "SSL Options", "Configure SSL settings"),
-            ]
-        
-        else:
-            options = [WizardOption("1", "Default Options", "Use default settings", is_default=True)]
-        
-        return WizardPrompt(
-            title="OPTIONS CONFIGURATION",
-            message="Configure tool options:",
-            options=options,
-            input_type="choice",
-            allow_back=True
-        )
-    
-    def _prompt_credential_config(self) -> WizardPrompt:
-        """Prompt สำหรับ configure credentials"""
-        tool = self.state.selected_tool.lower()
-        options = []
-        
-        if tool in ["hydra", "ncrack"]:
-            return WizardPrompt(
-                title="CREDENTIAL CONFIGURATION",
-                message="Configure authentication testing:\n\nYou can use:\n  - Username: single username or wordlist file\n  - Password: single password or wordlist file\n  - Common wordlists:\n    - /usr/share/wordlists/rockyou.txt (Linux)\n    - C:\\tools\\wordlists\\rockyou.txt (Windows)",
-                options=[
-                    WizardOption("1", "Use Default Wordlists", "Use rockyou.txt wordlist"),
-                    WizardOption("2", "Custom Wordlists", "Specify custom wordlist paths"),
-                    WizardOption("3", "Single User/Pass", "Test single username/password"),
-                ],
-                input_type="choice",
-                allow_back=True
-            )
-        
-        elif tool == "evil-winrm":
-            return WizardPrompt(
-                title="CREDENTIAL CONFIGURATION",
-                message="Enter credentials for WinRM connection:",
-                options=[
-                    WizardOption("1", "Username", "Enter username", value=self.state.credentials.get("username", "")),
-                    WizardOption("2", "Password", "Enter password", value=self.state.credentials.get("password", "")),
-                    WizardOption("3", "Domain", "Enter domain (optional)", value=self.state.credentials.get("domain", "")),
-                ],
-                input_type="choice",
-                allow_back=True
-            )
-        
-        return WizardPrompt(
-            title="CREDENTIAL CONFIGURATION",
-            message="No credentials needed for this tool.",
-            options=[WizardOption("1", "Continue", "Proceed without credentials", is_default=True)],
-            input_type="choice",
-            allow_back=True
-        )
-    
-    def _prompt_output_config(self) -> WizardPrompt:
-        """Prompt สำหรับ configure output"""
-        return WizardPrompt(
-            title="OUTPUT CONFIGURATION",
-            message="Configure output options:",
-            options=[
-                WizardOption("1", "Normal Output", "Display to screen only", is_default=True),
-                WizardOption("2", "Save to File", "Save results to file"),
-                WizardOption("3", "XML Format", "Export in XML format"),
-                WizardOption("4", "JSON Format", "Export in JSON format (if supported)"),
-                WizardOption("5", "All Formats", "Save in all available formats"),
-            ],
-            input_type="choice",
-            allow_back=True
-        )
-    
-    def _prompt_preview(self) -> WizardPrompt:
-        """Prompt สำหรับ preview command"""
-        command = self._build_command()
-        self.state.command = command
-        
-        return WizardPrompt(
-            title="COMMAND PREVIEW",
-            message=f"Generated command:\n\n{command}\n\nReady to execute?",
-            options=[
-                WizardOption("1", "Execute", "Run this command now", is_default=True),
-                WizardOption("2", "Edit Command", "Modify the command manually"),
-                WizardOption("3", "Back", "Go back and change options"),
-                WizardOption("4", "Cancel", "Abort this wizard"),
-            ],
-            input_type="choice",
-            allow_back=True
-        )
-    
-    def _prompt_execute(self) -> WizardPrompt:
-        """Prompt สำหรับ execute"""
-        return WizardPrompt(
-            title="EXECUTING",
-            message=f"Executing command:\n\n{self.state.command}\n\nPress Ctrl+C to stop...",
-            options=[],
-            input_type="none",
-            allow_back=False
-        )
-    
-    def process_input(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล input จากผู้ใช้
-        
-        Returns:
-            tuple: (success, message)
-        """
+        self._awaiting_confirm = False
+
+    def reset(self) -> WizardResult:
+        self.state.reset_flow()
+        self._awaiting_confirm = False
+        return self._tool_menu_result()
+
+    def go_back(self) -> WizardResult:
+        if self.state.go_back():
+            self._awaiting_confirm = False
+            return self._prompt_for_current_step()
+        return self.reset()
+
+    def handle_input(self, user_input: str) -> WizardResult:
+        text = user_input.strip()
         step = self.state.current_step
-        
-        try:
-            if step == WizardStep.TARGET_INPUT:
-                return self._process_target_input(user_input)
-            elif step == WizardStep.SCAN_TYPE:
-                return self._process_scan_type(user_input)
-            elif step == WizardStep.TOOL_SELECTION:
-                return self._process_tool_selection(user_input)
-            elif step == WizardStep.OPTIONS_CONFIG:
-                return self._process_options_config(user_input)
-            elif step == WizardStep.CREDENTIAL_CONFIG:
-                return self._process_credential_config(user_input)
-            elif step == WizardStep.OUTPUT_CONFIG:
-                return self._process_output_config(user_input)
-            elif step == WizardStep.PREVIEW:
-                return self._process_preview(user_input)
-            else:
-                return False, "Unknown step"
-        except Exception as e:
-            return False, f"Error: {str(e)}"
-    
-    def _process_target_input(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล target input"""
-        target = user_input.strip()
-        if not target:
-            return False, "Target cannot be empty"
-        
-        self.state.target = target
-        self._detect_target_type(target)
-        self._advance_step()
-        return True, f"Target set to: {target}"
-    
-    def _process_scan_type(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล scan type selection"""
-        choice = user_input.strip()
-        
-        scan_type_map = {
-            "1": "quick",
-            "2": "full",
-            "3": "service",
-            "4": "stealth",
-            "5": "aggressive",
-            "6": "vuln",
-            "7": "brute" if self.state.attack_type == AttackType.SSH_SERVICES else "winrm",
-            "8": "smb"
+
+        # Allow empty for SUGGESTION and SCAN_LEVEL (default Enter = accept first)
+        if not text and step not in (WizardStep.SUGGESTION, WizardStep.SCAN_LEVEL):
+            return WizardResult(False, ["Input cannot be empty."], self._current_prompt())
+
+        lowered = text.lower()
+        if lowered in ("check", "install", "help", "reset", "back", "cancel"):
+            return self._handle_meta_command(lowered)
+
+        if self._awaiting_confirm:
+            return self._handle_confirm(text)
+
+        handlers: Dict[WizardStep, Callable[[str], WizardResult]] = {
+            WizardStep.TOOL_SELECT: self._handle_tool_select,
+            WizardStep.ATTACK_MENU: self._handle_attack_menu,
+            WizardStep.TARGET: self._handle_target,
+            WizardStep.SCAN_LEVEL: self._handle_scan_level,
+            WizardStep.SUGGESTION: self._handle_suggestion,
+            WizardStep.SUGGESTION_EDIT: self._handle_suggestion_edit,
+            WizardStep.WEB_DIR_SCAN: self._handle_web_dir_scan,
+            WizardStep.WEB_DIR_TOOL: self._handle_web_dir_tool,
+            WizardStep.WEB_URL: self._handle_web_url,
+            WizardStep.WEB_WORDLIST: self._handle_web_wordlist,
+            WizardStep.SSH_PORT_RANGE: self._handle_ssh_port_range,
+            WizardStep.SSH_BRUTE: self._handle_ssh_brute,
+            WizardStep.SSH_USERLIST: self._handle_ssh_userlist,
+            WizardStep.SSH_PASSLIST: self._handle_ssh_passlist,
+            WizardStep.WIN_WINRM: self._handle_win_winrm,
+            WizardStep.WIN_USERNAME: self._handle_win_username,
+            WizardStep.WIN_PASSWORD: self._handle_win_password,
+            WizardStep.DB_TYPE: self._handle_db_type,
+            WizardStep.CUSTOM_FLAGS: self._handle_custom_flags,
+            WizardStep.PREVIEW: self._handle_preview_choice,
         }
-        
-        if choice not in scan_type_map:
-            return False, f"Invalid choice: {choice}"
-        
-        self.state.tool_options["scan_type"] = scan_type_map[choice]
-        
-        # Set tool based on scan type
-        if scan_type_map[choice] == "brute":
-            self.state.selected_tool = "hydra"
-        elif scan_type_map[choice] == "winrm":
-            self.state.selected_tool = "evil-winrm"
-        else:
-            self.state.selected_tool = "nmap"
-        
-        self._advance_step()
-        return True, f"Scan type: {scan_type_map[choice]}"
-    
-    def _process_tool_selection(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล tool selection"""
-        choice = user_input.strip()
-        
-        tool_map = {
+        handler = handlers.get(step)
+        if handler is None:
+            return WizardResult(False, ["Wizard is busy or in an unknown state."], self._current_prompt())
+        return handler(text)
+
+    def _handle_meta_command(self, cmd: str) -> WizardResult:
+        if cmd == "reset":
+            return self.reset()
+        if cmd == "back":
+            return self.go_back()
+        if cmd == "check":
+            return WizardResult(True, ["__SHOW_TOOL_STATUS__"], self._current_prompt())
+        if cmd == "install":
+            return WizardResult(True, ["__SHOW_INSTALL_GUIDE__"], self._current_prompt())
+        if cmd == "help":
+            return WizardResult(True, [self._help_text()], self._current_prompt())
+        if cmd == "cancel" and self.state.current_step == WizardStep.EXECUTING:
+            return WizardResult(True, ["Cancelling running process..."], action="cancel")
+        return WizardResult(False, ["Nothing to cancel."], self._current_prompt())
+
+    def _handle_tool_select(self, text: str) -> WizardResult:
+        mapping = {
             "1": "nmap",
             "2": "masscan",
-            "3": "ncat",
-            "4": "hydra",
-            "5": "ncrack",
-            "6": "evil-winrm"
+            "3": "hydra",
+            "4": "ncrack",
+            "5": "evil-winrm",
         }
-        
-        if choice not in tool_map:
-            return False, f"Invalid choice: {choice}"
-        
-        self.state.selected_tool = tool_map[choice]
-        self._advance_step()
-        return True, f"Selected tool: {tool_map[choice]}"
-    
-    def _process_options_config(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล options config"""
-        choice = user_input.strip()
-        
-        tool = self.state.selected_tool.lower()
-        
-        if tool == "nmap":
-            options_map = {
-                "1": {"timing": "4"},
-                "2": {"custom_ports": True},
-                "3": {"timing": "custom"},
-                "4": {"scripts": True},
-                "5": {"advanced": True}
-            }
-        elif tool == "masscan":
-            rate_map = {"1": "10000", "2": "1000", "3": "100000", "4": "custom"}
-            self.state.tool_options["rate"] = rate_map.get(choice, "10000")
-            self._advance_step()
-            return True, f"Rate set to: {self.state.tool_options['rate']} pps"
-        else:
-            options_map = {"1": {"default": True}}
-        
-        if choice in options_map:
-            self.state.tool_options.update(options_map[choice])
-            self._advance_step()
-            return True, "Options configured"
-        
-        return False, f"Invalid choice: {choice}"
-    
-    def _process_credential_config(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล credential config"""
-        # For now, use default wordlists
-        choice = user_input.strip()
-        
-        tool = self.state.selected_tool.lower()
-        
-        if tool in ["hydra", "ncrack"]:
-            if choice == "1":
-                if self.is_windows:
-                    self.state.credentials["userlist"] = "C:\\tools\\wordlists\\users.txt"
-                    self.state.credentials["passlist"] = "C:\\tools\\wordlists\\rockyou.txt"
-                else:
-                    self.state.credentials["userlist"] = "/usr/share/wordlists/metasploit/unix_users.txt"
-                    self.state.credentials["passlist"] = "/usr/share/wordlists/rockyou.txt"
-            # choice 2 and 3 would require additional input prompts
-        
-        self._advance_step()
-        return True, "Credentials configured"
-    
-    def _process_output_config(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล output config"""
-        choice = user_input.strip()
-        
-        output_map = {
-            "1": "normal",
-            "2": "file",
-            "3": "xml",
-            "4": "json",
-            "5": "all"
+        if text == "6":
+            # TODO: Auto Chain (Recon → Action)
+            # This is a placeholder for future implementation.
+            # auto_chain_wizard() will be implemented to automatically select
+            # tools and chain them together based on scan results.
+            return WizardResult(
+                False,
+                [DEMO_TOOL_RESTRICTION_NOTICE, "",
+                 self.TOOL_MENU.format(warning=AUTHORIZED_SCOPE_WARNING)],
+                "Select>",
+            )
+
+        if text not in mapping:
+            return WizardResult(
+                False,
+                [f"Invalid selection: {text}", "Select option (1-6):"],
+                "Select>",
+            )
+
+        tool = mapping[text]
+        if tool != "nmap":
+            # Do NOT advance the flow — loop back to the same tool menu.
+            return WizardResult(
+                False,
+                [DEMO_TOOL_RESTRICTION_NOTICE, "", self.TOOL_MENU.format(warning=AUTHORIZED_SCOPE_WARNING)],
+                "Select>",
+            )
+
+        self.state.selected_tool = tool
+        self.state.advance_to(WizardStep.ATTACK_MENU)
+        return self._menu_result()
+
+    # TODO: auto_chain_wizard() - Future implementation for Auto Chain mode.
+    # This function will:
+    # 1. Run an initial broad scan (nmap/masscan)
+    # 2. Parse results to detect open ports and services
+    # 3. Automatically propose follow-up tools (hydra for SSH, evil-winrm for WinRM, etc.)
+    # 4. Chain multiple tools together in a single workflow
+    def auto_chain_wizard(self) -> WizardResult:
+        """Placeholder for Auto Chain (Recon → Action) logic."""
+        # TODO: implement full auto-chain logic
+        return WizardResult(
+            False,
+            [DEMO_TOOL_RESTRICTION_NOTICE],
+            "Select>",
+        )
+
+    def _handle_attack_menu(self, text: str) -> WizardResult:
+        mapping = {
+            "1": AttackType.WEB_SERVERS,
+            "2": AttackType.SSH_SERVERS,
+            "3": AttackType.WINDOWS_SYSTEMS,
+            "4": AttackType.DATABASES,
+            "5": AttackType.FULL_NETWORK,
+            "6": AttackType.CUSTOM_SCAN,
         }
-        
-        if choice not in output_map:
-            return False, f"Invalid choice: {choice}"
-        
-        self.state.output_format = output_map[choice]
-        self._advance_step()
-        return True, f"Output format: {output_map[choice]}"
-    
-    def _process_preview(self, user_input: str) -> tuple[bool, str]:
-        """ประมวลผล preview action"""
-        choice = user_input.strip()
-        
-        if choice == "1":  # Execute
-            self.state.advance_to(WizardStep.EXECUTE)
-            return True, "EXECUTE"
-        elif choice == "2":  # Edit
-            return True, "EDIT"
-        elif choice == "3":  # Back
-            self.state.go_back()
-            return True, "BACK"
-        elif choice == "4":  # Cancel
-            self.reset()
-            return True, "CANCEL"
-        
-        return False, f"Invalid choice: {choice}"
-    
-    def _detect_target_type(self, target: str):
-        """ตรวจจับประเภทของ target"""
-        if "/" in target:
-            self.state.target_type = "CIDR"
-        elif "-" in target:
-            self.state.target_type = "Range"
-        elif target.replace(".", "").isdigit():
-            self.state.target_type = "IP"
-        else:
-            self.state.target_type = "Hostname"
-    
-    def _advance_step(self):
-        """ไปยัง step ถัดไปตาม attack chain"""
-        attack_type = self.state.attack_type
-        if attack_type not in self.attack_chains:
-            return
-        
-        chain = self.attack_chains[attack_type]
-        current_index = -1
-        
-        for i, step in enumerate(chain):
-            if step == self.state.current_step:
-                current_index = i
+        if text not in mapping:
+            return WizardResult(
+                False,
+                [f"Invalid selection: {text}", "Select option (1-6):"],
+                "Select>",
+            )
+
+        attack = mapping[text]
+        self.state.attack_type = attack
+        self.state.advance_to(WizardStep.TARGET)
+        label = attack.value.replace("_", " ").title()
+        return WizardResult(
+            True,
+            [f"\n[+] Selected: {label}", self._target_prompt()],
+            "Input>",
+        )
+
+    def _handle_target(self, text: str) -> WizardResult:
+        ok, result = validate_target(text)
+        if not ok:
+            return WizardResult(False, [result, self._target_prompt()], "Input>")
+
+        self.state.choices["target"] = result
+
+        attack = self.state.attack_type
+        if attack == AttackType.CUSTOM_SCAN:
+            self.state.advance_to(WizardStep.CUSTOM_FLAGS)
+            return WizardResult(
+                True,
+                [
+                    f"[+] Target set: {result}",
+                    "",
+                    "Enter custom nmap flags (no ; | & allowed):",
+                    "Example: -sS -p 22,80,443 --open -sV",
+                ],
+                "Input>",
+            )
+
+        # For all non-custom scans, offer scan level selection
+        self.state.advance_to(WizardStep.SCAN_LEVEL)
+        return self._render_scan_level_menu([f"[+] Target set: {result}"])
+
+    def _render_scan_level_menu(self, prefix_lines: List[str]) -> WizardResult:
+        """Build the scan level choice menu for the current attack type."""
+        attack = self.state.attack_type
+        if not attack:
+            return self._goto_suggestion(prefix_lines)
+
+        levels = _scan_levels_for(attack)
+        label = attack.value.replace("_", " ").title()
+
+        lines = list(prefix_lines)
+        lines.append("")
+        lines.append(f"[Wizard] เลือกระดับการสแกนสำหรับ {label}:")
+        lines.append("")
+
+        # Group by category
+        current_section = ""
+        for lid, name, _flags, reason, is_agg in levels:
+            if lid == 1:
+                current_section = " -- Stealth --"
+                lines.append(current_section)
+            elif lid == 3 and current_section != " -- Stealth --":
+                current_section = " -- Verbose / Info Gathering --"
+                lines.append(current_section)
+            elif lid == 5 and current_section != " -- Verbose / Info Gathering --":
+                current_section = " -- Aggressive / Critical (ใช้ด้วยความระมัดระวัง) --"
+                lines.append(current_section)
+
+            warning_mark = "⚠ " if is_agg else ""
+            lines.append(f" {lid}. {warning_mark}{name}")
+            lines.append(f"    เหตุผล: {reason}")
+            lines.append("")
+
+        lines.append("Select scan level (1-7):")
+        return WizardResult(True, lines, "Level>")
+
+    def _handle_scan_level(self, text: str) -> WizardResult:
+        """Handle scan level selection."""
+        attack = self.state.attack_type
+        if not attack:
+            return self._goto_suggestion([])
+
+        levels = _scan_levels_for(attack)
+        valid_ids = {str(lid) for lid, _name, _flags, _reason, _agg in levels}
+
+        choice = text.strip()
+        if choice not in valid_ids:
+            return WizardResult(
+                False,
+                [f"Invalid selection: {choice}",
+                 "Select scan level (1-7):"],
+                "Level>",
+            )
+
+        self.state.choices["scan_level"] = int(choice)
+        self.state.rebuild_primary_scan()
+
+        # Find the name of the selected level for messaging
+        level_name = ""
+        is_aggressive = False
+        for lid, name, _flags, _reason, agg in levels:
+            if lid == int(choice):
+                level_name = name
+                is_aggressive = agg
                 break
-        
-        if current_index >= 0 and current_index < len(chain) - 1:
-            next_step = chain[current_index + 1]
-            self.state.advance_to(next_step)
-    
-    def set_attack_type(self, attack_type: AttackType):
-        """ตั้งค่า attack type"""
-        self.state.attack_type = attack_type
-        # Reset to first step of the chain
-        if attack_type in self.attack_chains:
-            first_step = self.attack_chains[attack_type][0]
-            self.state.current_step = first_step
-            self.state.step_history = []
-    
-    def go_back(self) -> bool:
-        """ย้อนกลับไป step ก่อนหน้า"""
-        return self.state.go_back()
-    
-    def _build_command(self) -> str:
-        """สร้าง command จาก current state"""
-        tool = self.state.selected_tool.lower()
-        target = self.state.target
-        options = self.state.tool_options
-        credentials = self.state.credentials
-        output_format = self.state.output_format
-        
-        if tool == "nmap":
-            return self._build_nmap_command(target, options, output_format)
-        elif tool == "masscan":
-            return self._build_masscan_command(target, options, output_format)
-        elif tool == "hydra":
-            return self._build_hydra_command(target, credentials, output_format)
-        elif tool == "ncrack":
-            return self._build_ncrack_command(target, credentials, output_format)
-        elif tool == "evil-winrm":
-            return self._build_evilwinrm_command(target, credentials)
-        elif tool == "ncat":
-            return self._build_ncat_command(target, options)
-        
-        return f"echo 'Unknown tool: {tool}'"
-    
-    def _build_nmap_command(self, target: str, options: dict, output: str) -> str:
-        """สร้าง nmap command"""
-        cmd_parts = ["nmap"]
-        
-        scan_type = options.get("scan_type", "quick")
-        
-        # Scan type options
-        if scan_type == "quick":
-            cmd_parts.extend(["-F"])  # Fast scan
-        elif scan_type == "full":
-            cmd_parts.extend(["-p-"])  # All ports
-        elif scan_type == "service":
-            cmd_parts.extend(["-sV", "-p-"])
-        elif scan_type == "stealth":
-            cmd_parts.extend(["-sS", "-p-"])
-        elif scan_type == "aggressive":
-            cmd_parts.extend(["-A", "-T4"])
-        elif scan_type == "vuln":
-            cmd_parts.extend(["--script", "vuln", "-sV"])
-        
-        # Timing
-        timing = options.get("timing", "4")
-        if timing != "custom":
-            cmd_parts.append(f"-T{timing}")
-        
-        # Output options
-        if output == "xml" or output == "all":
-            cmd_parts.extend(["-oX", f"scan_{target.replace('/', '_')}.xml"])
-        elif output == "json":
-            # Nmap doesn't have native JSON, but we can try
-            pass
-        
-        cmd_parts.append(target)
-        
-        return " ".join(cmd_parts)
-    
-    def _build_masscan_command(self, target: str, options: dict, output: str) -> str:
-        """สร้าง masscan command"""
-        cmd_parts = ["masscan"]
-        
-        # Ports
-        cmd_parts.extend(["-p", "1-65535"])
-        
-        # Rate
-        rate = options.get("rate", "10000")
-        cmd_parts.extend(["--rate", rate])
-        
-        # Output
-        if output != "normal":
-            cmd_parts.extend(["-oL", f"masscan_{target.replace('/', '_')}.txt"])
-        
-        cmd_parts.append(target)
-        
-        return " ".join(cmd_parts)
-    
-    def _build_hydra_command(self, target: str, credentials: dict, output: str) -> str:
-        """สร้าง hydra command (wizard style)"""
-        cmd_parts = ["hydra"]
-        
-        userlist = credentials.get("userlist", "")
-        passlist = credentials.get("passlist", "")
-        
-        if userlist:
-            cmd_parts.extend(["-L", userlist])
+
+        prefix = [f"[+] Scan level selected: {level_name}"]
+        if is_aggressive:
+            prefix.append("⚠ คำเตือน: คุณเลือกระดับการสแกนเชิงรุก กรุณาตรวจสอบให้แน่ใจว่าได้รับอนุญาตแล้ว")
+
+        return self._goto_suggestion(prefix)
+
+    def _goto_suggestion(self, prefix_lines: List[str]) -> WizardResult:
+        self.state.advance_to(WizardStep.SUGGESTION)
+        attack = self.state.attack_type
+        label = attack.value.replace("_", " ").title()
+        reason = SUGGESTION_REASONS.get(attack, "")
+        cmd = self.state.command_parts[0]
+        lines = prefix_lines + [
+            "",
+            f"[Wizard] แนะนำคำสั่งนี้สำหรับ {label}:",
+            f" {cmd}",
+            "",
+            f' เหตุผล: "{reason}"',
+            "",
+            "พิมพ์ Enter เพื่อใช้คำสั่งนี้ หรือพิมพ์ 'edit' เพื่อแก้ไข port/flag เอง",
+        ]
+        return WizardResult(True, lines, "Wizard>")
+
+    def _handle_suggestion(self, text: str) -> WizardResult:
+        choice = text.strip().lower()
+        if choice == "edit":
+            self.state.advance_to(WizardStep.SUGGESTION_EDIT)
+            return WizardResult(
+                True,
+                [
+                    "แก้ไข port/flag สำหรับคำสั่ง nmap นี้ (no ; | & allowed):",
+                    "Example: -p 22,80,443 -sV --open",
+                ],
+                "Input>",
+            )
+        # Empty Enter (or anything else) accepts the auto-suggested command as-is.
+        return self._goto_preview([f"[+] ใช้คำสั่งที่แนะนำ: {self.state.command_parts[0]}"])
+
+    def _handle_suggestion_edit(self, text: str) -> WizardResult:
+        ok, flags = validate_custom_nmap_flags(text)
+        if not ok:
+            return WizardResult(False, [flags, "แก้ไข port/flag:"], "Input>")
+
+        target = self.state.choices["target"]
+        cmd = f"nmap {flags} {quote_arg(target)}"
+        if self.state.command_parts:
+            self.state.command_parts[0] = cmd
         else:
-            cmd_parts.extend(["-l", "admin"])
-        
-        if passlist:
-            cmd_parts.extend(["-P", passlist])
+            self.state.command_parts.append(cmd)
+        return self._goto_preview([f"[+] คำสั่งที่แก้ไขแล้ว: {cmd}"])
+
+    def _handle_web_dir_scan(self, text: str) -> WizardResult:
+        ok, yes, err = validate_yes_no(text)
+        if not ok:
+            return WizardResult(False, [err, "Run directory brute-force? [y/n]:"], "Select>")
+
+        self.state.choices["web_dir_scan"] = yes
+        if not yes:
+            return self._goto_preview(["[+] Skipping directory enumeration."])
+
+        if not self._tool_available("gobuster") and not self._tool_available("dirb"):
+            return self._goto_preview(
+                [
+                    "[!] Neither gobuster nor dirb is installed.",
+                    "[+] Continuing with nmap scan only.",
+                ]
+            )
+
+        self.state.advance_to(WizardStep.WEB_DIR_TOOL)
+        lines = ["Select directory tool:", " 1. gobuster", " 2. dirb"]
+        if self._tool_available("gobuster"):
+            lines.append("    (gobuster detected)")
         else:
-            cmd_parts.extend(["-p", "password"])
-        
-        # Service
-        cmd_parts.append("ssh")
-        
-        # Target
-        cmd_parts.append(target)
-        
-        # Output
-        if output != "normal":
-            cmd_parts.extend(["-o", f"hydra_{target.replace('/', '_')}.txt"])
-        
-        return " ".join(cmd_parts)
-    
-    def _build_ncrack_command(self, target: str, credentials: dict, output: str) -> str:
-        """สร้าง ncrack command"""
-        cmd_parts = ["ncrack"]
-        
-        userlist = credentials.get("userlist", "")
-        passlist = credentials.get("passlist", "")
-        
-        if userlist:
-            cmd_parts.extend(["-U", userlist])
+            lines.append("    (gobuster NOT installed)")
+        if self._tool_available("dirb"):
+            lines.append("    (dirb detected)")
         else:
-            cmd_parts.extend(["-u", "admin"])
-        
-        if passlist:
-            cmd_parts.extend(["-P", passlist])
+            lines.append("    (dirb NOT installed)")
+        lines.append("")
+        lines.append("Select option (1-2):")
+        return WizardResult(True, lines, "Select>")
+
+    def _handle_web_dir_tool(self, text: str) -> WizardResult:
+        if text == "1":
+            if not self._tool_available("gobuster"):
+                return WizardResult(False, ["gobuster is not installed.", "Select option (1-2):"], "Select>")
+            self.state.choices["web_dir_tool"] = "gobuster"
+        elif text == "2":
+            if not self._tool_available("dirb"):
+                return WizardResult(False, ["dirb is not installed.", "Select option (1-2):"], "Select>")
+            self.state.choices["web_dir_tool"] = "dirb"
         else:
-            cmd_parts.extend(["-p", "password"])
-        
-        # Service and target
-        cmd_parts.append(f"ssh://{target}")
-        
-        return " ".join(cmd_parts)
-    
-    def _build_evilwinrm_command(self, target: str, credentials: dict) -> str:
-        """สร้าง evil-winrm command"""
-        cmd_parts = ["evil-winrm"]
-        
-        cmd_parts.extend(["-i", target])
-        
-        username = credentials.get("username", "Administrator")
-        password = credentials.get("password", "")
-        
-        cmd_parts.extend(["-u", username])
-        
-        if password:
-            cmd_parts.extend(["-p", password])
-        
-        return " ".join(cmd_parts)
-    
-    def _build_ncat_command(self, target: str, options: dict) -> str:
-        """สร้าง ncat command"""
-        cmd_parts = ["ncat"]
-        
-        # Verbose
-        cmd_parts.append("-v")
-        
-        # Target and port
-        cmd_parts.extend([target, "80"])
-        
-        return " ".join(cmd_parts)
-    
-    def get_command(self) -> str:
-        """ดึง command ที่สร้างแล้ว"""
-        if not self.state.command:
-            self.state.command = self._build_command()
-        return self.state.command
+            return WizardResult(False, [f"Invalid selection: {text}", "Select option (1-2):"], "Select>")
+
+        self.state.advance_to(WizardStep.WEB_URL)
+        return WizardResult(
+            True,
+            [f"[+] Tool: {self.state.choices['web_dir_tool']}", "", "Target URL (e.g. http://192.168.1.1):"],
+            "Input>",
+        )
+
+    def _handle_web_url(self, text: str) -> WizardResult:
+        ok, url = validate_url(text)
+        if not ok:
+            return WizardResult(False, [url, "Target URL:"], "Input>")
+        self.state.choices["web_url"] = url
+        self.state.advance_to(WizardStep.WEB_WORDLIST)
+        default = (
+            r"C:\tools\wordlists\common.txt"
+            if self.is_windows
+            else "/usr/share/wordlists/dirb/common.txt"
+        )
+        return WizardResult(
+            True,
+            [f"[+] URL: {url}", "", f"Wordlist path (default: {default}):"],
+            "Input>",
+        )
+
+    def _handle_web_wordlist(self, text: str) -> WizardResult:
+        default = (
+            r"C:\tools\wordlists\common.txt"
+            if self.is_windows
+            else "/usr/share/wordlists/dirb/common.txt"
+        )
+        wordlist = text.strip() or default
+        ok, path = validate_file_path(wordlist)
+        if not ok:
+            return WizardResult(False, [path, "Wordlist path:"], "Input>")
+
+        self.state.choices["web_wordlist"] = path
+        tool = self.state.choices["web_dir_tool"]
+        url = self.state.choices["web_url"]
+        if tool == "gobuster":
+            follow = f"gobuster dir -u {quote_arg(url)} -w {quote_arg(path)}"
+        else:
+            follow = f"dirb {quote_arg(url)} {quote_arg(path)}"
+        self.state.command_parts.append(follow)
+        return self._goto_preview([f"[+] Follow-up queued: {follow}"])
+
+    def _handle_ssh_port_range(self, text: str) -> WizardResult:
+        ports = text.strip() or "22"
+        ok, result = validate_port_range(ports)
+        if not ok:
+            return WizardResult(False, [result, "SSH port range:"], "Input>")
+
+        self.state.choices["port_range"] = result
+        self.state.rebuild_primary_scan()
+        return self._goto_preview(
+            [
+                f"[+] Port range: {result}",
+                f"[+] Updated scan: {self.state.command_parts[0]}",
+            ]
+        )
+
+    def _handle_ssh_brute(self, text: str) -> WizardResult:
+        ok, yes, err = validate_yes_no(text)
+        if not ok:
+            return WizardResult(False, [err, "Brute-force SSH? [y/n]:"], "Select>")
+
+        self.state.choices["ssh_brute"] = yes
+        if not yes:
+            return self._goto_preview(["[+] Skipping hydra brute-force."])
+
+        if not self._tool_available("hydra"):
+            return self._goto_preview(
+                ["[!] hydra is not installed.", "[+] Continuing with nmap scan only."]
+            )
+
+        self.state.advance_to(WizardStep.SSH_USERLIST)
+        default = (
+            r"C:\tools\wordlists\users.txt"
+            if self.is_windows
+            else "/usr/share/wordlists/metasploit/unix_users.txt"
+        )
+        return WizardResult(
+            True,
+            ["", f"Userlist path (default: {default}):"],
+            "Input>",
+        )
+
+    def _handle_ssh_userlist(self, text: str) -> WizardResult:
+        default = (
+            r"C:\tools\wordlists\users.txt"
+            if self.is_windows
+            else "/usr/share/wordlists/metasploit/unix_users.txt"
+        )
+        path = text.strip() or default
+        ok, result = validate_file_path(path)
+        if not ok:
+            return WizardResult(False, [result, "Userlist path:"], "Input>")
+
+        self.state.choices["ssh_userlist"] = result
+        self.state.advance_to(WizardStep.SSH_PASSLIST)
+        default_pass = (
+            r"C:\tools\wordlists\rockyou.txt"
+            if self.is_windows
+            else "/usr/share/wordlists/rockyou.txt"
+        )
+        return WizardResult(True, [f"[+] Userlist: {result}", "", f"Passlist path (default: {default_pass}):"], "Input>")
+
+    def _handle_ssh_passlist(self, text: str) -> WizardResult:
+        default = (
+            r"C:\tools\wordlists\rockyou.txt"
+            if self.is_windows
+            else "/usr/share/wordlists/rockyou.txt"
+        )
+        path = text.strip() or default
+        ok, result = validate_file_path(path)
+        if not ok:
+            return WizardResult(False, [result, "Passlist path:"], "Input>")
+
+        self.state.choices["ssh_passlist"] = result
+        target = self.state.choices["target"]
+        userlist = self.state.choices["ssh_userlist"]
+        follow = (
+            f"hydra -L {quote_arg(userlist)} -P {quote_arg(result)} "
+            f"ssh://{quote_arg(target)}"
+        )
+        self.state.command_parts.append(follow)
+        return self._goto_preview([f"[+] Hydra chain queued: {follow}"])
+
+    def _handle_win_winrm(self, text: str) -> WizardResult:
+        ok, yes, err = validate_yes_no(text)
+        if not ok:
+            return WizardResult(False, [err, "Use Evil-WinRM? [y/n]:"], "Select>")
+
+        self.state.choices["win_winrm"] = yes
+        if not yes:
+            return self._goto_preview(["[+] Skipping Evil-WinRM connection."])
+
+        if not self._tool_available("evil-winrm"):
+            return self._goto_preview(
+                ["[!] evil-winrm is not installed.", "[+] Continuing with nmap scan only."]
+            )
+
+        self.state.advance_to(WizardStep.WIN_USERNAME)
+        return WizardResult(True, ["", "WinRM username (e.g. Administrator):"], "Input>")
+
+    def _handle_win_username(self, text: str) -> WizardResult:
+        ok, user = validate_username(text)
+        if not ok:
+            return WizardResult(False, [user, "Username:"], "Input>")
+
+        self.state.choices["win_username"] = user
+        self.state.advance_to(WizardStep.WIN_PASSWORD)
+        return WizardResult(True, [f"[+] Username: {user}", "", "Password:"], "Password>")
+
+    def _handle_win_password(self, text: str) -> WizardResult:
+        ok, password = validate_password(text)
+        if not ok:
+            return WizardResult(False, [password, "Password:"], "Password>")
+
+        self.state.choices["win_password"] = password
+        target = self.state.choices["target"]
+        user = self.state.choices["win_username"]
+        follow = (
+            f"evil-winrm -i {quote_arg(target)} -u {quote_arg(user)} "
+            f"-p {quote_arg(password)}"
+        )
+        self.state.command_parts.append(follow)
+        return self._goto_preview([f"[+] WinRM chain queued: {follow}"])
+
+    def _handle_db_type(self, text: str) -> WizardResult:
+        if text not in {"1", "2", "3", "4", "5"}:
+            return WizardResult(False, [f"Invalid selection: {text}", self.DB_OPTIONS], "Select>")
+        self.state.choices["db_type"] = text
+        self.state.rebuild_primary_scan()
+        return self._goto_preview(
+            [f"[+] Database scan queued: {self.state.command_parts[0]}"]
+        )
+
+    def _handle_custom_flags(self, text: str) -> WizardResult:
+        ok, flags = validate_custom_nmap_flags(text)
+        if not ok:
+            return WizardResult(
+                False,
+                [flags, "Enter custom nmap flags:"],
+                "Input>",
+            )
+        self.state.choices["custom_flags"] = flags
+        self.state.rebuild_primary_scan()
+        return self._goto_preview(
+            [f"[+] Custom scan queued: {self.state.command_parts[0]}"]
+        )
+
+    def _handle_preview_choice(self, text: str) -> WizardResult:
+        chain = self.state.command_chain
+        target = self.state.choices.get("target", "")
+        confirmed = validate_exact_confirmation(text)
+
+        audit_log_confirmation(command=chain, target=target, response=text, executed=confirmed)
+
+        if confirmed:
+            self._awaiting_confirm = False
+            self.state.advance_to(WizardStep.EXECUTING)
+            self.state.current_cancel_command = chain
+            return WizardResult(
+                True,
+                ["", f"[*] Executing: {chain}", "[*] Press Ctrl+C or type 'cancel' to abort.", ""],
+                prompt="",
+                action="execute",
+                commands=list(self.state.command_parts),
+            )
+
+        self._awaiting_confirm = False
+        return self.reset()
+
+    def _handle_confirm(self, text: str) -> WizardResult:
+        return self._handle_preview_choice(text)
+
+    def _goto_preview(self, prefix_lines: List[str]) -> WizardResult:
+        self.state.advance_to(WizardStep.PREVIEW)
+        self._awaiting_confirm = True
+        chain = self.state.command_chain
+        target = self.state.choices.get("target", "")
+        flags = chain.split(" ")[1:] if chain else []
+        impact = generate_impact_description(flags, target) if target else "N/A"
+        box = format_confirmation_box(chain, target, impact)
+        lines = prefix_lines + ["", box]
+        return WizardResult(True, lines, "Confirm>")
+
+    def _prompt_for_current_step(self) -> WizardResult:
+        step = self.state.current_step
+        if step == WizardStep.TOOL_SELECT:
+            return self._tool_menu_result()
+        if step == WizardStep.ATTACK_MENU:
+            return self._menu_result()
+        if step == WizardStep.TARGET:
+            return WizardResult(True, [self._target_prompt()], "Input>")
+        if step == WizardStep.SCAN_LEVEL:
+            return self._render_scan_level_menu([])
+        if step == WizardStep.SUGGESTION:
+            return self._goto_suggestion([])
+        if step == WizardStep.SUGGESTION_EDIT:
+            return WizardResult(
+                True,
+                ["แก้ไข port/flag สำหรับคำสั่ง nmap นี้ (no ; | & allowed):"],
+                "Input>",
+            )
+        if step == WizardStep.WEB_DIR_SCAN:
+            return WizardResult(True, ["Run directory brute-force? [y/n]:"], "Select>")
+        if step == WizardStep.SSH_PORT_RANGE:
+            return WizardResult(True, ["SSH port range (default 22):"], "Input>")
+        if step == WizardStep.SSH_BRUTE:
+            return WizardResult(True, ["Brute-force SSH with hydra? [y/n]:"], "Select>")
+        if step == WizardStep.WIN_WINRM:
+            return WizardResult(True, ["Connect with Evil-WinRM? [y/n]:"], "Select>")
+        if step == WizardStep.PREVIEW:
+            self._awaiting_confirm = True
+            chain = self.state.command_chain
+            target = self.state.choices.get("target", "")
+            flags = chain.split(" ")[1:] if chain else []
+            impact = generate_impact_description(flags, target) if target else "N/A"
+            box = format_confirmation_box(chain, target, impact)
+            return WizardResult(True, [box], "Confirm>")
+        if step == WizardStep.TOOL_SELECT:
+            return self._tool_menu_result()
+        return self._menu_result()
+
+    def _tool_menu_result(self) -> WizardResult:
+        return WizardResult(
+            True,
+            [self.TOOL_MENU.format(warning=AUTHORIZED_SCOPE_WARNING)],
+            "Select>",
+        )
+
+    def _menu_result(self) -> WizardResult:
+        return WizardResult(
+            True,
+            [self.ATTACK_MENU.format(warning=AUTHORIZED_SCOPE_WARNING)],
+            "Select>",
+        )
+
+    def _target_prompt(self) -> str:
+        return (
+            "Enter target (IP, CIDR, hostname, or range):\n"
+            "Examples: 192.168.1.1 | 192.168.1.0/24 | target.local"
+        )
+
+    def _current_prompt(self) -> str:
+        prompts = {
+            WizardStep.TOOL_SELECT: "Select>",
+            WizardStep.ATTACK_MENU: "Select>",
+            WizardStep.TARGET: "Input>",
+            WizardStep.SCAN_LEVEL: "Level>",
+            WizardStep.SUGGESTION: "Wizard>",
+            WizardStep.SUGGESTION_EDIT: "Input>",
+            WizardStep.WEB_DIR_SCAN: "Select>",
+            WizardStep.WEB_DIR_TOOL: "Select>",
+            WizardStep.WEB_URL: "Input>",
+            WizardStep.WEB_WORDLIST: "Input>",
+            WizardStep.SSH_PORT_RANGE: "Input>",
+            WizardStep.SSH_BRUTE: "Select>",
+            WizardStep.SSH_USERLIST: "Input>",
+            WizardStep.SSH_PASSLIST: "Input>",
+            WizardStep.WIN_WINRM: "Select>",
+            WizardStep.WIN_USERNAME: "Input>",
+            WizardStep.WIN_PASSWORD: "Password>",
+            WizardStep.DB_TYPE: "Select>",
+            WizardStep.CUSTOM_FLAGS: "Input>",
+            WizardStep.PREVIEW: "Confirm>",
+        }
+        return prompts.get(self.state.current_step, "Select>")
+
+    def _help_text(self) -> str:
+        return """
+WIZARD HELP
+-----------
+Global commands: check | install | back | reset | help | cancel
+
+Step 1: Select a tool. DEMO VERSION supports Nmap only —
+        Masscan/Hydra/Ncrack/Evil-WinRM/Auto Chain are blocked at this step.
+
+Step 2 (after target): Select a scan intensity level:
+  -- Stealth --
+   1. Stealth SYN scan
+   2. Fragmented stealth
+  -- Verbose / Info Gathering --
+   3. Verbose service scan
+   4. Verbose + script scan
+  -- Aggressive / Critical (ใช้ด้วยความระมัดระวัง) --
+   5. Aggressive full detect
+   6. Brute-timing critical
+   7. Vulnerability script scan
+
+Attack paths (Nmap only in this demo):
+ 1 Web Servers     nmap http scripts
+ 2 SSH Services    nmap port scan
+ 3 Windows Systems nmap SMB/WinRM ports
+ 4 Databases       nmap DB scripts on common ports
+ 5 Full Network    nmap -sV -O on target range
+ 6 Custom Scan     user-defined nmap flags (validated)
+
+Chaining to gobuster/dirb/hydra/evil-winrm is disabled in this demo.
+Every command requires typing the literal word "yes" at the
+COMMAND PREVIEW confirmation gate before it executes. Every
+confirmation (yes or no) is written to the audit log.
+
+Cancel via Ctrl+C during execution, or type "cancel" + Enter.
+"""
+
+    def _tool_available(self, name: str) -> bool:
+        return shutil.which(name) is not None
+
+    def get_command_chain(self) -> str:
+        return self.state.command_chain
+
+    def execution_finished(self) -> WizardResult:
+        self._awaiting_confirm = False
+        self.state.current_cancel_command = ""
+        self.state.reset_flow()
+        lines = [
+            "",
+            "[+] Command chain finished.",
+            "[*] Type reset to start a new wizard session.",
+            "",
+            self.ATTACK_MENU.format(warning=AUTHORIZED_SCOPE_WARNING),
+        ]
+        return WizardResult(True, lines, "Select>")
+
+    def handle_cancelled(self) -> WizardResult:
+        """Handle Ctrl+C or cancel during execution. Resets state and logs to audit."""
+        chain = self.state.current_cancel_command or self.state.command_chain
+        target = self.state.choices.get("target", "")
+        # Log the cancellation
+        from src.core.wizard_safety import audit_log_cancel
+        audit_log_cancel(command=chain, target=target, reason="ctrl_c_or_cancel_command")
+        self._awaiting_confirm = False
+        self.state.current_cancel_command = ""
+        self.state.reset_flow()
+        lines = [
+            "",
+            "[!] Process ถูกยกเลิกโดยผู้ใช้",
+            "[*] Type reset to start a new wizard session.",
+            "",
+            self.ATTACK_MENU.format(warning=AUTHORIZED_SCOPE_WARNING),
+        ]
+        return WizardResult(True, lines, "Select>")
 
 
-# สร้าง instance เดียวสำหรับใช้ทั้งโปรแกรม
-_wizard_engine_instance = None
+_wizard_engine_instance: Optional[WizardEngine] = None
+
 
 def get_wizard_engine() -> WizardEngine:
-    """ดึง WizardEngine instance"""
     global _wizard_engine_instance
     if _wizard_engine_instance is None:
         _wizard_engine_instance = WizardEngine()
