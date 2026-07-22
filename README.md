@@ -168,7 +168,7 @@ Contributions are welcome. Please open an issue to discuss significant changes b
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+
 
 ---
 
