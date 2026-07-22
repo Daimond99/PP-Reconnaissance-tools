@@ -114,6 +114,120 @@ def format_confirmation_box(command: str, target: str, impact: str) -> str:
     )
 
 
+import ipaddress
+
+
+def is_target_in_scope(target: str, scope: str) -> Tuple[bool, str]:
+    """
+    Check that `target` falls inside the authorized `scope` CIDR.
+    Hostnames and IP ranges (e.g. 192.168.1.10-20) can't be checked as
+    CIDR membership, so they're passed through — the confirmation box
+    still forces an explicit human scope acknowledgement before execution.
+    """
+    target = (target or "").strip()
+    if not target:
+        return False, "Target ว่างเปล่า"
+
+    try:
+        scope_net = ipaddress.ip_network(scope, strict=False)
+    except ValueError:
+        return False, f"Scope ที่ตั้งค่าไว้ไม่ถูกต้อง: {scope}"
+
+    try:
+        if "/" in target:
+            target_net = ipaddress.ip_network(target, strict=False)
+            if target_net.subnet_of(scope_net):
+                return True, ""
+            return False, f"{target} อยู่นอกขอบเขตที่ได้รับอนุญาต ({scope})"
+        if target.count(".") == 3 and "-" not in target.rsplit(".", 1)[-1]:
+            if ipaddress.ip_address(target) in scope_net:
+                return True, ""
+            return False, f"{target} อยู่นอกขอบเขตที่ได้รับอนุญาต ({scope})"
+    except ValueError:
+        pass  # hostname or IP-range expression — allow through to the human gate
+
+    return True, ""
+
+
+_LLM_AUDIT_LOG_PATH = Path("logs") / "llm_mode_audit_log.jsonl"
+
+
+def audit_log_llm(channel: str, command: str, target: str, response: str,
+                   executed: bool, provider: Optional[str] = None,
+                   extra: Optional[Dict] = None) -> None:
+    """
+    Dedicated audit trail for LLM Mode (Plain + AI). Records which channel
+    (plain/ai) and provider (openai/anthropic/None) were used for every
+    confirmation decision — but NEVER the API key itself.
+    Best-effort, never raises.
+    """
+    try:
+        _LLM_AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "channel": channel,
+            "provider": provider,
+            "command": command,
+            "target": target,
+            "response": response,
+            "executed": executed,
+        }
+        if extra:
+            entry.update(extra)
+        with _LLM_AUDIT_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
+_RECON_KEYWORDS = (
+    # English
+    "scan", "port", "nmap", "masscan", "service", "detect", "network",
+    "host", "target", "vulnerab", "recon", "firewall", "subnet", "cidr",
+    "ip ", "server", "os ",
+    # Thai
+    "สแกน", "พอร์ต", "เครือข่าย", "เป้าหมาย", "เซอร์วิส", "ช่องโหว่",
+    "ระบบปฏิบัติการ", "ตรวจสอบ", "เปิด", "โฮสต์", "เซิร์ฟเวอร์",
+)
+
+
+def is_recon_related(user_input: str) -> bool:
+    """
+    Cheap client-side pre-filter, run BEFORE spending an AI Mode API call.
+    Not a security boundary by itself (that's the system prompt + output
+    validation) — just a keyword whitelist to catch obviously off-topic
+    requests and warn the user before they burn API credit.
+    """
+    text = (user_input or "").lower()
+    return any(keyword in text for keyword in _RECON_KEYWORDS)
+
+
+_LLM_CMD_LINE_RE = re.compile(r"^(nmap|masscan)\b.*$", re.MULTILINE)
+
+
+def validate_ai_response(text: str) -> Tuple[bool, str]:
+    """
+    Validate an LLM's raw response before it is ever treated as a command
+    candidate.
+
+    Returns (True, command) only when a real nmap/masscan command line is
+    present AND passes the same program/flag whitelist used everywhere else
+    (parse_command_line). Otherwise returns (False, raw_text) so the caller
+    can display the model's reply as plain informational text — it must
+    NEVER be forwarded to the Confirmation Gate or QProcess.
+    """
+    raw = (text or "").strip()
+    match = _LLM_CMD_LINE_RE.search(raw)
+    if not match:
+        return False, raw or "(no output)"
+
+    candidate = match.group(0).strip()
+    ok, _err, _argv = parse_command_line(candidate)
+    if not ok:
+        return False, raw
+    return True, candidate
+
+
 _AUDIT_LOG_PATH = Path("logs") / "wizard_audit_log.jsonl"
 
 
