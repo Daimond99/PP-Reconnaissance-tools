@@ -37,7 +37,7 @@ The application detects which tools are installed on your system at startup and 
 ## Requirements
 
 - **Python** 3.8 or later
-- **PyQt5** 5.15.9
+- **Pyside6**
 - External security tools (Nmap, Masscan, etc.) — installed separately on your system
 
 ---
