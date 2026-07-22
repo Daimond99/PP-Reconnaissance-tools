@@ -26,6 +26,7 @@ from src.config import (
 from src.core.wizard_engine import WizardEngine, AttackType, WizardStep
 from src.core.tool_manager import get_tool_manager
 from src.ui.llm_mode import LLMModeTab
+from src.ui.tool_selection import ToolSelectionTab
 
 
 # ============================================================================
@@ -844,6 +845,7 @@ class MainContentArea(QWidget):
         self.raw_output_tab = RawOutputTab()
         self.results_tab = ResultsDisplayTab()
         self.llm_tab = LLMModeTab()
+        self.tool_selection_tab = ToolSelectionTab()
 
         self.tab_widget.addTab(self.wizard_tab, "Wizard Console")
         self.tab_widget.addTab(self.input_tab, "Input Management")
@@ -851,3 +853,4 @@ class MainContentArea(QWidget):
         self.tab_widget.addTab(self.raw_output_tab, "Raw Output")
         self.tab_widget.addTab(self.results_tab, "Results Display")
         self.tab_widget.addTab(self.llm_tab, "LLM Mode")
+        self.tab_widget.addTab(self.tool_selection_tab, "Tool Selection")

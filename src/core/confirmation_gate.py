@@ -63,15 +63,34 @@ class ConfirmationGate:
         self.argv: List[str] = []
         self._pending = False
 
-    def request(self, command: str, target: str) -> GateResult:
-        """Validate + build the preview box for a candidate command. Never executes."""
+    def request(self, command: str, target: str, extra_impact: Optional[str] = None,
+                argv_override: Optional[List[str]] = None, skip_scope: bool = False) -> GateResult:
+        """
+        Validate + build the preview box for a candidate command. Never executes.
+
+        extra_impact  : appended to the auto-generated impact text — used for
+                         tool-specific high-severity warnings (e.g. Ncat listen
+                         mode opening a port, Evil-WinRM getting direct shell
+                         access) that the generic nmap-flag-based impact
+                         description can't know about.
+        argv_override : if given, this is what actually gets executed instead
+                         of the argv parsed from `command`. Lets the caller
+                         pass a MASKED `command` string (e.g. with the real
+                         password replaced by asterisks) for the preview box
+                         and audit log, while still running the real argv.
+                         The real secret is therefore never previewed, logged,
+                         or stored on `self.command` — only `self.argv`.
+        skip_scope     : skip the in-scope check — for operations with no
+                         remote target (e.g. Ncat listen mode binds locally).
+        """
         command = (command or "").strip()
         target = (target or "").strip()
 
-        ok, err = is_target_in_scope(target, self.scope)
-        if not ok:
-            self._pending = False
-            return GateResult(False, f"[!] Scope violation: {err}")
+        if not skip_scope:
+            ok, err = is_target_in_scope(target, self.scope)
+            if not ok:
+                self._pending = False
+                return GateResult(False, f"[!] Scope violation: {err}")
 
         ok, err, argv = parse_command_line(command)
         if not ok:
@@ -80,13 +99,15 @@ class ConfirmationGate:
 
         flags = [tok for tok in argv[1:] if tok != target]
         impact = generate_impact_description(flags, target)
+        if extra_impact:
+            impact = f"{impact}\n              {extra_impact}"
         preview = format_confirmation_box(command, target, impact)
 
-        self.command = command
+        self.command = command  # masked display string — this is what gets logged, never the secret
         self.target = target
-        self.argv = argv
+        self.argv = argv_override if argv_override is not None else argv
         self._pending = True
-        return GateResult(True, "OK", preview_box=preview, argv=argv)
+        return GateResult(True, "OK", preview_box=preview, argv=self.argv)
 
     def confirm(self, reply: str) -> bool:
         """Returns True only if `reply` is the exact literal 'yes'."""

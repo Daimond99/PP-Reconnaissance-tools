@@ -645,6 +645,35 @@ AUTHORIZED_SCOPE = "192.168.1.0/24"
 # (Windows Credential Manager / macOS Keychain / Secret Service on Linux).
 KEYRING_SERVICE_NAME = "TheRecon"
 
+# ----------------------------------------------------------------------------
+# Tool Selection menu — Windows-native (no WSL2) enable/disable registry.
+# Nmap was already usable via the Wizard Console. Ncat and Evil-WinRM are the
+# next two tools enabled for real execution on Windows. Everything else stays
+# disabled until a Windows-native path is validated.
+# ----------------------------------------------------------------------------
+TOOL_ENABLEMENT = {
+    "nmap": True,
+    "ncat": True,
+    "evil-winrm": True,
+    "ncrack": True,
+    "masscan": False,
+    "hydra": False,
+}
+
+TOOL_NOT_SUPPORTED_MESSAGE = "[!] เครื่องมือนี้ยังไม่รองรับบน Windows ในเวอร์ชัน demo ปัจจุบัน"
+
+# Ncrack on Windows relies on an old, unmaintained binary — always warn
+# before entering the wizard, every single time it's selected.
+NCRACK_STABILITY_WARNING = (
+    "[!] Ncrack บน Windows ใช้ binary เก่าที่ไม่ได้รับการดูแลต่อแล้ว\n"
+    "ผลลัพธ์อาจไม่เสถียรเท่าเวอร์ชัน Linux แนะนำให้ใช้เพื่อ demo เท่านั้น\n"
+    "ต้องการดำเนินการต่อหรือไม่? (yes/no)"
+)
+
+# Protocols offered as a numbered pick-list (never free-typed) to avoid
+# syntax mistakes in the ncrack://<protocol> URI.
+NCRACK_PROTOCOLS = ["rdp", "ssh", "ftp", "telnet", "http", "pop3", "vnc", "smb"]
+
 # Path to the llm-tools-nmap.py functions file used with `llm --functions`.
 # Download from: https://github.com/peter-hackertarget/llm-tools-nmap
 # Defaults to the project root; change this if you keep it elsewhere.

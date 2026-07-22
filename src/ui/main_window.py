@@ -393,6 +393,7 @@ class ReconMainWindow(QMainWindow):
         ma.wizard_tab.commandEntered.connect(self._on_terminal_command)
         ma.raw_output_tab.commandEntered.connect(self._on_raw_command)
         ma.llm_tab.commandEntered.connect(self._on_terminal_command)
+        ma.tool_selection_tab.commandEntered.connect(self._on_terminal_command)
 
         self.new_scan_action.triggered.connect(self._on_new_scan)
         self.stop_scan_action.triggered.connect(self._on_stop_scan)
