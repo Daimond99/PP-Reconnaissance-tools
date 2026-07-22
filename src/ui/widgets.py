@@ -25,6 +25,7 @@ from src.config import (
 
 from src.core.wizard_engine import WizardEngine, AttackType, WizardStep
 from src.core.tool_manager import get_tool_manager
+from src.ui.llm_mode import LLMModeTab
 
 
 # ============================================================================
@@ -790,41 +791,6 @@ class CommandEditorTab(QWidget):
             btn_row.addWidget(btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
-
-
-class LLMModeTab(QWidget):
-    """Tab สำหรับ LLM Mode"""
-    
-    commandEntered = Signal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        font = QFont(TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-
-        self.output_area = QTextEdit()
-        self.output_area.setReadOnly(True)
-        self.output_area.setAcceptRichText(False)
-        self.output_area.setFont(font)
-        self.output_area.setStyleSheet(f"""
-            background-color: {CONSOLE_BG}; color: {CONSOLE_TEXT};
-            border: none; border-radius: 4px; padding: 20px 24px;
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 13.5px;
-        """)
-        self.output_area.setPlainText(LLM_DEMO_TEXT)
-        layout.addWidget(self.output_area, 1)
-        self.console = self.output_area
-
-        self._history = []
-        self._history_index = -1
-
-    def write_output(self, text: str):
-        self.output_area.setPlainText(text)
 
 
 class MainContentArea(QWidget):
