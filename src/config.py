@@ -25,6 +25,13 @@ BORDER       = "#44475a"
 CONSOLE_BG   = "#050505"
 CONSOLE_TEXT = "#f8f8f2"
 
+# Terminal accent colors (Dracula-consistent) — used to colorize LLM Mode
+# console output by message type (success/warning/error/info).
+ACCENT_GREEN  = "#50fa7b"
+ACCENT_RED    = "#ff5555"
+ACCENT_YELLOW = "#f1fa8c"
+ACCENT_CYAN   = "#8be9fd"
+
 # ============================================================================
 # STYLESHEET - สไตล์หลักของแอป (แปลงจาก Design Reference)
 # ============================================================================
@@ -677,7 +684,7 @@ NCRACK_PROTOCOLS = ["rdp", "ssh", "ftp", "telnet", "http", "pop3", "vnc", "smb"]
 # Path to the llm-tools-nmap.py functions file used with `llm --functions`.
 # Download from: https://github.com/peter-hackertarget/llm-tools-nmap
 # Defaults to the project root; change this if you keep it elsewhere.
-LLM_TOOLS_NMAP_PATH = "llm-tools-nmap.py"
+LLM_TOOLS_NMAP_PATH = "src/scripts/llm-tools-nmap.py"
 
 AI_MODE_PROVIDERS = {
     "openai": {
@@ -691,6 +698,12 @@ AI_MODE_PROVIDERS = {
         "keyring_key": "anthropic_api_key",
         "env_var": "ANTHROPIC_API_KEY",
         "model": "claude-3-5-sonnet-latest",
+    },
+    "gemini": {
+        "label": "Google (Gemini)",
+        "keyring_key": "gemini_api_key",
+        "env_var": "GEMINI_API_KEY",
+        "model": "gemini-1.5-flash-latest",
     },
 }
 
@@ -722,14 +735,14 @@ nmap_script_scan, nmap_scan)
 
 LLM_DEMO_TEXT = """\
 # Discover your local network
-llm --functions llm-tools-nmap.py "What's my local network information?"
+llm --functions src/scripts/llm-tools-nmap.py "What's my local network information?"
 
 # Find live hosts on your network
-llm --functions llm-tools-nmap.py "Scan my local network to find live hosts"
+llm --functions src/scripts/llm-tools-nmap.py "Scan my local network to find live hosts"
 
 # Quick port scan of a hosts in /etc/hosts using pipe capability
-cat /etc/hosts | llm --functions llm-tools-nmap.py "Do a quick port scan of these hosts"
+cat /etc/hosts | llm --functions src/scripts/llm-tools-nmap.py "Do a quick port scan of these hosts"
 
 # Detailed service detection
-llm --functions llm-tools-nmap.py "Scan 192.168.1.1 for services on ports 80,443,22"
+llm --functions src/scripts/llm-tools-nmap.py "Scan 192.168.1.1 for services on ports 80,443,22"
 """

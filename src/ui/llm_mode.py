@@ -21,6 +21,7 @@ in the console's scrollback.
 
 from __future__ import annotations
 
+import html as html_lib
 import re
 from enum import Enum, auto
 from typing import List, Optional
@@ -35,6 +36,8 @@ from src.config import (
     TERMINAL_FONT_FAMILY, TERMINAL_FONT_SIZE,
     CONSOLE_BG, CONSOLE_TEXT, AUTHORIZED_SCOPE, AI_MODE_PROVIDERS, SYSTEM_PROMPT,
     LLM_TOOLS_NMAP_PATH,
+    PURPLE, BLUE,
+    ACCENT_GREEN, ACCENT_RED, ACCENT_CYAN,
 )
 from src.core.api_key_manager import get_api_key_manager
 from src.core.confirmation_gate import ConfirmationGate
@@ -69,6 +72,7 @@ class LLMModeTab(QWidget):
         self.provider: Optional[str] = None   # "openai" | "anthropic"
         self.gate: Optional[ConfirmationGate] = None
 
+        self._provider_menu_order: List[str] = list(AI_MODE_PROVIDERS)
         self._pending_provider_choice: Optional[str] = None
         self._pending_valid_key: Optional[str] = None
         self._pending_target: str = AUTHORIZED_SCOPE
@@ -166,9 +170,49 @@ class LLMModeTab(QWidget):
     def _append(self, text: str):
         cursor = self.output_area.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(text)
+        cursor.insertHtml(self._colorize(text))
         self.output_area.setTextCursor(cursor)
         self.output_area.ensureCursorVisible()
+
+    _NUM_OPTION_RE = re.compile(r"^(\s*)(\d+\.)(\s.*)$")
+
+    def _colorize_line(self, line: str) -> str:
+        """Detect a message-type marker in a raw (unescaped) line and wrap
+        it in a colored span, escaping the text content along the way."""
+        stripped = line.strip()
+        esc = html_lib.escape(line)
+
+        if stripped.startswith("[!]"):
+            return f'<span style="color:{ACCENT_RED};font-weight:600">{esc}</span>'
+        if stripped.startswith("[✓]"):
+            return f'<span style="color:{ACCENT_GREEN};font-weight:600">{esc}</span>'
+        if stripped.startswith("[…]") or stripped.startswith("[...]"):
+            return f'<span style="color:{ACCENT_CYAN}">{esc}</span>'
+        if stripped.startswith("[x]"):
+            return f'<span style="color:{ACCENT_RED}">{esc}</span>'
+        if stripped.startswith("[i]"):
+            return f'<span style="color:{BLUE}">{esc}</span>'
+        if stripped.startswith(("[AI Summary]", "[Summary]", "[llm output]")):
+            return f'<span style="color:{ACCENT_CYAN};font-weight:700">{esc}</span>'
+        if stripped and set(stripped) == {"="}:
+            return f'<span style="color:{PURPLE}">{esc}</span>'
+        if stripped.startswith("LLM MODE"):
+            return f'<span style="color:{PURPLE};font-weight:700">{esc}</span>'
+        if stripped in (">", "Select>") or stripped.endswith("Select>"):
+            prefix = line[: line.rfind(">")]
+            return f'{html_lib.escape(prefix)}<span style="color:{PURPLE};font-weight:700">&gt;</span>'
+        m = self._NUM_OPTION_RE.match(line)
+        if m:
+            return (
+                f'{html_lib.escape(m.group(1))}'
+                f'<span style="color:{BLUE};font-weight:700">{html_lib.escape(m.group(2))}</span>'
+                f'{html_lib.escape(m.group(3))}'
+            )
+        return esc
+
+    def _colorize(self, text: str) -> str:
+        lines = text.split("\n")
+        return "<br>".join(self._colorize_line(line) for line in lines)
 
     def _clear(self):
         self.output_area.clear()
@@ -210,7 +254,7 @@ class LLMModeTab(QWidget):
             "LLM MODE — เลือกโหมดการทำงาน\n"
             + "=" * 50 + "\n\n"
             " 1. Plain LLM-Nmap  — local เท่านั้น ไม่ต้องใช้ API key (Ollama)\n"
-            " 2. AI Mode         — เชื่อมต่อ OpenAI/Anthropic API เพื่อคำตอบที่ฉลาดกว่า\n\n"
+            " 2. AI Mode         — เชื่อมต่อ OpenAI/Anthropic/Gemini API เพื่อคำตอบที่ฉลาดกว่า\n\n"
             "Select option (1-2) : \n"
             "Select>"
         )
@@ -246,21 +290,24 @@ class LLMModeTab(QWidget):
     def _show_provider_select(self):
         self.state = LLMState.AI_PROVIDER_SELECT
         self._clear()
-        self._append(
-            "[AI Mode] ยังไม่พบ API key กรุณาเลือกผู้ให้บริการ:\n"
-            " 1. OpenAI (GPT-4o-mini)\n"
-            " 2. Anthropic (Claude)\n"
-            " 3. ยกเลิกและกลับไปใช้ Plain LLM-Nmap แทน\n"
-            "Select> "
-        )
+        provider_ids = list(AI_MODE_PROVIDERS)
+        self._provider_menu_order = provider_ids
+        lines = ["[AI Mode] ยังไม่พบ API key กรุณาเลือกผู้ให้บริการ:"]
+        for idx, provider in enumerate(provider_ids, start=1):
+            lines.append(f" {idx}. {AI_MODE_PROVIDERS[provider]['label']}")
+        cancel_idx = len(provider_ids) + 1
+        lines.append(f" {cancel_idx}. ยกเลิกและกลับไปใช้ Plain LLM-Nmap แทน")
+        lines.append("Select> ")
+        self._append("\n".join(lines))
 
     def _handle_provider_select(self, text: str):
         choice = text.strip()
-        if choice == "1":
-            self._pending_provider_choice = "openai"
-        elif choice == "2":
-            self._pending_provider_choice = "anthropic"
-        elif choice == "3":
+        provider_ids = getattr(self, "_provider_menu_order", list(AI_MODE_PROVIDERS))
+        cancel_idx = len(provider_ids) + 1
+
+        if choice.isdigit() and 1 <= int(choice) <= len(provider_ids):
+            self._pending_provider_choice = provider_ids[int(choice) - 1]
+        elif choice == str(cancel_idx):
             self.mode = "plain"
             self.provider = None
             self._enter_ready("กลับไปใช้ Plain LLM-Nmap Mode")
@@ -455,9 +502,18 @@ class LLMModeTab(QWidget):
             return
         candidate = result
 
+        # nmap_os_detection (-O) needs root/admin privilege — warn every time,
+        # regardless of channel (Plain or AI).
+        extra_impact = None
+        if re.search(r"(?:^|\s)-O(?:\s|$)", candidate):
+            extra_impact = (
+                "[!] คำสั่งนี้ใช้ OS detection (-O) ซึ่งต้องรันด้วยสิทธิ์ root/admin "
+                "หากรันโดยไม่มีสิทธิ์สูงพอ nmap จะ scan ไม่สำเร็จหรือได้ผลลัพธ์ไม่ถูกต้อง"
+            )
+
         # Reuse the exact same Confirmation Gate as Wizard Console / manual mode.
         self.gate = ConfirmationGate(channel=self.mode, provider=self.provider)
-        result = self.gate.request(candidate, self._pending_target)
+        result = self.gate.request(candidate, self._pending_target, extra_impact=extra_impact)
         if not result.ok:
             self._append(f"\n{result.message}\n\n>")
             self.state = LLMState.READY

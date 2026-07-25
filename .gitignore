@@ -36,3 +36,10 @@ wheels/
 # OS
 .env
 .env.local
+
+# Logs
+logs/
+
+# Docs (keep in git, but ignore generated files)
+docs/*.bak
+docs/*.orig

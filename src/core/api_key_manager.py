@@ -118,6 +118,8 @@ class APIKeyManager:
                 return self._validate_openai(key)
             if provider == "anthropic":
                 return self._validate_anthropic(key)
+            if provider == "gemini":
+                return self._validate_gemini(key)
             return ValidationResult(False, f"Unknown provider: {provider}")
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
@@ -147,6 +149,15 @@ class APIKeyManager:
             if resp.status == 200:
                 return ValidationResult(True, "Anthropic key is valid.")
         return ValidationResult(False, "Unexpected response from Anthropic.")
+
+    def _validate_gemini(self, key: str) -> ValidationResult:
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            if resp.status == 200:
+                return ValidationResult(True, "Gemini key is valid.")
+        return ValidationResult(False, "Unexpected response from Gemini.")
 
 
 # Single shared instance for the app's lifetime (mirrors get_tool_manager()).

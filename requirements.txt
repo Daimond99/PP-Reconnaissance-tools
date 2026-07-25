@@ -1,2 +1,8 @@
 PySide6>=6.6.0
 keyring>=24.0.0
+
+# LLM Mode (llm-nmap plugin) — `llm` CLI + provider plugins.
+# OpenAI support is built into `llm` itself; Anthropic/Gemini need plugins.
+llm>=0.17
+llm-anthropic>=0.1
+llm-gemini>=0.1

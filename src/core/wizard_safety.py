@@ -249,6 +249,29 @@ def audit_log_confirmation(command: str, target: str, response: str, executed: b
         pass
 
 
+def audit_log_fallback(
+    *, target: str, step: str, rejected_tool: str, fallback_tool: str,
+    detected_ports: List[int], reason: str,
+) -> None:
+    """Record an Auto Chain fallback decision without exposing credentials."""
+    try:
+        _AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": "auto_chain_fallback",
+            "target": target,
+            "step": step,
+            "rejected_tool": rejected_tool,
+            "fallback_tool": fallback_tool,
+            "detected_ports": sorted(set(detected_ports)),
+            "reason": reason,
+        }
+        with _AUDIT_LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def audit_log_cancel(command: str, target: str, reason: str = "user_cancelled") -> None:
     """Append a cancellation event to the audit log (best-effort, never raises)."""
     try:

@@ -28,6 +28,14 @@ from src.core.wizard_safety import (
     validate_password,
     validate_yes_no,
 )
+from src.core.auto_chain import (
+    AutoChainFallbackController,
+    AutoChainState,
+    ChainStep,
+    FallbackSuggestion,
+    suggest_fallback_tool,
+)
+from src.core.confirmation_gate import ConfirmationGate, GateResult
 
 DEMO_TOOL_RESTRICTION_NOTICE = (
     "[!] เครื่องมือนี้ยังไม่เปิดใช้งานในเวอร์ชัน demo ปัจจุบัน\n"
@@ -317,6 +325,33 @@ Select option (1-5):"""
         self.state = WizardState()
         self.is_windows = platform.system() == "Windows"
         self._awaiting_confirm = False
+        # Kept separate from WizardState so no credential is ever persisted in
+        # the Auto Chain decision history.
+        self.auto_chain: Optional[AutoChainFallbackController] = None
+        self._auto_chain_gate: Optional[ConfirmationGate] = None
+
+    def suggest_fallback_tool(
+        self, current_step: ChainStep, rejected_tool: str, detected_ports: List[int],
+    ) -> Optional[FallbackSuggestion]:
+        """Expose the Auto Chain fallback policy to the PySide6 layer."""
+        return suggest_fallback_tool(current_step, rejected_tool, detected_ports)
+
+    def request_auto_chain_confirmation(
+        self, command: str, suggestion: FallbackSuggestion,
+    ) -> GateResult:
+        """Prepare an Auto Chain proposal with the shared Confirmation Gate."""
+        if not self.auto_chain:
+            return GateResult(False, "[!] Auto Chain has not been started.")
+        gate = ConfirmationGate(channel="wizard-auto-chain")
+        result = self.auto_chain.request_confirmation(gate, command, suggestion)
+        self._auto_chain_gate = gate if result.ok else None
+        return result
+
+    def confirm_auto_chain_proposal(self, reply: str) -> bool:
+        """Confirm the proposal prepared by request_auto_chain_confirmation."""
+        if not self._auto_chain_gate:
+            return False
+        return self._auto_chain_gate.confirm(reply)
 
     def reset(self) -> WizardResult:
         self.state.reset_flow()
@@ -395,6 +430,7 @@ Select option (1-5):"""
             "5": "evil-winrm",
         }
         if text == "6":
+            return self.auto_chain_wizard()
             # TODO: Auto Chain (Recon → Action)
             # This is a placeholder for future implementation.
             # auto_chain_wizard() will be implemented to automatically select
@@ -433,6 +469,13 @@ Select option (1-5):"""
     # 3. Automatically propose follow-up tools (hydra for SSH, evil-winrm for WinRM, etc.)
     # 4. Chain multiple tools together in a single workflow
     def auto_chain_wizard(self) -> WizardResult:
+        self.auto_chain = AutoChainFallbackController(AutoChainState())
+        return WizardResult(
+            True,
+            ["AUTO CHAIN (Recon -> Action)",
+             "Auto Chain state is ready; every fallback uses the shared Confirmation Gate."],
+            "Select>",
+        )
         """Placeholder for Auto Chain (Recon → Action) logic."""
         # TODO: implement full auto-chain logic
         return WizardResult(
