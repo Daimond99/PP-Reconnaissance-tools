@@ -41,7 +41,8 @@ from src.config import (
 )
 from src.core.api_key_manager import get_api_key_manager
 from src.core.confirmation_gate import ConfirmationGate
-from src.core.wizard_safety import is_recon_related, validate_ai_response
+from src.tools.nmap.parser import parse_open_ports
+from src.validation.common import is_recon_related, validate_ai_response
 
 
 _TARGET_RE = re.compile(r"((?:\d{1,3}\.){3}\d{1,3}(?:/\d{1,2})?)")
@@ -575,11 +576,12 @@ class LLMModeTab(QWidget):
     # ------------------------------------------------------------------
 
     def _append_summary(self, output: str):
-        open_ports = re.findall(r"(\d+)/tcp\s+open", output)
+        open_ports = parse_open_ports(output)
 
         if self.mode != "ai" or not self.provider:
             if open_ports:
-                self._append(f"[Summary] พบ {len(open_ports)} port ที่เปิดอยู่: {', '.join(open_ports)}\n")
+                ports_text = ", ".join(p["port"] for p in open_ports)
+                self._append(f"[Summary] พบ {len(open_ports)} port ที่เปิดอยู่: {ports_text}\n")
             else:
                 self._append("[Summary] ไม่พบ port ที่เปิดอยู่ในผลลัพธ์\n")
             return
@@ -590,7 +592,8 @@ class LLMModeTab(QWidget):
         key = self.key_manager.get_key(self.provider)
         if not key:
             if open_ports:
-                self._append(f"[Summary] พบ {len(open_ports)} port ที่เปิดอยู่: {', '.join(open_ports)}\n")
+                ports_text = ", ".join(p["port"] for p in open_ports)
+                self._append(f"[Summary] พบ {len(open_ports)} port ที่เปิดอยู่: {ports_text}\n")
             return
 
         env = QProcessEnvironment.systemEnvironment()

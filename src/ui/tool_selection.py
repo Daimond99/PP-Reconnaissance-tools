@@ -34,10 +34,11 @@ from src.config import (
     NCRACK_STABILITY_WARNING, NCRACK_PROTOCOLS,
 )
 from src.core.confirmation_gate import ConfirmationGate
-from src.core.wizard_safety import (
+from src.validation.common import (
     validate_target, validate_port_range, validate_username, validate_password,
-    validate_file_path, quote_arg,
+    validate_file_path,
 )
+from src.tools.nmap.builder import quote_arg
 
 
 class ToolState(Enum):

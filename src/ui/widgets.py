@@ -23,7 +23,7 @@ from src.config import (
     BG, PANEL_LIGHT, PURPLE, TEXT, TEXT_DIM, BORDER, CONSOLE_BG, CONSOLE_TEXT,
 )
 
-from src.core.wizard_engine import WizardEngine
+from src.wizard.engine import WizardEngine
 from src.core.tool_manager import get_tool_manager
 from src.ui.llm_mode import LLMModeTab
 from src.ui.tool_selection import ToolSelectionTab

@@ -9,8 +9,8 @@ from PySide6.QtGui import QFont, QColor, QTextCharFormat, QKeyEvent
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTextEdit
 
 from src.config import TERMINAL_FONT_FAMILY, CONSOLE_BG, CONSOLE_TEXT
-from src.core.wizard_engine import WizardEngine, WizardStep
-from src.core.wizard_safety import parse_command_line
+from src.wizard.engine import WizardEngine, WizardStep
+from src.validation.common import parse_command_line
 from src.core.tool_manager import get_tool_manager
 
 

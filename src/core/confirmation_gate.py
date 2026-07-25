@@ -1,7 +1,7 @@
 """
 Confirmation Gate — shared "human in the loop" safety gate.
 
-This wraps the existing safety primitives in `wizard_safety.py` (impact
+This wraps the validation/analysis/report safety primitives (impact
 description, preview box rendering, exact "yes" confirmation, scope check,
 audit logging) into a single reusable object so every execution path in the
 app — Wizard Console, LLM Mode Plain, and LLM Mode AI — goes through the
@@ -18,14 +18,13 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 from src.config import AUTHORIZED_SCOPE
-from src.core.wizard_safety import (
-    audit_log_llm,
+from src.report.audit_log import audit_log_llm
+from src.tools.nmap.analyzer import (
     format_confirmation_box,
     generate_impact_description,
     is_target_in_scope,
-    parse_command_line,
-    validate_exact_confirmation,
 )
+from src.validation.common import parse_command_line, validate_exact_confirmation
 
 
 @dataclass
