@@ -178,10 +178,10 @@ QPushButton {{
     color: {TEXT};
     border: 1px solid #171a20;
     border-top: 1px solid #3e4754;
-    border-radius: 8px;
-    padding: 8px 14px;
-    font-size: 13px;
-    font-weight: 700;
+    border-radius: 6px;
+    padding: 5px 11px;
+    font-size: 12px;
+    font-weight: 600;
 }}
 
 #ContentCard {{
@@ -217,11 +217,10 @@ QPushButton:pressed {{
     color: #ffffff;
     border: 1px solid #31457d;
     border-top: 1px solid #8199dc;
-    padding: 9px 16px;
-    border-radius: 8px;
-    font-size: 13px;
-    font-weight: 700;
-    min-width: 130px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
 }}
 #ExecuteButton:hover {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -442,24 +441,22 @@ QTabBar::tab:hover {{
     font-size: 13px;
     font-weight: 600;
 }}
-#WinControlBtn {{
-    color: {TEXT_DIM};
-    font-size: 14px;
-    background: {PANEL};
-    border: 1px solid #171a20;
-    border-top: 1px solid #3e4754;
-    width: 30px;
-    height: 26px;
-    border-radius: 8px;
+#WinControlBtn, #WinControlCloseBtn {{
+    color: {TEXT};
+    background: transparent;
+    border: none;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 30px;
+    border-radius: 6px;
 }}
 #WinControlBtn:hover {{
     background-color: {PANEL_LIGHT};
-    color: {TEXT};
 }}
 #WinControlCloseBtn:hover {{
-    background-color: #c0392b;
-    color: #ffffff;
+    background-color: #e81123;
 }}
+#TitleDragArea {{ background: transparent; }}
 
 /* Dracula theme overrides: visual styling only, no layout changes. */
 QMainWindow, QWidget {{
@@ -553,7 +550,7 @@ QTabBar::tab:selected {{ background-color: #282a36; color: #f8f8f2; border-top: 
 #Sidebar, #TopBar, #ContentCard, #TitleBar {{ background-color: #282a36; border-color: #44475a; }}
 #ConsoleArea, QTextEdit {{ background-color: #050505; color: #f8f8f2; }}
 #CommandPreviewBox {{ background-color: #050505; color: #f8f8f2; border-color: #44475a; border-radius: 7px; }}
-#WinControlCloseBtn:hover {{ background-color: #44475a; color: #f8f8f2; }}
+#WinControlCloseBtn:hover {{ background-color: #e81123; color: #ffffff; }}
 QStatusBar, #StatusBar {{ max-height: 0px; min-height: 0px; border: none; padding: 0; }}
 #StatusBar {{
     background-color: {BG_DARKER};
@@ -629,10 +626,11 @@ QToolButton#IconButton:hover {{ background-color: #343b47; }}
     border-bottom: 1px solid {BORDER_SOFT};
 }}
 #MissionFieldLabel {{
-    color: {TEXT_MUTE};
+    color: {TEXT_DIM};
+    background: transparent;
+    border: none;
     font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1px;
+    font-weight: 600;
 }}
 #MissionInput, #MissionCombo {{
     background-color: {BG_INPUT};
@@ -823,7 +821,7 @@ TOOL_ENABLEMENT = {
     "evil-winrm": True,
     "ncrack": True,
     "masscan": False,
-    "hydra": False,
+    "hydra": True,  # runs via WSL on Windows (see src/tools/hydra/, wizard chain)
 }
 
 TOOL_NOT_SUPPORTED_MESSAGE = "[!] เครื่องมือนี้ยังไม่รองรับบน Windows ในเวอร์ชัน demo ปัจจุบัน"

@@ -22,9 +22,8 @@ from src.config import (
 )
 
 from src.core.tool_manager import get_tool_manager
-from src.ui.llm_mode import LLMModeTab
-from src.ui.tool_selection import ToolSelectionTab
-from src.ui.wizard_console import WizardConsoleTab
+from src.ui.terminal import InteractiveTerminal
+from src.ui.wizard_terminal import WizardTerminal
 from src.validation.common import parse_command_line
 
 
@@ -49,29 +48,14 @@ def _restyle(widget: QWidget) -> None:
     widget.style().polish(widget)
 
 
-def wrap_in_terminal(widget: QWidget, icon: str, title: str) -> QFrame:
-    """Wrap a console widget in the mockup's terminal-window chrome
-    (header bar with icon + title) without altering the wrapped widget."""
+def wrap_in_terminal(widget: QWidget) -> QFrame:
+    """Wrap a console widget in plain terminal chrome — a blank rounded
+    frame, no header bar, no title text."""
     frame = QFrame()
     frame.setObjectName("TermWindow")
     layout = QVBoxLayout(frame)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
-
-    bar = QFrame()
-    bar.setObjectName("TermBar")
-    bar_layout = QHBoxLayout(bar)
-    bar_layout.setContentsMargins(14, 8, 14, 8)
-    bar_layout.setSpacing(8)
-    icon_label = QLabel(icon)
-    icon_label.setObjectName("TermIcon")
-    title_label = QLabel(title)
-    title_label.setObjectName("TermTitle")
-    bar_layout.addWidget(icon_label)
-    bar_layout.addWidget(title_label)
-    bar_layout.addStretch()
-
-    layout.addWidget(bar)
     layout.addWidget(widget, 1)
     return frame
 
@@ -82,16 +66,15 @@ def wrap_in_terminal(widget: QWidget, icon: str, title: str) -> QFrame:
 
 class Sidebar(QFrame):
     navigate = Signal(int)
-    """แถบนำทางด้านซ้าย — พับ/ขยายได้, 7 หน้า + Settings"""
+    """แถบนำทางด้านซ้าย — พับ/ขยายได้, ข้อความล้วนไม่มี emoji"""
 
     NAV_ITEMS = [
-        ("✦", "Wizard Console"),
-        ("☐", "Input Management"),
-        ("✎", "Command Editor"),
-        ("⚙", "Raw Output"),
-        ("▦", "Results Display"),
-        ("◈", "LLM Mode"),
-        ("⚔", "Tool Selection"),
+        "Wizard Console",
+        "Input Management",
+        "Command Editor",
+        "Raw Output",
+        "Results Display",
+        "LLM Mode",
     ]
 
     def __init__(self, parent=None):
@@ -107,9 +90,10 @@ class Sidebar(QFrame):
         layout.setSpacing(2)
 
         top_row = QHBoxLayout()
-        self.toggle_btn = QPushButton("☰")
+        self.toggle_btn = QPushButton()
         self.toggle_btn.setObjectName("SidebarToggle")
-        self.toggle_btn.setFixedSize(28, 28)
+        self.toggle_btn.setIcon(svg_icon("M4 6h16M4 12h16M4 18h16", color="#b8b8c4"))
+        self.toggle_btn.setFixedSize(30, 30)
         self.toggle_btn.setCursor(Qt.PointingHandCursor)
         self.toggle_btn.clicked.connect(self.toggle_collapsed)
         top_row.addWidget(self.toggle_btn)
@@ -118,9 +102,8 @@ class Sidebar(QFrame):
         layout.addSpacing(8)
 
         self.nav_buttons: list[QPushButton] = []
-        self.nav_labels: list[QLabel] = []
-        for index, (icon, title) in enumerate(self.NAV_ITEMS):
-            btn = self._nav_button(icon, title)
+        for index, title in enumerate(self.NAV_ITEMS):
+            btn = self._nav_button(title)
             btn.setProperty("selected", index == 0)
             btn.clicked.connect(lambda _=False, i=index: self._select_nav(i))
             self.nav_buttons.append(btn)
@@ -134,15 +117,14 @@ class Sidebar(QFrame):
         layout.addWidget(divider)
         layout.addSpacing(6)
 
-        self.settings_btn = self._nav_button("⚙", "Settings", settings=True)
+        self.settings_btn = self._nav_button("Settings", settings=True)
         layout.addWidget(self.settings_btn)
 
-    def _nav_button(self, icon: str, title: str, settings: bool = False) -> QPushButton:
-        btn = QPushButton(f"  {icon}   {title}")
+    def _nav_button(self, title: str, settings: bool = False) -> QPushButton:
+        btn = QPushButton(title)
         btn.setObjectName("SidebarSettingsItem" if settings else "SidebarNavItem")
-        btn.setFixedHeight(38)
+        btn.setFixedHeight(36)
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setProperty("icon_glyph", icon)
         btn.setProperty("full_label", title)
         return btn
 
@@ -150,11 +132,10 @@ class Sidebar(QFrame):
         self._collapsed = not self._collapsed
         self.setProperty("collapsed", self._collapsed)
         _restyle(self)
-        self.setFixedWidth(68 if self._collapsed else 220)
+        self.setFixedWidth(64 if self._collapsed else 220)
         for btn in (*self.nav_buttons, self.settings_btn):
-            icon = btn.property("icon_glyph")
             title = btn.property("full_label")
-            btn.setText(f"  {icon}" if self._collapsed else f"  {icon}   {title}")
+            btn.setText(title[0] if self._collapsed else title)
 
     def _select_nav(self, index: int) -> None:
         for item_index, button in enumerate(self.nav_buttons):
@@ -192,16 +173,16 @@ class TopBar(QFrame):
         target_col = QVBoxLayout()
         target_col.setSpacing(5)
         target_col.addWidget(self._field_label("TARGET"))
-        target_row = QHBoxLayout()
-        target_row.setSpacing(8)
-        self.target_input = QLineEdit("192.168.1.0/24")
-        self.target_input.setObjectName("MissionInput")
-        self.target_input.setFixedWidth(190)
-        self.browse_btn = QPushButton("Browse...")
-        self.browse_btn.setObjectName("BrowseButton")
-        target_row.addWidget(self.target_input)
-        target_row.addWidget(self.browse_btn)
-        target_col.addLayout(target_row)
+        # Editable combo = text field + dropdown arrow holding the history
+        # of targets the user has typed and executed.
+        self.target_input = QComboBox()
+        self.target_input.setObjectName("MissionCombo")
+        self.target_input.setEditable(True)
+        self.target_input.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.target_input.setFixedWidth(230)
+        self.target_input.addItem("192.168.1.0/24")
+        self.target_input.setCurrentText("192.168.1.0/24")
+        target_col.addWidget(self.target_input)
         row1.addLayout(target_col)
 
         mode_col = QVBoxLayout()
@@ -254,106 +235,42 @@ class TopBar(QFrame):
         row2.addWidget(self.execute_btn)
         outer.addLayout(row2)
 
+    def target_text(self) -> str:
+        return self.target_input.currentText().strip()
+
+    def add_target_history(self, target: str) -> None:
+        target = (target or "").strip()
+        if not target:
+            return
+        if self.target_input.findText(target) == -1:
+            self.target_input.insertItem(0, target)
+        self.target_input.setCurrentText(target)
+
 
 # ============================================================================
 # PAGES - แต่ละหน้าใน Main Content Area
 # ============================================================================
 
 class RawOutputTab(QWidget):
-    """Tab สำหรับแสดง output ดิบจากคำสั่งที่รันผ่าน gated pipeline เท่านั้น
-    (read-only log — ไม่มี shell ของตัวเอง, ไม่รับคำสั่งตรงจากผู้ใช้)"""
+    """Plain interactive bash terminal — no app-injected text, no mirroring."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 16, 20, 20)
-        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(0)
 
-        status_row = QHBoxLayout()
-        status_row.setContentsMargins(0, 0, 0, 0)
-        self.status_dot = QLabel("●")
-        self.status_dot.setObjectName("LogStatusDot")
-        self.status_text = QLabel("idle")
-        self.status_text.setObjectName("LogStatus")
-        status_row.addWidget(self.status_dot)
-        status_row.addWidget(self.status_text)
-        status_row.addStretch()
-        layout.addLayout(status_row)
-
-        font = QFont(TERMINAL_FONT_FAMILY, 11)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-
-        self.output_area = QTextEdit()
-        self.output_area.setReadOnly(True)
-        self.output_area.setAcceptRichText(False)
-        self.output_area.setFont(font)
-        self.output_area.setStyleSheet(f"""
-            background-color: {CONSOLE_BG}; color: {CONSOLE_TEXT};
-            border: none; border-radius: 4px; padding: 20px 24px;
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 14px;
-        """)
-        self.output_area.setPlaceholderText("Command output from gated executions will appear here")
-        self.console = self.output_area
-
-        self.term_frame = wrap_in_terminal(self.output_area, "&gt;_", "root@recon: ~/output")
-        layout.addWidget(self.term_frame, 1)
-
-    def set_running(self, running: bool) -> None:
-        self.status_text.setText("running" if running else "idle")
-        self.status_text.setProperty("running", running)
-        self.status_dot.setProperty("running", running)
-        _restyle(self.status_text)
-        _restyle(self.status_dot)
-
-    def append_log(self, text: str):
-        """เขียน log ที่มาจากคำสั่งซึ่งผ่าน ConfirmationGate ไปเเล้วเท่านั้น"""
-        self.output_area.append(text)
-        scrollbar = self.output_area.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        self.terminal = InteractiveTerminal()
+        self.console = self.terminal
+        layout.addWidget(wrap_in_terminal(self.terminal), 1)
 
 
 # ---------------------------------------------------------------------------
 # Results Display — Zenmap-style host list + expandable detail tree.
 #
-# No structured multi-host parser output exists yet in src/tools/*/parser.py
-# (only a flat open-ports list for nmap) — this panel ships with the same
-# kind of placeholder dataset the mockup uses and exposes set_hosts() for
-# real data to be wired in later.
+# Starts empty. Real per-host data is injected via set_hosts() once an nmap
+# scan produces structured output.
 # ---------------------------------------------------------------------------
-
-_DEMO_HOSTS = [
-    {
-        "icon": "\U0001F427", "host": "scanme.nmap.org", "ip": "205.217.153.62",
-        "state": "up", "open": 3, "filtered": 0, "closed": 2, "scanned": 5,
-        "uptime": "3920659", "lastboot": "Sat Oct 27 10:38:07 2007",
-        "hostname": "scanme.nmap.org - PTR",
-        "os": "Linux 2.6.20-1 (Fedora Core 5)", "accuracy": 100,
-        "ports": [
-            {"port": 22, "proto": "tcp", "service": "ssh", "state": "open"},
-            {"port": 80, "proto": "tcp", "service": "http", "state": "open"},
-            {"port": 9929, "proto": "tcp", "service": "nping-echo", "state": "open"},
-        ],
-    },
-    {
-        "icon": "\U0001F5A5", "host": "171.67.22.3", "ip": "171.67.22.3",
-        "state": "up", "open": 2, "filtered": 1, "closed": 0, "scanned": 3,
-        "uptime": "-", "lastboot": "unknown", "hostname": "-",
-        "os": "Unknown", "accuracy": 0,
-        "ports": [
-            {"port": 80, "proto": "tcp", "service": "http", "state": "open"},
-            {"port": 443, "proto": "tcp", "service": "https", "state": "open"},
-            {"port": 8080, "proto": "tcp", "service": "http-proxy", "state": "filtered"},
-        ],
-    },
-    {
-        "icon": "\U0001F512", "host": "10.0.0.10", "ip": "10.0.0.10",
-        "state": "up", "open": 1, "filtered": 0, "closed": 1, "scanned": 2,
-        "uptime": "-", "lastboot": "unknown", "hostname": "-",
-        "os": "Unknown", "accuracy": 0,
-        "ports": [{"port": 22, "proto": "tcp", "service": "ssh", "state": "open"}],
-    },
-]
 
 
 class ResultsDisplayTab(QWidget):
@@ -382,7 +299,8 @@ class ResultsDisplayTab(QWidget):
         self.detail_tree.setIndentation(16)
         layout.addWidget(self.detail_tree, 1)
 
-        self.set_hosts(_DEMO_HOSTS)
+        # Empty until a real nmap scan populates it via set_hosts().
+        self.set_hosts([])
 
     def set_hosts(self, hosts: list[dict]) -> None:
         """Replace the displayed host set (e.g. once real scan-result
@@ -390,12 +308,17 @@ class ResultsDisplayTab(QWidget):
         self._hosts = hosts
         self.host_list.clear()
         for host in hosts:
-            item = QListWidgetItem(f"{host['icon']}  {host['host']}")
+            item = QListWidgetItem(host["host"])
             self.host_list.addItem(item)
         if hosts:
             self.host_list.setCurrentRow(0)
         else:
             self.detail_tree.clear()
+            placeholder = QTreeWidgetItem(
+                self.detail_tree,
+                ["No results yet — run an nmap scan to see host details here."],
+            )
+            placeholder.setDisabled(True)
 
     def _on_host_selected(self, row: int) -> None:
         if row < 0 or row >= len(self._hosts):
@@ -626,23 +549,21 @@ class MainContentArea(QWidget):
         layout.addWidget(self.stack)
 
     def _build_pages(self):
-        self.wizard_tab = WizardConsoleTab()
+        # Wizard Console is a scripted, gated nmap wizard (WizardTerminal) —
+        # not a raw shell. Raw Output / LLM Mode stay plain real bash terminals.
+        self.wizard_tab = WizardTerminal()
         self.input_tab = InputManagementTab()
         self.cmd_editor_tab = CommandEditorTab()
         self.raw_output_tab = RawOutputTab()
         self.results_tab = ResultsDisplayTab()
-        self.llm_tab = LLMModeTab()
-        self.tool_selection_tab = ToolSelectionTab()
+        # LLM page is a plain real bash terminal — the user wires it to an AI
+        # API themselves (e.g. `llm`, `claude`, curl to an endpoint).
+        self.llm_tab = InteractiveTerminal()
 
-        # Order matches Sidebar.NAV_ITEMS / navigate(index) 0-6.
-        self.stack.addWidget(wrap_in_terminal(self.wizard_tab, "&gt;_", "root@recon: ~/wizard"))
+        # Order matches Sidebar.NAV_ITEMS / navigate(index) 0-5.
+        self.stack.addWidget(wrap_in_terminal(self.wizard_tab))
         self.stack.addWidget(self.input_tab)
         self.stack.addWidget(self.cmd_editor_tab)
         self.stack.addWidget(self.raw_output_tab)
         self.stack.addWidget(self.results_tab)
-        self.stack.addWidget(wrap_in_terminal(self.llm_tab, "✦", "recon-assistant: ~"))
-        self.stack.addWidget(self.tool_selection_tab)
-
-        self.raw_output_tab.set_running(False)
-        self.wizard_tab.executionStarted.connect(lambda: self.raw_output_tab.set_running(True))
-        self.wizard_tab.executionFinished.connect(lambda: self.raw_output_tab.set_running(False))
+        self.stack.addWidget(wrap_in_terminal(self.llm_tab))

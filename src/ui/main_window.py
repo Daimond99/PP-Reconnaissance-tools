@@ -3,16 +3,18 @@ Recon Tool - Main Window Module
 หน้าต่างหลักของแอปพลิเคชัน
 """
 
+from typing import List
+
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QMessageBox,
+    QMessageBox, QMenu,
 )
 from PySide6.QtCore import Qt, QRect, QEvent, QProcess
-from PySide6.QtGui import QAction, QCursor
+from PySide6.QtGui import QAction, QCursor, QKeySequence
 
 from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
-    WARHEAD_COMMANDS, TOOL_COMMANDS, DIRECT_TOOL_CONTENT, WIZARD_CONTENT,
+    WARHEAD_COMMANDS, TOOL_COMMANDS,
 )
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
@@ -85,49 +87,41 @@ class ReconMainWindow(QMainWindow):
         self.title_bar.setObjectName("TitleBar")
         self.title_bar.setFixedHeight(42)
         title_layout = QHBoxLayout(self.title_bar)
-        title_layout.setContentsMargins(10, 0, 0, 0)
-        title_layout.setSpacing(0)
+        title_layout.setContentsMargins(10, 0, 6, 0)
+        title_layout.setSpacing(2)
 
-        brand = QLabel("TR")
-        brand.setObjectName("TitleMark")
-        brand.setAlignment(Qt.AlignCenter)
-        brand.setFixedSize(30, 28)
-
-        title_text = QLabel("TheRecon  /  Authorized Security Workspace")
-        title_text.setObjectName("TitleBarLabel")
-        title_text.setAlignment(Qt.AlignCenter)
+        # Plain, empty drag area — no brand mark, no title text (per mockup).
+        drag_spacer = QLabel("")
+        drag_spacer.setObjectName("TitleDragArea")
 
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(2)
-        
-        btn_min = QPushButton("—")
+
+        btn_min = QPushButton()
         btn_min.setObjectName("WinControlBtn")
-        btn_min.setIcon(svg_icon("M5 12h14"))
-        btn_min.setText("")
+        btn_min.setIcon(svg_icon("M5 12h14", color="#f8f8f2"))
+        btn_min.setToolTip("Minimize")
         btn_min.clicked.connect(self.showMinimized)
-        
-        btn_max = QPushButton("☐")
+
+        btn_max = QPushButton()
         btn_max.setObjectName("WinControlBtn")
-        btn_max.setIcon(svg_icon("M5 5h14v14H5z"))
-        btn_max.setText("")
+        btn_max.setIcon(svg_icon("M5 5h14v14H5z", color="#f8f8f2"))
+        btn_max.setToolTip("Maximize")
         btn_max.clicked.connect(self._toggle_maximize)
-        
-        btn_close = QPushButton("✕")
-        btn_close.setObjectName("WinControlBtn")
-        btn_close.setProperty("class", "close")
+
+        btn_close = QPushButton()
         btn_close.setObjectName("WinControlCloseBtn")
-        btn_close.setIcon(svg_icon("M6 6l12 12M18 6L6 18"))
-        btn_close.setText("")
+        btn_close.setIcon(svg_icon("M6 6l12 12M18 6L6 18", color="#f8f8f2"))
+        btn_close.setToolTip("Close")
         btn_close.clicked.connect(self.close)
 
         controls_layout.addWidget(btn_min)
         controls_layout.addWidget(btn_max)
         controls_layout.addWidget(btn_close)
 
-        title_layout.addWidget(brand)
-        title_layout.addWidget(title_text, 1)
+        title_layout.addWidget(drag_spacer, 1)
         title_layout.addLayout(controls_layout)
-        self._drag_widgets = (self.title_bar, brand, title_text)
+        self._drag_widgets = (self.title_bar, drag_spacer)
         for widget in self._drag_widgets:
             widget.installEventFilter(self)
 
@@ -388,20 +382,15 @@ class ReconMainWindow(QMainWindow):
 
     def _connect_signals(self):
         self.sidebar.navigate.connect(self._on_sidebar_navigation)
+        self.sidebar.settings_btn.clicked.connect(self._on_settings_clicked)
         self.top_bar.opmode_combo.currentTextChanged.connect(self._on_opmode_change)
         self.top_bar.warhead_combo.currentTextChanged.connect(self._on_warhead_change)
         self.top_bar.tool_combo.currentTextChanged.connect(self._on_tool_change)
-        self.top_bar.browse_btn.clicked.connect(self._on_browse_clicked)
         self.top_bar.execute_btn.clicked.connect(self._on_execute_clicked)
         self.top_bar.command_input.returnPressed.connect(self._on_execute_clicked)
 
         self._top_bar_gate: ConfirmationGate | None = None
         self._top_bar_proc: QProcess | None = None
-
-        ma = self.main_area
-        ma.wizard_tab.commandEntered.connect(self._log_command)
-        ma.llm_tab.commandEntered.connect(self._log_command)
-        ma.tool_selection_tab.commandEntered.connect(self._log_command)
 
         self.new_scan_action.triggered.connect(self._on_new_scan)
         self.stop_scan_action.triggered.connect(self._on_stop_scan)
@@ -417,21 +406,38 @@ class ReconMainWindow(QMainWindow):
     def _on_sidebar_navigation(self, index: int):
         self.main_area.stack.setCurrentIndex(index)
 
-    def _on_opmode_change(self, mode):
-        self.main_area.stack.setCurrentIndex(0)
-        wizard_tab = self.main_area.wizard_tab
+    def _on_settings_clicked(self):
+        """Pop a File/Settings menu (Zenmap-style) at the Settings button."""
+        menu = QMenu(self)
+        entries = [
+            ("New Window", "Ctrl+N", self._on_new_scan),
+            ("Open Scan", "Ctrl+O", self._on_import_yaml),
+            ("Open Scan in This Window", "", self._on_import_yaml),
+            ("Save Scan", "Ctrl+S", self._on_export_mission),
+            ("Save All Scans to Directory", "Ctrl+Alt+S", self._on_export_mission),
+            (None, None, None),
+            ("Close Window", "Ctrl+W", self.close),
+            ("Quit", "Ctrl+Q", self.close),
+        ]
+        for label, shortcut, handler in entries:
+            if label is None:
+                menu.addSeparator()
+                continue
+            action = menu.addAction(label)
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            action.triggered.connect(handler)
+        btn = self.sidebar.settings_btn
+        menu.exec(btn.mapToGlobal(btn.rect().topRight()))
 
-        if mode == "Wizard Mode":
-            wizard_tab.wizard_engine.reset()
-            wizard_tab._show_initial_menu()
-        else:
-            wizard_tab._clear_output()
-            wizard_tab._history.clear()
-            wizard_tab._history_index = -1
-            wizard_tab.write_output(DIRECT_TOOL_CONTENT)
+    def _on_opmode_change(self, mode):
+        # Wizard Console page is a plain bash terminal now — both operation
+        # modes just land on it, no separate wizard/direct-tool content to
+        # switch between.
+        self.main_area.stack.setCurrentIndex(0)
 
     def _get_target(self) -> str:
-        return self.top_bar.target_input.text().strip() or "192.168.1.0/24"
+        return self.top_bar.target_text() or "192.168.1.0/24"
 
     def _apply_command_template(self, template: str) -> str:
         return template.replace("192.168.1.0/24", self._get_target()).replace(
@@ -448,61 +454,55 @@ class ReconMainWindow(QMainWindow):
         if template:
             self.top_bar.command_input.setText(self._apply_command_template(template))
 
-    def _on_browse_clicked(self):
-        pass
-
-    def _log_command(self, cmd: str):
-        """Mirror a command that a tab already executed (through its own
-        ConfirmationGate + QProcess) into the read-only Raw Output log —
-        display only, never re-executed here."""
-        self.main_area.raw_output_tab.append_log(f"$ {cmd}")
-
     def _on_execute_clicked(self):
         """Top-bar quick execute — validated + confirmed through
         ConfirmationGate before anything reaches QProcess, same as every
-        other execution path in the app."""
+        other execution path in the app. Feedback goes through dialogs only —
+        Raw Output / LLM Mode stay plain, unmodified bash terminals."""
         cmd = self.top_bar.command_input.text().strip()
         if not cmd:
             return
 
-        raw_tab = self.main_area.raw_output_tab
-        self.main_area.stack.setCurrentIndex(3)
+        # Record the executed target in the TARGET dropdown history.
+        self.top_bar.add_target_history(self._get_target())
 
         gate = ConfirmationGate(channel="direct")
         result = gate.request(cmd, self._get_target())
         if not result.ok:
-            raw_tab.append_log(result.message)
+            QMessageBox.warning(self, "Command Rejected", result.message)
             return
 
-        raw_tab.append_log(result.preview_box)
         reply = QMessageBox.question(
             self, "Confirm Execution",
-            "Run this command exactly as previewed above?",
+            f"{result.preview_box}\n\nRun this command exactly as previewed above?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             gate.cancel("user_declined")
-            raw_tab.append_log("[x] Cancelled\n")
             return
 
         gate.confirm("yes")
         self._run_gated_command(gate)
 
     def _run_gated_command(self, gate: ConfirmationGate):
-        raw_tab = self.main_area.raw_output_tab
         proc = QProcess(self)
         proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        output_chunks: List[str] = []
 
         def on_output():
             data = bytes(proc.readAllStandardOutput()).decode("utf-8", errors="replace")
             if data:
-                raw_tab.append_log(data)
+                output_chunks.append(data)
 
         def on_finished(exit_code, _exit_status):
-            raw_tab.append_log(f"\n[exit code {exit_code}]\n")
             gate.mark_executed_result(exit_code)
             self._top_bar_proc = None
+            output = "".join(output_chunks)
+            QMessageBox.information(
+                self, "Execution Finished",
+                f"Exit code {exit_code}\n\n{output[-2000:]}",
+            )
 
         proc.readyReadStandardOutput.connect(on_output)
         proc.finished.connect(on_finished)

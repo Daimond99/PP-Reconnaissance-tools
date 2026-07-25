@@ -20,7 +20,7 @@ There is no configured lint/test/build tooling in this repo (no pytest config, n
 
 ## Required reading before structural changes
 
-`docs/ARCHITECTURE.md` and `docs/Resource System.md` are the authoritative, mandatory specs for this project — read them before adding modules, tools, or layers. `docs/AI_DEVELOPMENT.md` and `docs/Coding Standards.md` carry AI-specific refactoring rules. Key points that aren't obvious from skimming the code:
+`docs/ARCHITECTURE.md` and `docs/Resource System.md` are the authoritative, mandatory specs for this project — read them before adding modules, tools, or layers. `docs/AI_DEVELOPMENT.md` and `docs/Coding Standards.md` carry AI-specific refactoring rules. `docs/CURRENT_STATE.md` is a snapshot of what's actually implemented vs. placeholder in the code right now (read this first in a fresh session — cheaper than re-deriving it). `docs/PROGRESS.md` is the running log of what's been done recently. `docs/GUI_MISSION_CONTROL.md` is the file/page map for the GUI specifically. Key points that aren't obvious from skimming the code:
 
 - **Windows Demo is an execution profile, not an architecture limitation.** If a tool can't currently execute on this platform, still create the full module structure (`builder.py`, `validator.py`, `parser.py`, `analyzer.py`) with placeholder implementations and TODO docstrings — never skip or omit modules because execution is unavailable.
 - **Resource-driven architecture**: menus, help text, warnings, impact descriptions, prompt templates, dialog text — all of it lives in `src/resources/*.json`, never hardcoded as Python string literals.
@@ -64,7 +64,7 @@ AI may explain tools, recommend profiles/flags, summarize results. AI must never
 ## Notes on repo state
 
 README.md's "Project Structure" and "Development" sections describe an older layout (`src/core/wizard_engine.py`, `src/core/tool_manager.py` as the wizard) that has since been restructured into `src/wizard/engine.py` + the per-tool `src/tools/<tool>/` packages described above — trust the architecture above and the actual source tree over the README when they conflict.
-- `LLM.md` at repo root is in an ambiguous git state (added then deleted in the working tree). Its intended content/location is unresolved — check with the user before assuming it should be restored or removed for good.
+- `tools/` at repo root holds cloned external tool source (nmap, thc-hydra, evil-winrm-py, ncrack, ncat-w32) for Windows-demo reference/install — gitignored, not vendored into this repo, not part of the app's own architecture. See `docs/CURRENT_STATE.md` for what's actually installed/usable on the current machine.
 
 ## Known architecture/safety gaps (2026-07-25 audit)
 

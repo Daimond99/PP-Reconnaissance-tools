@@ -43,3 +43,6 @@ logs/
 # Docs (keep in git, but ignore generated files)
 docs/*.bak
 docs/*.orig
+
+# External tool source (cloned, not vendored — each has own .git)
+tools/
