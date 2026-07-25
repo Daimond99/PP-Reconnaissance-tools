@@ -3,16 +3,12 @@ Recon Tool - Widgets Module
 เก็บ UI components ทั้งหมด: Sidebar, TopBar, และ Tabs
 """
 
-import platform
-import subprocess
-import threading
-
 from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
     QTextEdit, QTabWidget, QGridLayout, QHBoxLayout, QVBoxLayout,
     QSizePolicy,
 )
-from PySide6.QtCore import Signal, QObject, Qt, QByteArray
+from PySide6.QtCore import Signal, Qt, QByteArray
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
@@ -23,19 +19,10 @@ from src.config import (
     BG, PANEL_LIGHT, PURPLE, TEXT, TEXT_DIM, BORDER, CONSOLE_BG, CONSOLE_TEXT,
 )
 
-from src.wizard.engine import WizardEngine
 from src.core.tool_manager import get_tool_manager
 from src.ui.llm_mode import LLMModeTab
 from src.ui.tool_selection import ToolSelectionTab
-
-
-# ============================================================================
-# SIGNALS - สำหรับ thread-safe output
-# ============================================================================
-
-class TerminalSignals(QObject):
-    """Signal สำหรับ thread-safe output"""
-    output = Signal(str)
+from src.ui.wizard_console import WizardConsoleTab
 
 
 def svg_icon(path: str, color: str = "#edf0f5", size: int = 16) -> QIcon:
@@ -222,208 +209,9 @@ class TopBar(QFrame):
 # TABS - แต่ละ Tab ใน Main Content Area
 # ============================================================================
 
-class WizardConsoleTab(QWidget):
-    """Tab สำหรับ Wizard Console - Hydra-style interactive interface"""
-    
-    commandEntered = Signal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        
-        # Initialize wizard engine and tool manager
-        self.wizard_engine = WizardEngine()
-        self.tool_manager = get_tool_manager()
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        font = QFont(TERMINAL_FONT_FAMILY, 11)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-
-        self.output_area = QTextEdit()
-        self.output_area.setReadOnly(False) # เปลี่ยนเป็น False เพื่อให้พิมพ์ได้
-        self.output_area.setAcceptRichText(True)  # Enable rich text for colors
-        self.output_area.setFont(font)
-        self.output_area.setStyleSheet(f"""
-            background-color: {CONSOLE_BG}; color: {CONSOLE_TEXT};
-            border: none; border-radius: 4px; padding: 30px 35px;
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 14px;
-            line-height: 150%;
-        """)
-        layout.addWidget(self.output_area, 1)
-        self.console = self.output_area
-
-        # self.input_line และ layout ที่เกี่ยวข้องถูกนำออกตามคำขอ
-        self._history = []
-        self._history_index = -1
-        
-        # เชื่อมต่อ keyPressEvent เพื่อจัดการการพิมพ์ใน terminal
-        self.output_area.keyPressEvent = self._make_key_handler(self.output_area.keyPressEvent)
-        
-        # Show initial wizard content
-        self._show_initial_menu()
-
-    def _make_key_handler(self, original_handler):
-        def handler(event):
-            if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-                # ดึงบรรทัดสุดท้ายมาเป็นคำสั่ง
-                cursor = self.output_area.textCursor()
-                cursor.movePosition(cursor.MoveOperation.End)
-                cursor.select(cursor.SelectionType.LineUnderCursor)
-                line = cursor.selectedText()
-                
-                # หาตำแหน่ง prompt ล่าสุด (เช่น "Select>" หรือ ">")
-                if ">" in line:
-                    cmd = line.split(">")[-1].strip()
-                else:
-                    cmd = line.strip()
-
-                if cmd:
-                    # Echo the input clearly (optional, since user already typed it, but good for logic)
-                    # self._append_colored(f"\n", "#ffffff") # Just a newline
-                    self._on_command_entered(cmd)
-                return
-            
-            # ป้องกันการลบเนื้อหาเก่า (ReadOnly-ish behavior for previous lines)
-            if event.key() == Qt.Key_Backspace or event.key() == Qt.Key_Left:
-                cursor = self.output_area.textCursor()
-                # ถ้า cursor อยู่ต้นบรรทัดที่มี prompt ไม่ให้ลบ
-                line_text = cursor.block().text()
-                col = cursor.positionInBlock()
-                if ">" in line_text:
-                    prompt_pos = line_text.find(">") + 1
-                    if col <= prompt_pos:
-                        return
-
-            original_handler(event)
-        return handler
-
-    def _on_command_entered(self, text):
-        if not text:
-            return
-
-        # Add to history
-        self._history.append(text)
-        self._history_index = len(self._history)
-
-        # WizardEngine.handle_input() already understands the meta-commands
-        # check / install / help / reset / back / cancel internally — just
-        # forward everything to it and render the result.
-        is_meta_info = text.strip().lower() in ("check", "install", "help")
-        result = self.wizard_engine.handle_input(text)
-        self._render_result(result, clear=not is_meta_info)
-    
-    def _show_initial_menu(self):
-        """แสดงเมนูเริ่มต้น (TOOL_SELECT) จาก wizard engine จริง"""
-        result = self.wizard_engine.reset()
-        self._render_result(result, clear=True)
-    
-    def _clear_output(self):
-        """ล้าง output area"""
-        self.output_area.clear()
-    
-    def _append_output(self, text: str):
-        """เพิ่ม text ธรรมดา"""
-        cursor = self.output_area.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(text)
-        self.output_area.setTextCursor(cursor)
-        self.output_area.ensureCursorVisible()
-    
-    def _append_colored(self, text: str, color: str):
-        """เพิ่ม text สี"""
-        color = CONSOLE_TEXT
-        cursor = self.output_area.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-        cursor.setCharFormat(fmt)
-        cursor.insertText(text)
-        self.output_area.setTextCursor(cursor)
-        self.output_area.ensureCursorVisible()
-    
-    def _render_result(self, result, clear: bool = True):
-        """
-        Render a WizardResult(success, lines, prompt, action, commands) —
-        the actual return type of WizardEngine.handle_input()/reset()/go_back().
-        """
-        if clear:
-            self._clear_output()
-
-        handled_sentinel = False
-        for line in result.lines:
-            if line == "__SHOW_TOOL_STATUS__":
-                self._show_tool_status()
-                handled_sentinel = True
-                continue
-            if line == "__SHOW_INSTALL_GUIDE__":
-                self._show_install_guide()
-                handled_sentinel = True
-                continue
-            self._append_output(line + "\n")
-
-        if handled_sentinel:
-            return  # _show_tool_status()/_show_install_guide() already end with a prompt
-
-        if result.action == "execute":
-            for cmd in (result.commands or []):
-                self.commandEntered.emit(cmd)
-            self._append_output("Use 'reset' to start a new wizard session.\n\n")
-            self._append_colored("Select>", "#00ff88")
-            return
-
-        if result.action == "cancel":
-            self._append_colored("\nSelect>", "#00ff88")
-            return
-
-        prompt_text = result.prompt or "Select>"
-        self._append_colored(f"\n{prompt_text}", "#00ff88")
-
-        cursor = self.output_area.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.output_area.setTextCursor(cursor)
-    
-    def _on_return_pressed(self):
-        # This method is no longer used but kept to avoid breaking references if any
-        pass
-    
-    def _show_tool_status(self):
-        """แสดงสถานะของ tools"""
-        self._append_output("\n")
-        for tool_name, (installed, status) in self.tool_manager.get_all_status().items():
-            color = "#00ff00" if installed else "#ff6666"
-            self._append_colored(f"{status}\n", color)
-        self._append_colored("\nSelect> ", "#00ff88")
-    
-    def _show_install_guide(self):
-        """แสดงคำแนะนำการติดตั้ง"""
-        missing = self.tool_manager.get_missing_tools()
-        if not missing:
-            self._append_colored("\nAll tools are installed!\n", "#00ff00")
-            self._append_colored("\nSelect> ", "#00ff88")
-            return
-        
-        self._append_output("\n")
-        for tool_name in missing:
-            guide = self.tool_manager.get_install_guide(tool_name)
-            tool_info = self.tool_manager.get_tool_info(tool_name)
-            self._append_colored(f"\n{tool_info.display_name}:\n", "#ffff00")
-            for line in guide.split('\n'):
-                self._append_colored(f"  {line}\n", "#aaaaaa")
-        
-        self._append_colored("\nSelect> ", "#00ff88")
-    
-    def write_output(self, text: str):
-        """เขียน output ไปยัง console"""
-        self._append_output(text)
-
-
 class RawOutputTab(QWidget):
-    """Tab สำหรับ Raw Output Console - พิมพ์คำสั่งตรง terminal ได้เลย"""
-    
-    commandEntered = Signal(str)
+    """Tab สำหรับแสดง output ดิบจากคำสั่งที่รันผ่าน gated pipeline เท่านั้น
+    (read-only log — ไม่มี shell ของตัวเอง, ไม่รับคำสั่งตรงจากผู้ใช้)"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -435,7 +223,7 @@ class RawOutputTab(QWidget):
         font.setStyleHint(QFont.StyleHint.Monospace)
 
         self.output_area = QTextEdit()
-        self.output_area.setReadOnly(False)
+        self.output_area.setReadOnly(True)
         self.output_area.setAcceptRichText(False)
         self.output_area.setFont(font)
         self.output_area.setStyleSheet(f"""
@@ -444,95 +232,15 @@ class RawOutputTab(QWidget):
             font-family: 'Consolas', 'Courier New', monospace;
             font-size: 14px;
         """)
+        self.output_area.setPlaceholderText("Command output from gated executions will appear here")
         layout.addWidget(self.output_area, 1)
         self.console = self.output_area
 
-        self._proc = None
-        self._history = []
-        self._history_index = -1
-        self._signals = TerminalSignals()
-        self._signals.output.connect(self._append_output)
-        self._is_windows = platform.system() == "Windows"
-        
-        # Bind Enter key on output_area to send command
-        self.output_area.keyPressEvent = self._make_key_handler(self.output_area.keyPressEvent)
-        
-        self._start_shell()
-    
-    def _make_key_handler(self, original_handler):
-        def handler(event):
-            if event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
-                # Extract last line as command
-                cursor = self.output_area.textCursor()
-                cursor.movePosition(cursor.MoveOperation.End)
-                cursor.select(cursor.SelectionType.LineUnderCursor)
-                last_line = cursor.selectedText().strip()
-                if last_line:
-                    self._send_to_shell(last_line)
-                    self.commandEntered.emit(last_line)
-            else:
-                original_handler(event)
-        return handler
-    
-    def _send_to_shell(self, cmd: str):
-        """ส่งคำสั่งไปยัง shell"""
-        if self._proc and self._proc.poll() is None:
-            self.output_area.append(f"\n$ {cmd}")
-            self._proc.stdin.write(cmd + "\n")
-            self._proc.stdin.flush()
-
-    def _start_shell(self):
-        """Start shell process (PowerShell on Windows, bash on Linux)"""
-        try:
-            if self._is_windows:
-                self._proc = subprocess.Popen(
-                    ["powershell.exe", "-NoLogo", "-NoExit", "-Command", "-"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-            else:
-                self._proc = subprocess.Popen(
-                    ["bash", "-i"],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                )
-
-            def read_stdout():
-                try:
-                    for line in iter(self._proc.stdout.readline, ""):
-                        if line:
-                            self._signals.output.emit(line.rstrip("\n\r"))
-                except Exception:
-                    pass
-
-            threading.Thread(target=read_stdout, daemon=True).start()
-        except Exception as e:
-            self._append_output(f"Error starting shell: {e}")
-
-    def _append_output(self, text: str):
+    def append_log(self, text: str):
+        """เขียน log ที่มาจากคำสั่งซึ่งผ่าน ConfirmationGate ไปเเล้วเท่านั้น"""
         self.output_area.append(text)
         scrollbar = self.output_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-
-    def write_command(self, cmd: str):
-        if self._proc and self._proc.poll() is None:
-            self._append_output(f"$ {cmd}")
-            self._proc.stdin.write(cmd + "\n")
-            self._proc.stdin.flush()
-        else:
-            self._append_output(f"Shell not available. Command: {cmd}")
-
-    def closeEvent(self, event):
-        if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
-        super().closeEvent(event)
 
 
 class ResultsDisplayTab(QWidget):

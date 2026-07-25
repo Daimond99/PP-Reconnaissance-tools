@@ -3,8 +3,11 @@ Recon Tool - Main Window Module
 หน้าต่างหลักของแอปพลิเคชัน
 """
 
-from PySide6.QtWidgets import QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton
-from PySide6.QtCore import Qt, QRect, QEvent
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
+    QMessageBox,
+)
+from PySide6.QtCore import Qt, QRect, QEvent, QProcess
 from PySide6.QtGui import QAction, QCursor
 
 from src.config import (
@@ -12,6 +15,9 @@ from src.config import (
     WARHEAD_COMMANDS, TOOL_COMMANDS, DIRECT_TOOL_CONTENT, WIZARD_CONTENT,
 )
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, svg_icon
+from src.core.confirmation_gate import ConfirmationGate
+
+
 class ReconMainWindow(QMainWindow):
     """หน้าต่างหลักของ Recon Tool"""
     
@@ -389,11 +395,13 @@ class ReconMainWindow(QMainWindow):
         self.top_bar.execute_btn.clicked.connect(self._on_execute_clicked)
         self.top_bar.command_input.returnPressed.connect(self._on_execute_clicked)
 
+        self._top_bar_gate: ConfirmationGate | None = None
+        self._top_bar_proc: QProcess | None = None
+
         ma = self.main_area
-        ma.wizard_tab.commandEntered.connect(self._on_terminal_command)
-        ma.raw_output_tab.commandEntered.connect(self._on_raw_command)
-        ma.llm_tab.commandEntered.connect(self._on_terminal_command)
-        ma.tool_selection_tab.commandEntered.connect(self._on_terminal_command)
+        ma.wizard_tab.commandEntered.connect(self._log_command)
+        ma.llm_tab.commandEntered.connect(self._log_command)
+        ma.tool_selection_tab.commandEntered.connect(self._log_command)
 
         self.new_scan_action.triggered.connect(self._on_new_scan)
         self.stop_scan_action.triggered.connect(self._on_stop_scan)
@@ -446,29 +454,71 @@ class ReconMainWindow(QMainWindow):
     def _on_browse_clicked(self):
         pass
 
+    def _log_command(self, cmd: str):
+        """Mirror a command that a tab already executed (through its own
+        ConfirmationGate + QProcess) into the read-only Raw Output log —
+        display only, never re-executed here."""
+        self.main_area.raw_output_tab.append_log(f"$ {cmd}")
+
     def _on_execute_clicked(self):
+        """Top-bar quick execute — validated + confirmed through
+        ConfirmationGate before anything reaches QProcess, same as every
+        other execution path in the app."""
         cmd = self.top_bar.command_input.text().strip()
         if not cmd:
             return
-        self.main_area.tab_widget.setCurrentIndex(3)
-        self.main_area.raw_output_tab.write_command(cmd)
 
-    def _on_terminal_command(self, cmd: str):
-        if cmd.strip():
-            self.main_area.tab_widget.setCurrentIndex(3)
-            self.main_area.raw_output_tab.write_command(cmd.strip())
-
-    def _on_raw_command(self, _cmd: str):
-        """Raw terminal commands are already sent by the terminal widget."""
+        raw_tab = self.main_area.raw_output_tab
         self.main_area.tab_widget.setCurrentIndex(3)
+
+        gate = ConfirmationGate(channel="direct")
+        result = gate.request(cmd, self._get_target())
+        if not result.ok:
+            raw_tab.append_log(result.message)
+            return
+
+        raw_tab.append_log(result.preview_box)
+        reply = QMessageBox.question(
+            self, "Confirm Execution",
+            "Run this command exactly as previewed above?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            gate.cancel("user_declined")
+            raw_tab.append_log("[x] Cancelled\n")
+            return
+
+        gate.confirm("yes")
+        self._run_gated_command(gate)
+
+    def _run_gated_command(self, gate: ConfirmationGate):
+        raw_tab = self.main_area.raw_output_tab
+        proc = QProcess(self)
+        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+
+        def on_output():
+            data = bytes(proc.readAllStandardOutput()).decode("utf-8", errors="replace")
+            if data:
+                raw_tab.append_log(data)
+
+        def on_finished(exit_code, _exit_status):
+            raw_tab.append_log(f"\n[exit code {exit_code}]\n")
+            gate.mark_executed_result(exit_code)
+            self._top_bar_proc = None
+
+        proc.readyReadStandardOutput.connect(on_output)
+        proc.finished.connect(on_finished)
+        argv = gate.argv
+        self._top_bar_proc = proc
+        proc.start(argv[0], argv[1:])
 
     def _on_new_scan(self):
         self._on_execute_clicked()
 
     def _on_stop_scan(self):
-        raw_tab = self.main_area.raw_output_tab
-        if raw_tab._proc and raw_tab._proc.poll() is None:
-            raw_tab._proc.terminate()
+        if self._top_bar_proc and self._top_bar_proc.state() != QProcess.ProcessState.NotRunning:
+            self._top_bar_proc.terminate()
 
     def _on_profile_management(self):
         pass
@@ -486,7 +536,6 @@ class ReconMainWindow(QMainWindow):
         pass
 
     def closeEvent(self, event):
-        raw_tab = self.main_area.raw_output_tab
-        if raw_tab._proc and raw_tab._proc.poll() is None:
-            raw_tab._proc.terminate()
+        if self._top_bar_proc and self._top_bar_proc.state() != QProcess.ProcessState.NotRunning:
+            self._top_bar_proc.terminate()
         super().closeEvent(event)

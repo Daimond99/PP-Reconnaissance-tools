@@ -174,89 +174,27 @@ def netmask_to_cidr(netmask):
 
 def nmap_scan(target, options=""):
     """
-    Run an Nmap scan on the specified target with optional parameters.
-    
+    Build an Nmap command line for the specified target and options.
+
+    This does NOT execute Nmap. TheRecon's LLM Mode only ever uses this to
+    get a candidate command string, which then goes through the app's own
+    validation -> Confirmation Gate (preview + exact "yes") -> QProcess
+    pipeline before anything is ever run. Executing here would let the model
+    scan real targets on its own say-so, bypassing that safety gate entirely.
+
     Args:
         target: The target to scan (IP address, hostname, or IP range)
         options: Additional Nmap command line options (e.g., "-sS -p 80,443")
-    
+
     Returns:
-        The output of the Nmap scan
+        The Nmap command line as a string, e.g. "nmap -sS -p 80,443 10.0.0.1"
     """
-    # Build the command
     cmd_parts = ["nmap"]
-    
-    # Add options if provided
     if options:
         # Use shlex to safely split the options string
         cmd_parts.extend(shlex.split(options))
-    
-    # Add the target
     cmd_parts.append(target)
-    
-    try:
-        # Run the command
-        result = subprocess.run(
-            cmd_parts,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False
-        )
-        
-        if result.returncode != 0:
-            return f"Error: Nmap returned non-zero exit code {result.returncode}\nStderr: {result.stderr}"
-        
-        return result.stdout
-        
-    except subprocess.TimeoutExpired:
-        return "Error: Nmap scan timed out after 5 minutes"
-    except FileNotFoundError:
-        return "Error: nmap command not found. Please install nmap first."
-    except Exception as ex:
-        return f"Error: {type(ex).__name__}: {ex}"
-    """
-    Run an Nmap scan on the specified target with optional parameters.
-    
-    Args:
-        target: The target to scan (IP address, hostname, or IP range)
-        options: Additional Nmap command line options (e.g., "-sS -p 80,443")
-    
-    Returns:
-        The output of the Nmap scan
-    """
-    # Build the command
-    cmd_parts = ["nmap"]
-    
-    # Add options if provided
-    if options:
-        # Use shlex to safely split the options string
-        cmd_parts.extend(shlex.split(options))
-    
-    # Add the target
-    cmd_parts.append(target)
-    
-    try:
-        # Run the command
-        result = subprocess.run(
-            cmd_parts,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False
-        )
-        
-        if result.returncode != 0:
-            return f"Error: Nmap returned non-zero exit code {result.returncode}\nStderr: {result.stderr}"
-        
-        return result.stdout
-        
-    except subprocess.TimeoutExpired:
-        return "Error: Nmap scan timed out after 5 minutes"
-    except FileNotFoundError:
-        return "Error: nmap command not found. Please install nmap first."
-    except Exception as ex:
-        return f"Error: {type(ex).__name__}: {ex}"
+    return shlex.join(cmd_parts)
 
 
 def nmap_quick_scan(target):
@@ -268,7 +206,7 @@ def nmap_quick_scan(target):
         target: The target to scan
     
     Returns:
-        The output of the quick scan
+        The Nmap command line for this scan (not yet executed)
     """
     return nmap_scan(target, "-T4 -F")
 
@@ -282,7 +220,7 @@ def nmap_port_scan(target, ports):
         ports: Port specification (e.g., "80", "80,443", "1-1000", "U:53,T:80")
     
     Returns:
-        The output of the port scan
+        The Nmap command line for this scan (not yet executed)
     """
     return nmap_scan(target, f"-p {ports}")
 
@@ -296,7 +234,7 @@ def nmap_service_detection(target, ports=""):
         ports: Optional port specification (if not provided, scans default ports)
     
     Returns:
-        The output with service detection results
+        The Nmap command line for this scan (not yet executed)
     """
     options = "-sV"
     if ports:
@@ -313,7 +251,7 @@ def nmap_os_detection(target):
         target: The target to scan
     
     Returns:
-        The output with OS detection results
+        The Nmap command line for this scan (not yet executed)
     """
     return nmap_scan(target, "-O")
 
@@ -326,7 +264,7 @@ def nmap_ping_scan(target):
         target: The target or range to scan (e.g., "192.168.1.0/24")
     
     Returns:
-        The list of live hosts
+        The Nmap command line for this scan (not yet executed)
     """
     return nmap_scan(target, "-sn")
 
@@ -341,7 +279,7 @@ def nmap_script_scan(target, script, ports=""):
         ports: Optional port specification
     
     Returns:
-        The output of the script scan
+        The Nmap command line for this scan (not yet executed)
     """
     options = f"--script {script}"
     if ports:

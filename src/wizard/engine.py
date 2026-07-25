@@ -28,8 +28,13 @@ from src.validation.common import (
 )
 from src.tools.nmap.builder import build_nmap_command, quote_arg
 from src.tools.nmap.validator import validate_custom_nmap_flags
-from src.tools.nmap.analyzer import format_confirmation_box, generate_impact_description
+from src.tools.nmap.analyzer import (
+    format_confirmation_box,
+    generate_impact_description,
+    is_target_in_scope,
+)
 from src.report.audit_log import audit_log_cancel, audit_log_confirmation
+from src.config import AUTHORIZED_SCOPE
 from src.utils.resource_loader import load_json
 from src.core.auto_chain import (
     AutoChainFallbackController,
@@ -813,10 +818,21 @@ class WizardEngine:
         return self._handle_preview_choice(text)
 
     def _goto_preview(self, prefix_lines: List[str]) -> WizardResult:
-        self.state.advance_to(WizardStep.PREVIEW)
-        self._awaiting_confirm = True
         chain = self.state.command_chain
         target = self.state.choices.get("target", "")
+
+        if target:
+            in_scope, err = is_target_in_scope(target, AUTHORIZED_SCOPE)
+            if not in_scope:
+                self._awaiting_confirm = False
+                self.state.reset_flow()
+                menu = self._tool_menu_result()
+                return WizardResult(
+                    False, [f"[!] Scope violation: {err}", ""] + menu.lines, menu.prompt
+                )
+
+        self.state.advance_to(WizardStep.PREVIEW)
+        self._awaiting_confirm = True
         flags = chain.split(" ")[1:] if chain else []
         impact = generate_impact_description(flags, target) if target else "N/A"
         box = format_confirmation_box(chain, target, impact)
