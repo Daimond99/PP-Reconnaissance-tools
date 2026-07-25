@@ -1,0 +1,5 @@
+{
+  "tool_menu": "WIZARD MODE - Select Tool\n{warning}\n\nเลือกเครื่องมือที่จะใช้:\n\n 1. Nmap\n 2. Masscan\n 3. Hydra\n 4. Ncrack\n 5. Evil-WinRM\n 6. Auto Chain (Recon → Action)\n\nSelect option (1-6):",
+  "attack_menu": "WIZARD MODE - Expert Attack Chain Guide\n{warning}\n\nWhat do you want to find?\n\n 1. Web Servers\n 2. SSH Services\n 3. Windows Systems\n 4. Databases\n 5. Full Network Scan\n 6. Custom Scan\n\nType: check | install | help | reset | back\nSelect option (1-6):",
+  "db_options": "Select database focus:\n\n 1. Microsoft SQL (1433)\n 2. MySQL (3306)\n 3. PostgreSQL (5432)\n 4. MongoDB (27017)\n 5. All common DB ports\n\nSelect option (1-5):"
+}
