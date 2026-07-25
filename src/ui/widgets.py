@@ -23,7 +23,7 @@ from src.config import (
     BG, PANEL_LIGHT, PURPLE, TEXT, TEXT_DIM, BORDER, CONSOLE_BG, CONSOLE_TEXT,
 )
 
-from src.core.wizard_engine import WizardEngine, AttackType, WizardStep
+from src.core.wizard_engine import WizardEngine
 from src.core.tool_manager import get_tool_manager
 from src.ui.llm_mode import LLMModeTab
 from src.ui.tool_selection import ToolSelectionTab
@@ -303,48 +303,22 @@ class WizardConsoleTab(QWidget):
     def _on_command_entered(self, text):
         if not text:
             return
-        
+
         # Add to history
         self._history.append(text)
         self._history_index = len(self._history)
-        
-        # Handle special commands
-        if text.lower() == "check":
-            self._show_tool_status()
-        elif text.lower() == "install":
-            self._show_install_guide()
-        elif text.lower() == "back":
-            self._handle_back()
-        elif text.lower() == "reset":
-            self.wizard_engine.reset()
-            self._show_initial_menu()
-        elif text.lower() == "help":
-            self._show_help()
-        else:
-            # Process through wizard engine
-            self._process_wizard_input(text)
+
+        # WizardEngine.handle_input() already understands the meta-commands
+        # check / install / help / reset / back / cancel internally — just
+        # forward everything to it and render the result.
+        is_meta_info = text.strip().lower() in ("check", "install", "help")
+        result = self.wizard_engine.handle_input(text)
+        self._render_result(result, clear=not is_meta_info)
     
     def _show_initial_menu(self):
-        """แสดงเมนูเริ่มต้นแบบ Wizard Mode"""
-        self._clear_output()
-        self._append_colored("WIZARD MODE - Expert Attack Chain Guide\n", "#ffffff")
-        self._append_output("What do you want to find?\n\n")
-        
-        options = [
-            "Web Servers",
-            "SSH Services",
-            "Windows Systems",
-            "Databases",
-            "Full Network Scan",
-            "Custom Scan"
-        ]
-        
-        for i, opt in enumerate(options, 1):
-            self._append_colored(f" {i}.", "#ffffff")
-            self._append_output(f" {opt}\n")
-            
-        self._append_output("\nSelect option (1-6) : \n")
-        self._append_colored("Select>", "#00ff88")
+        """แสดงเมนูเริ่มต้น (TOOL_SELECT) จาก wizard engine จริง"""
+        result = self.wizard_engine.reset()
+        self._render_result(result, clear=True)
     
     def _clear_output(self):
         """ล้าง output area"""
@@ -370,39 +344,43 @@ class WizardConsoleTab(QWidget):
         self.output_area.setTextCursor(cursor)
         self.output_area.ensureCursorVisible()
     
-    def _display_prompt(self, prompt):
-        """แสดง prompt จาก wizard engine"""
-        self._clear_output()
-        
-        # Title
-        self._append_colored(f"{prompt.title}\n", "#00ff88")
-        self._append_colored("=" * 50 + "\n\n", "#666666")
-        
-        # Message
-        self._append_output(prompt.message + "\n")
-        
-        # Options
-        if prompt.options:
-            self._append_output("\n")
-            for opt in prompt.options:
-                self._append_colored(f" {opt.key}.", "#00aaff")
-                self._append_output(f" {opt.label}")
-                if opt.description:
-                    self._append_colored(f" - {opt.description}", "#888888")
-                self._append_output("\n")
-        
-        # Update prompt label based on input type
-        prompt_text = ">"
-        if prompt.input_type == "choice":
-            prompt_text = "Select>"
-        elif prompt.input_type == "text":
-            prompt_text = "Input>"
-        elif prompt.input_type == "password":
-            prompt_text = "Password>"
-        
+    def _render_result(self, result, clear: bool = True):
+        """
+        Render a WizardResult(success, lines, prompt, action, commands) —
+        the actual return type of WizardEngine.handle_input()/reset()/go_back().
+        """
+        if clear:
+            self._clear_output()
+
+        handled_sentinel = False
+        for line in result.lines:
+            if line == "__SHOW_TOOL_STATUS__":
+                self._show_tool_status()
+                handled_sentinel = True
+                continue
+            if line == "__SHOW_INSTALL_GUIDE__":
+                self._show_install_guide()
+                handled_sentinel = True
+                continue
+            self._append_output(line + "\n")
+
+        if handled_sentinel:
+            return  # _show_tool_status()/_show_install_guide() already end with a prompt
+
+        if result.action == "execute":
+            for cmd in (result.commands or []):
+                self.commandEntered.emit(cmd)
+            self._append_output("Use 'reset' to start a new wizard session.\n\n")
+            self._append_colored("Select>", "#00ff88")
+            return
+
+        if result.action == "cancel":
+            self._append_colored("\nSelect>", "#00ff88")
+            return
+
+        prompt_text = result.prompt or "Select>"
         self._append_colored(f"\n{prompt_text}", "#00ff88")
-        
-        # Move cursor to end
+
         cursor = self.output_area.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.output_area.setTextCursor(cursor)
@@ -437,114 +415,6 @@ class WizardConsoleTab(QWidget):
         
         self._append_colored("\nSelect> ", "#00ff88")
     
-    def _handle_back(self):
-        """จัดการการย้อนกลับ"""
-        if self.wizard_engine.go_back():
-            prompt = self.wizard_engine.get_current_prompt()
-            self._display_prompt(prompt)
-        else:
-            self._show_initial_menu()
-    
-    def _show_help(self):
-        """แสดง help"""
-        self._append_output("\n\n")
-        self._append_colored("WIZARD MODE HELP\n", "#00ff88")
-        self._append_colored("-" * 40 + "\n", "#666666")
-        self._append_output("""
-Commands available at any time:
-  check   - Verify installed tools
-  install - Show installation guide
-  back    - Go back one step
-  reset   - Start wizard over
-  help    - Show this help
-
-Attack Types:
-  1. Web Servers    - Scan for HTTP/HTTPS services
-  2. SSH Services   - Scan and test SSH access
-  3. Windows Systems - Windows/Active Directory attacks
-  4. Databases      - Scan for database services
-  5. Full Network   - Comprehensive network scan
-  6. Custom Scan    - Build custom command
-
-""")
-        self._append_colored("Select option (1-6): ", "#00ff88")
-    
-    def _process_wizard_input(self, user_input: str):
-        """ประมวลผล input ผ่าน wizard engine"""
-        current_step = self.wizard_engine.state.current_step
-        
-        # Handle initial attack type selection
-        if current_step == WizardStep.TARGET_INPUT and self.wizard_engine.state.attack_type is None:
-            choice_map = {
-                "1": AttackType.WEB_SERVERS,
-                "2": AttackType.SSH_SERVICES,
-                "3": AttackType.WINDOWS_SYSTEMS,
-                "4": AttackType.DATABASES,
-                "5": AttackType.FULL_NETWORK,
-                "6": AttackType.CUSTOM_SCAN,
-            }
-            
-            if user_input in choice_map:
-                self.wizard_engine.set_attack_type(choice_map[user_input])
-                self._append_colored(f"\nSelected: {choice_map[user_input].value.replace('_', ' ').title()}\n", "#00ff00")
-                
-                # Get next prompt
-                prompt = self.wizard_engine.get_current_prompt()
-                self._display_prompt(prompt)
-            else:
-                self._append_colored(f"\nInvalid selection: {user_input}\n", "#ff6666")
-                self._append_colored("Select option (1-6): ", "#00ff88")
-            return
-        
-        # Process through wizard engine
-        success, message = self.wizard_engine.process_input(user_input)
-        
-        if message == "EXECUTE":
-            # Ready to execute
-            command = self.wizard_engine.get_command()
-            self._append_colored(f"\n{'=' * 50}\n", "#00ff88")
-            self._append_colored("COMMAND READY:\n", "#ffff00")
-            self._append_colored(f"{command}\n", "#00ff88")
-            self._append_colored(f"{'=' * 50}\n\n", "#00ff88")
-            self._append_colored("Execute this command? (y/n): ", "#00ff88")
-            
-        elif message == "EDIT":
-            # TODO: Implement command editing
-            self._append_colored("\nCommand editing not yet implemented.\n", "#ffaa00")
-            prompt = self.wizard_engine.get_current_prompt()
-            self._display_prompt(prompt)
-            
-        elif message == "BACK":
-            prompt = self.wizard_engine.get_current_prompt()
-            self._display_prompt(prompt)
-            
-        elif message == "CANCEL":
-            self.wizard_engine.reset()
-            self._show_initial_menu()
-            
-        elif success:
-            self._append_colored(f"\n{message}\n", "#00ff00")
-            
-            # Check if we're at execute step
-            if self.wizard_engine.state.current_step == WizardStep.EXECUTE:
-                # Emit command for execution
-                command = self.wizard_engine.get_command()
-                self.commandEntered.emit(command)
-                
-                # Show execution started
-                self._append_colored(f"\nExecuting: {command}\n", "#ffff00")
-                self._append_colored("Use 'reset' to start a new wizard session.\n\n", "#888888")
-                self._append_colored("Select option (1-6): ", "#00ff88")
-            else:
-                # Get next prompt
-                prompt = self.wizard_engine.get_current_prompt()
-                self._display_prompt(prompt)
-        else:
-            self._append_colored(f"\nError: {message}\n", "#ff6666")
-            # Re-show current prompt
-            prompt = self.wizard_engine.get_current_prompt()
-            self._display_prompt(prompt)
-
     def write_output(self, text: str):
         """เขียน output ไปยัง console"""
         self._append_output(text)
