@@ -415,13 +415,10 @@ class ReconMainWindow(QMainWindow):
         self._on_warhead_change(self.top_bar.warhead_combo.currentText())
 
     def _on_sidebar_navigation(self, index: int):
-        if index == 0:
-            self.main_area.tab_widget.setCurrentIndex(0)
-            return
-        self.main_area.tab_widget.setCurrentIndex(index)
+        self.main_area.stack.setCurrentIndex(index)
 
     def _on_opmode_change(self, mode):
-        self.main_area.tab_widget.setCurrentIndex(0)
+        self.main_area.stack.setCurrentIndex(0)
         wizard_tab = self.main_area.wizard_tab
 
         if mode == "Wizard Mode":
@@ -469,7 +466,7 @@ class ReconMainWindow(QMainWindow):
             return
 
         raw_tab = self.main_area.raw_output_tab
-        self.main_area.tab_widget.setCurrentIndex(3)
+        self.main_area.stack.setCurrentIndex(3)
 
         gate = ConfirmationGate(channel="direct")
         result = gate.request(cmd, self._get_target())

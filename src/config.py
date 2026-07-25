@@ -18,12 +18,27 @@ BG_DARKER    = "#21222c"
 PANEL        = "#303241"
 PANEL_LIGHT  = "#3a3d4d"
 PURPLE       = "#bd93f9"
+PURPLE_DIM   = "#8c6fd1"
+PURPLE_SOFT  = "#362b52"
 BLUE         = "#bd93f9"
 TEXT         = "#f8f8f2"
 TEXT_DIM     = "#b8b8c4"
 BORDER       = "#44475a"
 CONSOLE_BG   = "#050505"
 CONSOLE_TEXT = "#f8f8f2"
+
+# Mission Control mockup palette — used by the sidebar / mission bar /
+# terminal chrome / Zenmap-style Results Display introduced to match
+# Mockup HTML.txt.
+BG_APP       = "#21222c"
+BG_PANEL_2   = "#2f3140"
+BG_INPUT     = "#191a21"
+BORDER_SOFT  = "#34364a"
+TEXT_MUTE    = "#6272a4"
+ORANGE       = "#ffb86c"
+TERM_BG      = "#0c0c0e"
+TERM_BAR     = "#151318"
+TERM_MUTE    = "#7a7a85"
 
 # Terminal accent colors (Dracula-consistent) — used to colorize LLM Mode
 # console output by message type (success/warning/error/info).
@@ -556,6 +571,150 @@ QToolButton#IconButton {{
     padding: 5px;
 }}
 QToolButton#IconButton:hover {{ background-color: #343b47; }}
+
+/* ============================================================
+   Mission Control mockup chrome — sidebar nav, mission bar,
+   terminal windows, Zenmap-style Results Display.
+   ============================================================ */
+
+#Sidebar {{
+    background-color: {BG_PANEL_2};
+    border-right: 1px solid {BORDER_SOFT};
+    min-width: 220px;
+    max-width: 220px;
+}}
+#Sidebar[collapsed="true"] {{
+    min-width: 68px;
+    max-width: 68px;
+}}
+#SidebarToggle {{
+    background: transparent;
+    border: none;
+    color: {TEXT_DIM};
+    font-size: 18px;
+    border-radius: 6px;
+}}
+#SidebarToggle:hover {{ background-color: {BG_PANEL_2}; color: {PURPLE}; }}
+#SidebarNavItem {{
+    background: transparent;
+    border: none;
+    border-left: 3px solid transparent;
+    color: {TEXT_DIM};
+    text-align: left;
+    padding: 10px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+}}
+#SidebarNavItem:hover {{ background-color: {BG_PANEL_2}; color: {TEXT}; }}
+#SidebarNavItem[selected="true"] {{
+    background-color: {PURPLE_SOFT};
+    border-left: 3px solid {PURPLE};
+    color: {PURPLE};
+}}
+#SidebarSettingsItem {{
+    background: transparent;
+    border: none;
+    color: {TEXT_MUTE};
+    text-align: left;
+    padding: 10px 10px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 8px;
+}}
+#SidebarSettingsItem:hover {{ background-color: {BG_PANEL_2}; color: {TEXT}; }}
+
+#MissionBar {{
+    background-color: {BG_PANEL_2};
+    border-bottom: 1px solid {BORDER_SOFT};
+}}
+#MissionFieldLabel {{
+    color: {TEXT_MUTE};
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}}
+#MissionInput, #MissionCombo {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER};
+    color: {TEXT};
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 13px;
+}}
+#MissionInput:focus, #MissionCombo:focus {{ border: 1px solid {PURPLE_DIM}; }}
+#CmdPreview {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER};
+    border-radius: 7px;
+    color: {PURPLE};
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 12.5px;
+    padding: 10px 14px;
+}}
+#CmdPreview:focus {{ border: 1px solid {PURPLE_DIM}; }}
+
+#TermWindow {{
+    background-color: {TERM_BG};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 8px;
+}}
+#TermBar {{
+    background-color: {TERM_BAR};
+    border-bottom: 1px solid #201f26;
+}}
+#TermIcon, #TermTitle {{
+    color: {TERM_MUTE};
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 11.5px;
+}}
+
+#LogStatus {{
+    color: {ORANGE};
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+#LogStatus[running="true"] {{ color: {ACCENT_GREEN}; }}
+#LogStatusDot {{
+    color: {ORANGE};
+    font-size: 16px;
+}}
+#LogStatusDot[running="true"] {{ color: {ACCENT_GREEN}; }}
+
+#ZmHostList {{
+    background-color: {BG_PANEL_2};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 8px;
+    outline: none;
+    padding: 4px;
+}}
+#ZmHostList::item {{
+    padding: 8px 10px;
+    border-radius: 6px;
+    color: {TEXT_DIM};
+}}
+#ZmHostList::item:hover {{ background-color: {BG_PANEL_2}; }}
+#ZmHostList::item:selected {{
+    background-color: {PURPLE_SOFT};
+    color: {TEXT};
+}}
+#ZmDetailTree {{
+    background-color: {BG_PANEL_2};
+    border: 1px solid {BORDER_SOFT};
+    border-radius: 10px;
+    outline: none;
+    padding: 4px;
+}}
+#ZmDetailTree::item {{ padding: 5px 4px; color: {TEXT_DIM}; }}
+#ZmDetailTree::item:selected {{ background-color: transparent; color: {TEXT_DIM}; }}
+#ZmKeyLabel {{ color: {TEXT_MUTE}; font-size: 12.5px; }}
+#ZmValueLabel {{ color: {TEXT_DIM}; font-size: 12.5px; }}
+#ZmAccuracyBar {{
+    background-color: {BG_INPUT};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+}}
+#ZmAccuracyLabel {{ color: #1c1d26; font-size: 10.5px; font-weight: 700; }}
 """
 
 # ============================================================================
