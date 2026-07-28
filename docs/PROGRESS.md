@@ -6,6 +6,33 @@ file map see `GUI_MISSION_CONTROL.md`.
 
 ---
 
+## 2026-07-29 — WSL2 tool-runner finalized: all 6 tools installed in Ubuntu
+
+Environment-only change, no code touched. User installed Docker Desktop +
+WSL2, had 3 distros (`Ubuntu`, `docker-desktop`, `Arch`); confirmed `Ubuntu`
+is WSL2 (kernel `6.6.87.2-microsoft-standard-WSL2`, Ubuntu 26.04 LTS),
+deleted the unused `Arch` distro, kept Ubuntu as the sole tool-runner
+(matches `wizard_terminal.py`'s `wsl.exe -e ...` calls, which target the
+default distro).
+
+Installed via `sudo apt-get install -y nmap masscan ncrack ruby ruby-dev &&
+sudo gem install evil-winrm`, then a follow-up `sudo apt-get install -y ncat`
+(Ubuntu's `nmap` apt package doesn't bundle ncat the way the Windows
+installer does — had to be added separately). Verified all 6:
+nmap v7.98, masscan v1.3.2, hydra v9.6 (already installed from the earlier
+pass), ncrack v0.7, ncat v7.98, evil-winrm v3.9 (ruby 3.3.8). Full detail in
+`CURRENT_STATE.md`'s "External tools" section, new "WSL2 Ubuntu install"
+table.
+
+Next: only hydra is actually routed through `wsl.exe -e ...` in
+`wizard_terminal.py` today. masscan/ncat/ncrack/evil_winrm still have
+placeholder builders (`src/tools/<tool>/builder.py`) — writing those and
+wiring them into `WizardTerminal._route_command()` is the next real dev
+work now that the environment is ready. Evil-WinRM stays top priority per
+the entry below (next chain stage after hydra finds a credential).
+
+---
+
 ## 2026-07-26 — Wizard Console rebuilt as gated nmap→hydra wizard, hydra implemented
 
 Branch: `restyle-mission-control-gui` (still unpushed). Supersedes the

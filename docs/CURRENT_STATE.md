@@ -6,12 +6,14 @@ not a spec. For the normative rules the code is supposed to follow, read
 `Resource System.md`. For the GUI file/page map, read `GUI_MISSION_CONTROL.md`.
 Update this file whenever the state below goes stale.
 
-Last verified: 2026-07-26, branch `restyle-mission-control-gui` (rebuilt after
-the "Wizard Console rebuilt as gated nmap→hydra wizard, hydra implemented"
-pass — see `PROGRESS.md`, same date). **This supersedes the plain-bash-only
-description of Wizard Console below where the two disagree — read the
-`### Wizard / orchestration` and per-tool table sections carefully, they've
-changed.**
+Last verified: 2026-07-29, branch `restyle-mission-control-gui`. Code/GUI
+state below is unchanged since the 2026-07-26 "Wizard Console rebuilt as
+gated nmap→hydra wizard, hydra implemented" pass (see `PROGRESS.md`); the
+2026-07-29 update is environment-only — all 6 tools now installed for real
+in WSL2 Ubuntu, see "External tools" section below. **This supersedes the
+plain-bash-only description of Wizard Console below where the two disagree —
+read the `### Wizard / orchestration` and per-tool table sections carefully,
+they've changed.**
 
 ## Entry point
 
@@ -215,7 +217,7 @@ Cloned source (read/reference only, not built from):
 - `tools/ncrack` — github.com/nmap/ncrack
 - `tools/ncat-w32` — gitlab.com/kalilinux/packages/ncat-w32
 
-What's actually usable on this Windows machine right now:
+### Windows-native install (legacy, superseded below)
 
 | Tool | Install method | Status |
 |---|---|---|
@@ -226,8 +228,31 @@ What's actually usable on this Windows machine right now:
 | ncat-w32 | n/a | not needed — ncat already available via nmap bundle |
 | thc-hydra | n/a | no official Windows binary; would need MSYS2/MinGW build or WSL — deferred, not attempted |
 
-This table is about *runtime availability for the Windows demo*, separate
-from the `src/tools/hydra/` etc. code-module status above — a tool can be
-absent from the machine while its builder/validator/parser/analyzer module
-skeleton still exists in the codebase (that's the whole point of the
-Windows-Demo architecture rule).
+### WSL2 Ubuntu install (2026-07-29 — current path for the full chain)
+
+User installed Docker Desktop + WSL2, deleted the unused `Arch` WSL distro,
+kept `Ubuntu` (26.04 LTS, WSL2, default distro) as the sole tool-runner. All
+six tools now installed for real inside WSL Ubuntu via `apt-get`/`gem`, not
+the Windows-native table above:
+
+| Tool | Install method | Status |
+|---|---|---|
+| nmap | `sudo apt-get install -y nmap` | ✅ v7.98 |
+| masscan | `sudo apt-get install -y masscan` | ✅ v1.3.2 (works, WSL2 raw sockets available) |
+| hydra | `sudo apt-get install -y hydra` (installed in an earlier pass) | ✅ v9.6, `/usr/bin/hydra` |
+| ncrack | `sudo apt-get install -y ncrack` | ✅ v0.7 |
+| ncat | `sudo apt-get install -y ncat` (separate package — Ubuntu's `nmap`/`nmap-common` apt packages do *not* bundle ncat, unlike the Windows nmap installer) | ✅ v7.98, `/usr/bin/ncat` |
+| evil-winrm | `sudo apt-get install -y ruby ruby-dev && sudo gem install evil-winrm` | ✅ v3.9 (ruby 3.3.8), `/usr/local/bin/evil-winrm` |
+
+This is now the tool set `WizardTerminal`/future builders should target —
+route every tool through `wsl.exe -e <tool> ...` the same way hydra already
+does (`WizardTerminal._route_command()`), not through Windows-native binaries.
+Only hydra is actually wired into that route today; nmap runs via its own
+Windows PATH binary in `wizard_terminal.py`'s nmap stage (unchanged, still
+works since nmap is on both Windows PATH and WSL). masscan/ncat/ncrack/
+evil_winrm still need real builders (see "Command builders" table above)
+before anything in the GUI can invoke them.
+
+Docker Desktop and VMware are present on this machine too, but for demo
+*targets* (victim VMs/containers), not as part of the WSL tool-runner —
+unrelated to this table.
