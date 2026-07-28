@@ -20,7 +20,7 @@ There is no configured lint/test/build tooling in this repo (no pytest config, n
 
 ## Required reading before structural changes
 
-`docs/ARCHITECTURE.md` and `docs/Resource System.md` are the authoritative, mandatory specs for this project — read them before adding modules, tools, or layers. `docs/AI_DEVELOPMENT.md` and `docs/Coding Standards.md` carry AI-specific refactoring rules. `docs/CURRENT_STATE.md` is a snapshot of what's actually implemented vs. placeholder in the code right now (read this first in a fresh session — cheaper than re-deriving it). `docs/PROGRESS.md` is the running log of what's been done recently. `docs/GUI_MISSION_CONTROL.md` is the file/page map for the GUI specifically. Key points that aren't obvious from skimming the code:
+`docs/ARCHITECTURE.md`, `docs/Resource System.md`, `docs/AI_DEVELOPMENT.md`, and `docs/Coding Standards.md` (the original normative specs) have been removed — their load-bearing rules are folded into this file's `## Architecture` section below and into the docs that remain. `docs/CURRENT_STATE.md` is a snapshot of what's actually implemented vs. placeholder in the code right now, including live safety gaps (read this first in a fresh session — cheaper than re-deriving it). `docs/PROGRESS.md` is the running log of what's been done recently. `docs/GUI_MISSION_CONTROL.md` is the file/page map for the GUI specifically. Key points that aren't obvious from skimming the code:
 
 - **Windows Demo is an execution profile, not an architecture limitation.** If a tool can't currently execute on this platform, still create the full module structure (`builder.py`, `validator.py`, `parser.py`, `analyzer.py`) with placeholder implementations and TODO docstrings — never skip or omit modules because execution is unavailable.
 - **Resource-driven architecture**: menus, help text, warnings, impact descriptions, prompt templates, dialog text — all of it lives in `src/resources/*.json`, never hardcoded as Python string literals.
@@ -57,7 +57,7 @@ Hard rules that hold across the codebase:
 - `src/ui/` — `main_window.py` (layout), `widgets.py` (Sidebar/TopBar/Console), `wizard_console.py`, `tool_selection.py`, `llm_mode.py` (LLM-assisted command suggestion flow, gated by `confirmation_gate.py`).
 - `src/scripts/llm-tools-nmap.py` — standalone tool functions (e.g. local network/interface discovery) exposed to the `llm` CLI plugin for LLM-assisted scan-range suggestions; not part of the GUI pipeline.
 
-### AI/LLM integration rules (from docs/ARCHITECTURE.md §17)
+### AI/LLM integration rules
 
 AI may explain tools, recommend profiles/flags, summarize results. AI must never execute scans automatically, skip confirmation, bypass validation, or fabricate output. Every AI-suggested command passes through the same validation and `ConfirmationGate` as manually entered commands — no shortcut path exists or should be added.
 
@@ -66,9 +66,9 @@ AI may explain tools, recommend profiles/flags, summarize results. AI must never
 README.md's "Project Structure" and "Development" sections describe an older layout (`src/core/wizard_engine.py`, `src/core/tool_manager.py` as the wizard) that has since been restructured into `src/wizard/engine.py` + the per-tool `src/tools/<tool>/` packages described above — trust the architecture above and the actual source tree over the README when they conflict.
 - `tools/` at repo root holds cloned external tool source (nmap, thc-hydra, evil-winrm-py, ncrack, ncat-w32) for Windows-demo reference/install — gitignored, not vendored into this repo, not part of the app's own architecture. See `docs/CURRENT_STATE.md` for what's actually installed/usable on the current machine.
 
-## Known architecture/safety gaps (2026-07-25 audit)
+## Known architecture/safety gaps (2026-07-25 audit — superseded by docs/CURRENT_STATE.md)
 
-An audit against docs/ARCHITECTURE.md, docs/Resource System.md, docs/AI_DEVELOPMENT.md, and docs/Coding Standards.md found the current refactor is structurally complete (all 6 tool packages have the full builder/validator/parser/analyzer layout; no circular imports; deleted wizard_engine.py/wizard_safety.py fully unreferenced) but has real safety and layering gaps — not yet fixed, flagged here so future work accounts for them:
+An audit found the refactor structurally complete (all 6 tool packages have the full builder/validator/parser/analyzer layout; no circular imports; deleted wizard_engine.py/wizard_safety.py fully unreferenced) but has real safety and layering gaps. **This list is the original 2026-07-25 snapshot and is partially stale** — `docs/CURRENT_STATE.md`'s "Known live safety gaps" section is the up-to-date version (e.g. gaps #1 and #2 below were subsequently partially fixed/fixed). Check there first:
 
 - **`src/ui/widgets.py`'s `RawOutputTab`** spawns a raw powershell/bash shell and pipes text to it with zero validation, builder, or `ConfirmationGate` involvement — a full pipeline bypass. It's live and wired into `MainContentArea`.
 - **`src/ui/main_window.py`** re-pipes already-executed commands from the wizard/LLM/tool-selection tabs into `RawOutputTab.write_command()`, causing double execution — once gated, once not.
