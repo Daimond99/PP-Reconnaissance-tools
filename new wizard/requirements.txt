@@ -1,0 +1,4 @@
+# No external dependencies — uses only Python standard library.
+# Reverse shell / bind shell features require netcat (ncat) on PATH.
+# evil-winrm requires Ruby gem installed separately:
+#   sudo gem install evil-winrm
