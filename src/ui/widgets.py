@@ -582,9 +582,10 @@ class MainContentArea(QWidget):
         )
 
     def _build_pages(self):
-        # Wizard Console runs the 'new wizard' chain CLI in a real terminal
-        # (see _make_wizard_terminal). WizardTerminal (the older native
-        # state-machine page) is kept importable but no longer wired in.
+        # Wizard Console runs the 'new wizard' chain CLI in a real ConPTY
+        # terminal (see _make_wizard_terminal). The older native wizard pages
+        # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py) have
+        # been removed — this is the only wizard path now.
         self.wizard_tab = self._make_wizard_terminal()
         self.input_tab = InputManagementTab()
         self.cmd_editor_tab = CommandEditorTab()

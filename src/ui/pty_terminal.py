@@ -129,7 +129,12 @@ class PtyTerminal(QWidget):
         self._repaint.timeout.connect(self._flush)
         self._repaint.start()
 
-        self._spawn()
+        # Spawn is deferred to showEvent: only once the widget is laid out do we
+        # know its real pixel size, so the PTY (and the child's COLS/LINES) can
+        # be sized to fill the pane from the very first line printed. Spawning in
+        # __init__ would size the terminal to a stale default and the banner
+        # would print pre-wrapped (pyte does not reflow history on resize).
+        self._spawned = False
 
     # ------------------------------------------------------------------ UI
     def _build(self) -> None:
@@ -153,7 +158,7 @@ class PtyTerminal(QWidget):
         self.view.setWordWrapMode(QTextOption.WrapMode.NoWrap)
         self.view.setStyleSheet(
             f"background-color:{CONSOLE_BG}; color:{CONSOLE_TEXT};"
-            "border:none; padding:10px 12px;"
+            "border:none; padding:4px 6px;"
         )
         self.view.installEventFilter(self)
         layout.addWidget(self.view, 1)
@@ -276,15 +281,39 @@ class PtyTerminal(QWidget):
             except Exception:
                 pass
 
-    # --------------------------------------------------------------- resize
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
+    # --------------------------------------------------------------- sizing
+    def _fit(self) -> tuple[int, int]:
+        """Compute (cols, rows) that fill the current viewport at the cell size."""
         fm = self.view.fontMetrics()
         char_w = max(1, fm.horizontalAdvance("M"))
-        char_h = max(1, fm.height())
+        char_h = max(1, fm.lineSpacing())
         vp = self.view.viewport().size()
-        cols = max(20, (vp.width() - 24) // char_w)
-        rows = max(6, (vp.height() - 20) // char_h)
+        cols = max(20, vp.width() // char_w)
+        rows = max(6, vp.height() // char_h)
+        return cols, rows
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._spawned:
+            self._spawned = True
+            # Defer one event-loop turn so the layout settles to its final
+            # width before we size the PTY — otherwise the child prints its
+            # banner at a stale (narrow) column count and pyte won't reflow it.
+            QTimer.singleShot(0, self._deferred_spawn)
+
+    def _deferred_spawn(self) -> None:
+        self._cols, self._rows = self._fit()
+        try:
+            self._screen.resize(self._rows, self._cols)
+        except Exception:
+            pass
+        self._spawn()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._spawned:
+            return
+        cols, rows = self._fit()
         if cols == self._cols and rows == self._rows:
             return
         self._cols, self._rows = cols, rows

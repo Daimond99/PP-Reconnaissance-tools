@@ -99,7 +99,7 @@ def _select_steps(
         print(f"    {green(str(i).rjust(2))}. {tag}  "
               f"{bold(str(port))}/{cyan(service)}  [{step.tool}] {step.name}")
     print()
-    info("(recommended) = leads to creds / shell. Highest-impact listed first.")
+    info("(recommended) = leads to creds / shell (top = highest impact).")
     prompt = "Select: numbers (e.g. 1,3,5) / 'r' recommended / 'a' all / '0' none: "
     raw = input(f"  {cyan(prompt)}").strip().lower()
 

@@ -88,26 +88,33 @@ def main() -> None:
         except (AttributeError, ValueError):
             pass
 
-    try:
-        _interactive()
-    except (KeyboardInterrupt, EOFError):
-        # Ctrl-C / Ctrl-D at any prompt: quit cleanly, no traceback.
-        print(f"\n  {yellow('Interrupted — exiting.')}")
-        sys.exit(0)
+    # Run the wizard in a loop so the pane is always "the wizard":
+    #   Ctrl-C  → cancel the current step, restart at the mode menu.
+    #   finish  → offer a fresh run (re-print the banner).
+    #   Ctrl-D  → exit for real (the launcher drops to a shell as an escape).
+    while True:
+        try:
+            _interactive()
+        except KeyboardInterrupt:
+            print(f"\n  {yellow('Cancelled — restarting the wizard.')}\n")
+            continue
+        except EOFError:
+            print(f"\n  {yellow('Exiting wizard.')}")
+            return
 
 
 def _interactive() -> None:
     banner(
         title="PENTEST CHAIN WIZARD",
-        subtitle="auto / semi mode — nmap · masscan · hydra · ncrack · ncat · evil-winrm",
+        subtitle="auto / semi · nmap masscan hydra ncrack ncat evil-winrm",
     )
 
     print(f"  {yellow('You are authorized — no further permission required.')}\n")
 
     # ─── Mode selection ─────────────────────────────────────────
     print("  Select mode:")
-    print(f"    {green('1')}. {bold('AUTO')} — auto-select best tool per port, still confirm each step")
-    print(f"    {green('2')}. {bold('SEMI')} — show all options, you choose per port")
+    print(f"    {green('1')}. {bold('AUTO')} — auto-pick best tool per port, confirm each")
+    print(f"    {green('2')}. {bold('SEMI')} — show all options, pick per port")
     mode_choice = input(f"  {cyan('Choice [1/2]: ')}").strip()
     mode = "auto" if mode_choice == "1" else "semi"
     ok(f"Mode: {mode.upper()}")
@@ -115,8 +122,8 @@ def _interactive() -> None:
     # ─── Target ─────────────────────────────────────────────────
     target = input(f"\n  {cyan('Target (IP / domain / CIDR): ')}").strip()
     if not target:
-        fail("No target provided. Exiting.")
-        sys.exit(1)
+        fail("No target provided — back to the start.")
+        return
 
     # ─── Wordlists ──────────────────────────────────────────────
     _enable_path_completion()
