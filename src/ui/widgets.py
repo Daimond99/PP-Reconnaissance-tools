@@ -3,8 +3,6 @@ Recon Tool - Widgets Module
 เก็บ UI components ทั้งหมด: Sidebar, TopBar, และ Pages
 """
 
-import os
-
 from PySide6.QtWidgets import (
     QWidget, QFrame, QLabel, QPushButton, QLineEdit, QComboBox,
     QTextEdit, QStackedWidget, QGridLayout, QHBoxLayout, QVBoxLayout,
@@ -25,7 +23,7 @@ from src.config import (
 
 from src.core.tool_manager import get_tool_manager
 from src.ui.terminal import InteractiveTerminal
-from src.ui.pty_terminal import PtyTerminal, PTY_AVAILABLE
+from src.ui.terminal_tabs import TerminalTabsWidget
 from src.validation.common import parse_command_line
 
 
@@ -550,43 +548,14 @@ class MainContentArea(QWidget):
         self._build_pages()
         layout.addWidget(self.stack)
 
-    @staticmethod
-    def _make_wizard_terminal():
-        """
-        Wizard Console runs the standalone 'chain_wizard' chain CLI
-        (scan → ranked plan → hydra → cred harvest → post-exploit).
-
-        Preferred path (Windows): a real ConPTY-backed terminal (PtyTerminal)
-        running it inside Ubuntu WSL — full color, working sudo prompts, TAB
-        completion; identical to a standalone Ubuntu WSL terminal. `exec bash`
-        keeps the pane usable after the wizard exits.
-
-        Fallback: the plain-pipe InteractiveTerminal (no color/sudo TTY) when
-        pywinpty/pyte are unavailable.
-        """
-        wsl_dir = "/mnt/d/TheRecon/chain_wizard"
-        launch = f"cd '{wsl_dir}' && python3 -m wizard.main; exec bash -l"
-
-        if PTY_AVAILABLE and os.name == "nt":
-            argv = ["wsl.exe", "-d", "Ubuntu", "bash", "-lc", launch]
-            return PtyTerminal(argv)
-
-        if os.name == "nt":
-            return InteractiveTerminal(
-                "wsl.exe", ["-e", "bash", "-lc", f"cd '{wsl_dir}' && python3 -m wizard.main"]
-            )
-        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        local_dir = os.path.join(repo_root, "chain_wizard")
-        return InteractiveTerminal(
-            "bash", ["-lc", f"cd '{local_dir}' && python3 -m wizard.main"]
-        )
-
     def _build_pages(self):
-        # Wizard Console runs the 'chain_wizard' chain CLI in a real ConPTY
-        # terminal (see _make_wizard_terminal). The older native wizard pages
-        # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py) have
-        # been removed — this is the only wizard path now.
-        self.wizard_tab = self._make_wizard_terminal()
+        # Wizard Console is a VS Code-style tabbed terminal (TerminalTabsWidget):
+        # first tab runs the 'chain_wizard' chain CLI, `+`/`⌄` open more Wizard
+        # or plain Shell tabs. Each tab picks its own backend (XtermTerminal →
+        # PtyTerminal → InteractiveTerminal). The older native wizard pages
+        # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py) were
+        # removed — this is the only wizard path now.
+        self.wizard_tab = TerminalTabsWidget()
         self.input_tab = InputManagementTab()
         self.cmd_editor_tab = CommandEditorTab()
         self.raw_output_tab = RawOutputTab()

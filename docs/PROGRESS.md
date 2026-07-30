@@ -8,6 +8,87 @@ described UI files removed in earlier passes.)
 
 ---
 
+## 2026-07-31 — VS Code-style tabbed terminal + copy/paste hotkeys
+
+Built on the xterm.js terminal (entry below). GUI layout unchanged — the
+Wizard Console page's single terminal is now a tabbed container.
+
+Done:
+- **`src/ui/terminal_tabs.py` (`TerminalTabsWidget`)** — `QTabBar` +
+  `QStackedWidget` over the terminal backends. First tab = **Wizard**
+  (`chain_wizard` CLI, original behavior); `+` opens a plain **Shell** (WSL
+  Ubuntu bash / bash), `⌄` menu opens either profile. Close (×) stops that
+  tab's PTY; the last tab can't be closed. **PyCharm-style tabs** — content-
+  sized rounded pills (`setExpanding(False)`), active tab = filled panel bg +
+  orange bottom-accent underline, and **drag-reorderable** (`setMovable(True)`
+  + `tabMoved` → `_on_tab_moved` reorders the stack to stay index-synced with
+  the bar). `make_terminal(profile)` factory (moved out of `widgets.py`) keeps
+  the Xterm→Pty→Interactive fallback chain for both profiles.
+- **`widgets.py`** — `MainContentArea._make_wizard_terminal` deleted; the page
+  now instantiates `TerminalTabsWidget`. Dropped now-dead imports
+  (`PtyTerminal`/`XtermTerminal`/`os`); `InteractiveTerminal` still used by
+  Raw Output / LLM Mode.
+- **Copy/paste hotkeys in `webterm/term.html`** — `attachCustomKeyEventHandler`:
+  Ctrl+C copies when text is selected else falls through to SIGINT; Ctrl+V
+  pastes (`term.paste`, bracketed-paste aware); Ctrl+Shift+C/V explicit;
+  right-click pastes. `xterm_widget.py` enables `JavascriptCanAccessClipboard`
+  + `JavascriptCanPaste` so clipboard works with no permission prompt.
+  Ctrl+L / `clear` / Ctrl+D / Ctrl+Z / arrows / Home/End / Tab pass straight
+  to the shell.
+- **Verified** — tab smoke test (headless QApplication): first tab Wizard, `+`
+  adds Shell/Shell (2), stack stays index-synced with the tab bar, close
+  removes correctly, last tab refuses to close. `py_compile` clean.
+
+Next: manual GUI check of clipboard copy/paste and tab UX in the running app
+(`python -m src.main`); Linux native run still pending (below).
+
+---
+
+## 2026-07-31 — Wizard Console terminal replaced with xterm.js (IDE-grade)
+
+Replaced the pyte→HTML `PtyTerminal` as the primary Wizard Console terminal
+with a real xterm.js emulator (the one VS Code ships) hosted in a
+`QWebEngineView`. GUI layout unchanged — only the terminal widget inside the
+Wizard Console page swapped. Solves the two limits the user rejected in
+`CROSS_PLATFORM_TERMINAL_PLAN.md`: no reflow-on-resize, and pywinpty being
+Windows-only (no color/sudo on Linux).
+
+Done:
+- **New `src/ui/webterm/`** package:
+  - `xterm_widget.py` (`XtermTerminal`) — QWidget wrapping `QWebEngineView`.
+    `_Bridge` (QWebChannel) shuttles PTY bytes (base64, so UTF-8 never splits)
+    to `term.write`, and keystrokes/paste/resize back to the PTY. `_Reader`
+    (QThread) pumps blocking PTY reads off the GUI thread. PTY backends:
+    `_WinPty` (pywinpty ConPTY, Windows) and `_PosixPty` (stdlib
+    `pty.fork` + `termios` winsize, Linux — no third-party dep). Spawn is
+    deferred until JS `ready(cols,rows)` fires so the shell starts at the
+    correct size.
+  - `term.html` — xterm.js + fit addon + qwebchannel bootstrap; `__BG__`/
+    `__FG__` tokens substituted from `src/config.py` at load. Loaded via
+    `setHtml` with a `file://` base URL so relative `vendor/*.js` resolve.
+  - `vendor/` — xterm.js 5.3.0, addon-fit 0.8.0, xterm.css, qwebchannel.js
+    (committed, offline, no CDN).
+- **Wiring** — `src/ui/widgets.py` `_make_wizard_terminal` now selects
+  `XtermTerminal` → `PtyTerminal` → `InteractiveTerminal` (first available).
+  Same launch command across all three. Import + `XTERM_AVAILABLE` added.
+- **Deps** — `PySide6-QtWebEngine>=6.6.0` added to `requirements.txt` (already
+  installed on this machine; WebEngine + WebChannel + winpty all present).
+- **Verified** — headless-ish smoke test (QApplication, 14s): page loaded,
+  QWebChannel connected, `ready` fired (100×30), PTY spawned `wsl.exe -d
+  Ubuntu`, real output flowed back (`XTERM-SMOKE-OK` + `uname -a` + WSL boot,
+  463 bytes, UTF-8 correct). `py_compile` clean on all touched files.
+
+Next:
+- **Linux native verify** — the `_PosixPty` path is written but not yet run on
+  a real Linux box (install the 6 tools, `python -m src.main`, open Wizard
+  Console). ptyprocess intentionally not a dep — stdlib `pty` used.
+- Old `CROSS_PLATFORM_TERMINAL_PLAN.md` reparent-conhost/xterm task is now
+  moot (superseded by this approach) — mark it there if continuing.
+- `PtyTerminal` (pyte) kept only as a fallback; could be deleted once the
+  xterm path is confirmed on both platforms.
+
+---
+
 ## 2026-07-31 — Stale docs cleanup
 
 - **Deleted `docs/GUI_MISSION_CONTROL.md`** — last touched 2026-07-26, still

@@ -24,7 +24,7 @@ Sidebar has 6 pages (`Sidebar.NAV_ITEMS`, index 0–5), 1:1 with
 
 | Index | Attr | Class | Notes |
 |---|---|---|---|
-| 0 | `wizard_tab` | `PtyTerminal` (Windows, pywinpty+pyte available) or `InteractiveTerminal` fallback | Wizard Console — runs the standalone `chain_wizard/` chain CLI, see below |
+| 0 | `wizard_tab` | `TerminalTabsWidget` — VS Code-style tabbed terminal; each tab is `XtermTerminal` (xterm.js in QWebEngineView + real PTY) → `PtyTerminal` (pyte/ConPTY) → `InteractiveTerminal`, first available wins | Wizard Console — first tab runs `chain_wizard/` CLI; `+`/`⌄` open more Wizard or plain Shell tabs, see below |
 | 1 | `input_tab` | `InputManagementTab` | supporting panel |
 | 2 | `cmd_editor_tab` | `CommandEditorTab` | supporting panel |
 | 3 | `raw_output_tab` | `RawOutputTab` (wraps `InteractiveTerminal`) | plain real shell, ungated by design |
@@ -36,7 +36,16 @@ Sidebar has 6 pages (`Sidebar.NAV_ITEMS`, index 0–5), 1:1 with
   (`_on_execute_clicked`/`_run_gated_command`) is the **only** GUI path that
   goes through `ConfirmationGate` directly — result is shown via
   `QMessageBox` dialogs, not mirrored into any terminal.
-- `pty_terminal.py` (`PtyTerminal`) — real ConPTY (`pywinpty`) + `pyte` VT
+- `webterm/` (`XtermTerminal`) — **primary Wizard Console terminal.** xterm.js
+  (the emulator VS Code ships) hosted in a `QWebEngineView`, bridged over
+  `QWebChannel` to a real PTY: ConPTY (`pywinpty`) running `wsl.exe -d Ubuntu
+  bash` on Windows, stdlib `pty` fork of `bash` on Linux. IDE-grade behavior —
+  reflow-on-resize, mouse select, copy/paste, and full curses apps
+  (vim/nano/htop/python). Vendored JS (xterm.js/addon-fit/xterm.css/
+  qwebchannel.js) under `webterm/vendor/`, no CDN. `XTERM_AVAILABLE` guards the
+  QtWebEngine + PTY imports; if either is missing it degrades to `PtyTerminal`
+  then `InteractiveTerminal`.
+- `pty_terminal.py` (`PtyTerminal`) — legacy fallback. Real ConPTY (`pywinpty`) + `pyte` VT
   emulator rendered to a `QTextEdit` as HTML. On Windows this is what powers
   the Wizard Console: it launches `wsl.exe -d Ubuntu bash -lc "cd
   '/mnt/d/TheRecon/chain_wizard' && python3 -m wizard.main; exec bash -l"` —

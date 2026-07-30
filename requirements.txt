@@ -5,6 +5,14 @@ keyring>=24.0.0
 # emulator so the 'chain_wizard' CLI runs with full color / working sudo, exactly
 # like a standalone Ubuntu WSL terminal. pyte is cross-platform; pywinpty is
 # Windows-only.
+# Wizard Console primary terminal — xterm.js (the emulator VS Code ships) hosted
+# in a QWebEngineView, driven by a real PTY (ConPTY via pywinpty on Windows,
+# stdlib `pty` on Linux). Gives reflow-on-resize, mouse select, copy/paste, and
+# full curses apps (vim/htop/python). Vendored JS lives in src/ui/webterm/vendor.
+PySide6-QtWebEngine>=6.6.0
+
+# Legacy Wizard Console fallback — pyte VT emulator (cross-platform) + pywinpty
+# ConPTY (Windows-only). Used only if QtWebEngine is unavailable.
 pyte>=0.8.2
 pywinpty>=2.0 ; sys_platform == "win32"
 

@@ -6,7 +6,7 @@
 
 ## What it does
 
-- **Wizard Console** — embedded chain CLI (`chain_wizard/`): target → scan → impact-ranked attack plan → hydra brute-force → credential harvest → in-scope post-exploit (ncat / nmap-NSE / evil-winrm), all inside a real terminal in the GUI.
+- **Wizard Console** — tabbed terminal (PyCharm-style tabs, drag to reorder): the first tab runs the embedded chain CLI (`chain_wizard/`): target → scan → impact-ranked attack plan → hydra brute-force → credential harvest → in-scope post-exploit (ncat / nmap-NSE / evil-winrm). `+`/`▾` open more Wizard or plain Shell tabs. Terminal itself is a real xterm.js emulator (the one VS Code uses) over a real PTY — full color, resize reflow, mouse selection, copy/paste, curses apps (vim/htop).
 - **Top-bar Execute** — manual command entry, validated and confirmed through the same `ConfirmationGate` (exact `"yes"` to run, secrets masked in previews/logs) as the wizard.
 - **Raw Output / LLM Mode** — plain, ungated real shells for free-form use.
 
@@ -52,7 +52,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-`pywinpty` (Windows-only, for the embedded ConPTY terminal) installs automatically via `requirements.txt` on Windows.
+`PySide6-QtWebEngine` (the Wizard Console's terminal renderer) and `pywinpty` (Windows-only ConPTY fallback) install automatically via `requirements.txt`.
 
 ### 4. Run
 

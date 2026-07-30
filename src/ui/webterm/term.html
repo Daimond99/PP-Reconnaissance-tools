@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="vendor/xterm.css">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: __BG__; }
+  #term { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 4px 6px; }
+  /* hide the xterm scrollbar track flicker on some platforms */
+  .xterm .xterm-viewport { overflow-y: auto; }
+</style>
+</head>
+<body>
+<div id="term"></div>
+
+<script src="vendor/xterm.js"></script>
+<script src="vendor/addon-fit.js"></script>
+<script src="vendor/qwebchannel.js"></script>
+<script>
+  // ---- xterm.js setup -------------------------------------------------------
+  var term = new Terminal({
+    fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+    fontSize: 14,
+    cursorBlink: true,
+    allowProposedApi: true,
+    scrollback: 5000,
+    theme: {
+      background: "__BG__",
+      foreground: "__FG__",
+      cursor: "__FG__"
+    }
+  });
+  var fitAddon = new FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(document.getElementById("term"));
+
+  // ---- copy / paste ---------------------------------------------------------
+  function copySelection() {
+    var sel = term.getSelection();
+    if (!sel) return;
+    try { navigator.clipboard.writeText(sel); } catch (e) {}
+  }
+  function pasteClipboard() {
+    try {
+      navigator.clipboard.readText().then(function (txt) {
+        if (txt) term.paste(txt);   // bracketed-paste aware
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  // Ctrl+C  → copy when text is selected, else fall through to SIGINT.
+  // Ctrl+V  → paste. Ctrl+Shift+C / Ctrl+Shift+V → explicit copy / paste.
+  // Everything else (Ctrl+L clear, Ctrl+D, Ctrl+Z, arrows, Home/End, Tab …)
+  // is handed straight to the shell.
+  term.attachCustomKeyEventHandler(function (e) {
+    if (e.type !== "keydown") return true;
+    var ctrl = e.ctrlKey && !e.altKey;
+    if (!ctrl) return true;
+
+    if (e.shiftKey && e.code === "KeyC") { copySelection(); return false; }
+    if (e.shiftKey && e.code === "KeyV") { pasteClipboard(); return false; }
+    if (e.shiftKey) return true;
+
+    if (e.code === "KeyC") {
+      if (term.hasSelection()) { copySelection(); return false; }
+      return true;  // no selection → let Ctrl+C send SIGINT
+    }
+    if (e.code === "KeyV") { pasteClipboard(); return false; }
+    return true;
+  });
+
+  // Right-click also pastes (common terminal convention).
+  term.element.addEventListener("contextmenu", function (ev) {
+    ev.preventDefault();
+    pasteClipboard();
+  });
+
+  function b64ToBytes(b64) {
+    var bin = atob(b64);
+    var len = bin.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  // ---- QWebChannel bridge ---------------------------------------------------
+  var bridge = null;
+  new QWebChannel(qt.webChannelTransport, function (channel) {
+    bridge = channel.objects.bridge;
+
+    // PTY output (base64 of raw bytes) -> terminal
+    bridge.dataToTerm.connect(function (b64) {
+      term.write(b64ToBytes(b64));
+    });
+
+    // keystrokes / pasted text -> PTY
+    term.onData(function (data) { bridge.keyToPty(data); });
+
+    // notify Python of size changes so it can resize the PTY
+    function pushSize() {
+      try { fitAddon.fit(); } catch (e) {}
+      bridge.resizePty(term.cols, term.rows);
+    }
+    term.onResize(function (size) { bridge.resizePty(size.cols, size.rows); });
+    window.addEventListener("resize", pushSize);
+
+    // initial fit, then tell Python we're ready to spawn the shell
+    fitAddon.fit();
+    bridge.ready(term.cols, term.rows);
+    term.focus();
+  });
+
+  // keep fitting as the pane settles (fonts/layout can arrive a frame late)
+  var _fits = 0;
+  var _iv = setInterval(function () {
+    try { fitAddon.fit(); } catch (e) {}
+    if (++_fits > 10) clearInterval(_iv);
+  }, 100);
+</script>
+</body>
+</html>
