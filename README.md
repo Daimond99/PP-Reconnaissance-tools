@@ -1,8 +1,8 @@
 # TheRecon
 
-**Network Reconnaissance Console** — A desktop GUI for orchestrating security reconnaissance workflows with guided wizards and direct tool access.
+**Network Reconnaissance Console** — A desktop GUI for orchestrating security reconnaissance tool chains, with a guided Wizard Console and gated direct command execution.
 
-Built with **Python** and **PyQt5**, TheRecon provides a unified console for network scanning, credential testing, and Windows post-exploitation tooling. It supports both **Wizard Mode** (step-by-step attack chain guidance) and **Direct Tool Mode** (manual command execution).
+Built with **Python** and **PySide6**, TheRecon provides a unified console for network scanning, credential testing, and Windows post-exploitation tooling. Every execution path — the Wizard Console and the top-bar Execute button — requires explicit human confirmation before a command runs.
 
 > ⚠️ **Legal Notice:** This tool is intended for **authorized security testing and educational purposes only**. Always obtain explicit permission before scanning or testing any system you do not own. Unauthorized use may violate applicable laws.
 
@@ -12,12 +12,12 @@ Built with **Python** and **PyQt5**, TheRecon provides a unified console for net
 
 | Feature | Description |
 |---------|-------------|
-| **Wizard Mode** | Interactive, step-by-step attack chain builder inspired by Hydra wizard workflows |
-| **Direct Tool Mode** | One-click access to pre-configured commands for each supported tool |
-| **Warhead Profiles** | Pre-built scan profiles: Stealth Recon, Full Aggressive, Web Focus, Vulnerability Scan |
-| **Tool Manager** | Automatic detection of installed tools with version info and install guides |
-| **Cross-Platform** | Runs on Windows and Linux with platform-specific install instructions |
-| **Modern UI** | Frameless dark-theme console with sidebar navigation and integrated terminal |
+| **Wizard Console** | Guided chain CLI (`chain_wizard/`): scan → impact-ranked plan (AUTO/SEMI) → hydra brute-force → credential harvest → in-scope post-exploit — embedded in the GUI as a real terminal |
+| **Confirmation Gate** | Every gated execution path requires an exact literal `"yes"` before a command runs; secrets (passwords) are masked in previews/audit logs |
+| **Top-bar Execute** | Manual command entry, validated and confirmed through the same gate as the wizard |
+| **Tool Manager** | Automatic detection of installed tools |
+| **Cross-Platform routing** | Windows runs the wizard CLI inside WSL Ubuntu (tools native there); Linux runs it natively — routing happens at the "where the CLI runs" level, not per-tool |
+| **Modern UI** | Frameless dark-theme console with sidebar navigation and an embedded terminal (ConPTY + pyte on Windows) |
 
 ---
 
@@ -37,8 +37,9 @@ The application detects which tools are installed on your system at startup and 
 ## Requirements
 
 - **Python** 3.8 or later
-- **Pyside6**
-- External security tools (Nmap, Masscan, etc.) — installed separately on your system
+- **PySide6**, **keyring**, **pyte** (see `requirements.txt`); **pywinpty** on Windows for the embedded ConPTY terminal
+- **WSL2 (Ubuntu)** on Windows — `chain_wizard/` and its tools run inside WSL, not natively on Windows
+- External security tools (Nmap, Masscan, Hydra, Ncrack, Ncat, Evil-WinRM) — installed separately, inside WSL on Windows or natively on Linux
 
 ---
 
@@ -71,10 +72,10 @@ pip install -r requirements.txt
 
 ### 4. Install external tools
 
-Install the security tools you need for your workflow. TheRecon will detect them automatically. Example on Debian/Ubuntu:
+Install the 6 supported tools inside **WSL Ubuntu** (Windows) or natively (Linux) — `chain_wizard/` invokes them directly via subprocess, not through Windows-native binaries:
 
 ```bash
-sudo apt install nmap masscan hydra ncrack
+sudo apt-get install -y nmap masscan hydra ncrack ncat ruby ruby-dev
 sudo gem install evil-winrm
 ```
 
@@ -88,18 +89,15 @@ Launch the application from the project root:
 python -m src.main
 ```
 
-### Operation Modes
+### Sidebar pages
 
-**Wizard Mode** — Follow guided prompts to configure a full attack chain:
-1. Define target (IP, CIDR, or hostname)
-2. Select scan type (Web, SSH, Windows, Database, Full Network, Custom)
-3. Choose and configure tools
-4. Set credentials and output options
-5. Preview and execute the generated command
+1. **Wizard Console** — embeds the `chain_wizard/` chain CLI as a real terminal: target → scan → impact-ranked plan (`(recommended)`/`(optional)`/`(info)`) → per-step confirm → hydra brute-force → credential harvest/loot → in-scope post-exploit (ncat/nmap-NSE/evil-winrm).
+2. **Input Management** / **Command Editor** — supporting panels for the mission bar workflow.
+3. **Raw Output** — a plain real shell (WSL bash on Windows). Ungated by design — type anything.
+4. **Results Display** — Zenmap-style host/port results view.
+5. **LLM Mode** — a plain real shell for wiring up your own AI CLI (`claude`, `llm chat`, etc.). Also ungated.
 
-**Direct Tool Mode** — Select a tool from the sidebar and run pre-configured commands directly in the console.
-
-**Warhead Profiles** — Apply one of four built-in scan profiles from the top bar for quick reconnaissance.
+**Top-bar Execute** — type a command in the mission bar and run it through the `ConfirmationGate`: preview → exact `"yes"` confirmation → execution. This and the Wizard Console are the only two paths that go through validation + confirmation; Raw Output and LLM Mode are intentionally plain, ungated shells.
 
 ---
 
@@ -108,14 +106,26 @@ python -m src.main
 ```
 TheRecon/
 ├── src/
-│   ├── main.py              # Application entry point
-│   ├── config.py            # UI theme, constants, and command profiles
+│   ├── main.py                    # Application entry point
+│   ├── config.py                  # Theme/palette, AUTHORIZED_SCOPE, TOOL_ENABLEMENT
 │   ├── ui/
-│   │   ├── main_window.py   # Main window and layout
-│   │   └── widgets.py       # Reusable UI components (Sidebar, TopBar, Console)
-│   └── core/
-│       ├── wizard_engine.py # Interactive wizard state machine
-│       └── tool_manager.py  # Tool detection and install guidance
+│   │   ├── main_window.py         # Main window, top-bar Execute → ConfirmationGate
+│   │   ├── widgets.py             # Sidebar, TopBar, all MainContentArea pages
+│   │   ├── pty_terminal.py        # ConPTY (pywinpty) + pyte — Wizard Console terminal
+│   │   └── terminal.py            # Plain-pipe InteractiveTerminal — Raw Output / LLM Mode
+│   ├── core/
+│   │   ├── confirmation_gate.py   # Human-in-the-loop safety gate ("yes" to execute)
+│   │   ├── tool_manager.py        # Installed-tool detection
+│   │   ├── auto_chain.py          # Attack-chain automation
+│   │   └── api_key_manager.py     # LLM API key storage (keyring)
+│   ├── tools/nmap/                # builder/validator/parser/analyzer (top-bar Execute path)
+│   ├── validation/common.py       # Shared validation primitives
+│   ├── report/audit_log.py        # Audit log for LLM-mode commands
+│   └── resources/*.json           # Menus, warnings, scan profiles — resource-driven text
+├── chain_wizard/                  # The live chain wizard (standalone CLI, embedded in the GUI)
+│   ├── wizard/                    # main.py, chain.py (orchestration), pipeline.py (plan)
+│   ├── library/                   # scanner.py, attack_map.py/.json, post_exploit.py/.json
+│   └── core/                      # executor.py, display.py, color.py, models.py
 ├── requirements.txt
 └── README.md
 ```
@@ -124,19 +134,15 @@ TheRecon/
 
 ## Architecture Overview
 
+Fixed layer pipeline, no layer may skip another:
+
 ```
-┌─────────────────────────────────────────────────────┐
-│                   ReconMainWindow                     │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────┐ │
-│  │ Sidebar  │  │   TopBar     │  │ MainContentArea│ │
-│  │ (Tools)  │  │ (Profiles)   │  │ (Console)      │ │
-│  └──────────┘  └──────────────┘  └────────────────┘ │
-└─────────────────────────────────────────────────────┘
-         │                │                  │
-         ▼                ▼                  ▼
-   ToolManager      config.py         WizardEngine
-   (detection)    (commands/profiles)  (attack chain)
+GUI (src/ui/) → Validation (src/validation/) → Command Builder (src/tools/nmap/builder.py)
+  → Confirmation Gate (src/core/confirmation_gate.py) → Execution (QProcess)
+  → Parser (src/tools/nmap/parser.py) → Analysis (src/tools/nmap/analyzer.py)
 ```
+
+The Wizard Console is a separate embedded process (`chain_wizard/`, launched via `src/ui/pty_terminal.py`) that scans, builds its own plan, and confirms per-step inside the CLI itself — it does not route through `src/tools/`.
 
 ---
 
@@ -148,9 +154,12 @@ python -m src.main
 ```
 
 Key modules:
-- `src/core/wizard_engine.py` — Wizard step logic, attack type routing, and command generation
-- `src/core/tool_manager.py` — Background tool detection with threading
-- `src/config.py` — Stylesheet, color palette, and command templates
+- `src/core/confirmation_gate.py` — the one human-in-the-loop safety gate every gated execution path goes through
+- `src/core/tool_manager.py` — installed-tool detection
+- `src/config.py` — stylesheet, color palette, `AUTHORIZED_SCOPE`, `TOOL_ENABLEMENT`
+- `chain_wizard/wizard/chain.py` — the wizard's own orchestration (scan → plan → confirm → run → loot → post-exploit)
+
+See [`CLAUDE.md`](CLAUDE.md) for the full architecture rules and [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) for what's implemented vs. placeholder right now, including known safety gaps.
 
 ---
 
