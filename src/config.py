@@ -821,7 +821,7 @@ TOOL_ENABLEMENT = {
     "evil-winrm": True,
     "ncrack": True,
     "masscan": False,
-    "hydra": True,  # runs via WSL on Windows (see src/tools/hydra/, wizard chain)
+    "hydra": True,  # runs via WSL on Windows (chain_wizard CLI)
 }
 
 TOOL_NOT_SUPPORTED_MESSAGE = "[!] เครื่องมือนี้ยังไม่รองรับบน Windows ในเวอร์ชัน demo ปัจจุบัน"

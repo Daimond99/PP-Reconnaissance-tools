@@ -6,14 +6,48 @@ file map see `GUI_MISSION_CONTROL.md`.
 
 ---
 
+## 2026-07-31 — Dead tool packages removed, wizard folder renamed
+
+Cleanup pass. No behavior change — pure dead-code removal + rename.
+
+Done:
+- **Deleted 5 dead `src/tools/<tool>/` packages** — hydra, masscan, ncat,
+  ncrack, evil_winrm. Nothing imported them: `grep` for `tools.<name>` /
+  `tools/<name>` across `src/` and the wizard returned zero hits. The live
+  wizard (`chain_wizard/`) invokes those tools directly via
+  `core/executor.py` (`subprocess`, `shell=True`), not through per-tool
+  builder/validator/parser/analyzer modules. **`src/tools/nmap/` kept** — its
+  `analyzer` is still imported by `src/core/confirmation_gate.py` (impact
+  text, confirmation box, scope check) for the top-bar Execute path.
+- **Renamed `new wizard/` → `chain_wizard/`** (dropped the space in the
+  folder name). Updated every reference: `src/ui/widgets.py`
+  (`_make_wizard_terminal` WSL + local launch paths), `requirements.txt`
+  comment, `.gitignore` runtime-artifact globs, `src/config.py`
+  `TOOL_ENABLEMENT` comment, and docs (`CLAUDE.md`,
+  `CROSS_PLATFORM_TERMINAL_PLAN.md`, this file).
+- **Docs de-drifted** — `CLAUDE.md`'s tool-package + `src/ui/` descriptions
+  now match the real tree (only `nmap` survives; `tool_selection.py`/
+  `llm_mode.py`/`wizard_console.py`/`wizard_terminal.py`/`src/wizard/engine.py`
+  are gone); the stale 2026-07-25 audit section re-flagged as historical.
+- Verified: `python -m compileall src` OK; `chain_wizard` py_compile OK; no
+  leftover refs to deleted packages except the (now-fixed) config comment.
+
+Next:
+- `docs/CURRENT_STATE.md` + `docs/GUI_MISSION_CONTROL.md` still describe the
+  old 6-package layout / removed UI files — update to match this pass.
+- Cross-platform terminal backend (conhost/xterm reparent) still the main
+  open task — see `CROSS_PLATFORM_TERMINAL_PLAN.md`.
+
+---
+
 ## 2026-07-30 — New chain wizard built, embedded in GUI; cross-platform terminal plan
 
-**Big pass.** A brand-new standalone chain wizard was built under `new wizard/`
+**Big pass.** A brand-new standalone chain wizard was built under `chain_wizard/`
 and wired into the GUI Wizard Console. **Read `docs/CROSS_PLATFORM_TERMINAL_PLAN.md`
 before continuing — it is the authoritative handoff for the next task.**
 
 Done:
-- **`new wizard/` chain CLI** — scan → impact-ranked plan (AUTO/SEMI, tags
+- **`chain_wizard/` chain CLI** — scan → impact-ranked plan (AUTO/SEMI, tags
   `(recommended)`/`(optional)`/`(info)`) → hydra brute → credential harvest +
   per-target `loot_*.txt` → in-scope post-exploit (ncat ftp/telnet, nmap NSE
   smb/mysql, evil-winrm WinRM) → results echoed. nmap **stealth** scan profile

@@ -553,7 +553,7 @@ class MainContentArea(QWidget):
     @staticmethod
     def _make_wizard_terminal():
         """
-        Wizard Console runs the standalone 'new wizard' chain CLI
+        Wizard Console runs the standalone 'chain_wizard' chain CLI
         (scan → ranked plan → hydra → cred harvest → post-exploit).
 
         Preferred path (Windows): a real ConPTY-backed terminal (PtyTerminal)
@@ -564,7 +564,7 @@ class MainContentArea(QWidget):
         Fallback: the plain-pipe InteractiveTerminal (no color/sudo TTY) when
         pywinpty/pyte are unavailable.
         """
-        wsl_dir = "/mnt/d/TheRecon/new wizard"
+        wsl_dir = "/mnt/d/TheRecon/chain_wizard"
         launch = f"cd '{wsl_dir}' && python3 -m wizard.main; exec bash -l"
 
         if PTY_AVAILABLE and os.name == "nt":
@@ -576,13 +576,13 @@ class MainContentArea(QWidget):
                 "wsl.exe", ["-e", "bash", "-lc", f"cd '{wsl_dir}' && python3 -m wizard.main"]
             )
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        local_dir = os.path.join(repo_root, "new wizard")
+        local_dir = os.path.join(repo_root, "chain_wizard")
         return InteractiveTerminal(
             "bash", ["-lc", f"cd '{local_dir}' && python3 -m wizard.main"]
         )
 
     def _build_pages(self):
-        # Wizard Console runs the 'new wizard' chain CLI in a real ConPTY
+        # Wizard Console runs the 'chain_wizard' chain CLI in a real ConPTY
         # terminal (see _make_wizard_terminal). The older native wizard pages
         # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py) have
         # been removed — this is the only wizard path now.

@@ -10,12 +10,12 @@ Last updated: 2026-07-30.
 
 ## Context — what exists now
 
-The live wizard is the standalone chain CLI under **`new wizard/`** (NOT
+The live wizard is the standalone chain CLI under **`chain_wizard/`** (NOT
 `src/wizard/`, NOT `src/ui/wizard_terminal.py` — both removed). It is wired
 into the GUI's **Wizard Console** page (`src/ui/widgets.py` →
 `MainContentArea._make_wizard_terminal`).
 
-`new wizard/` layout (all source, no artifacts — those are gitignored):
+`chain_wizard/` layout (all source, no artifacts — those are gitignored):
 - `wizard/main.py` — entry, mode/target/wordlist prompts, loops so Ctrl-C
   restarts and finish re-runs; Ctrl-D exits.
 - `wizard/pipeline.py` — `build_plan()` (AUTO/SEMI), `step_priority()`,
@@ -69,7 +69,7 @@ the real WSL wizard (real color/sudo/TAB) but has two limits the user rejected:
 terminal (not a pyte re-implementation), selected by `os.name`.**
 
 - **Windows** → launch a real classic console running WSL, e.g.
-  `conhost.exe wsl.exe -d Ubuntu bash -lc "cd '/mnt/d/TheRecon/new wizard' &&
+  `conhost.exe wsl.exe -d Ubuntu bash -lc "cd '/mnt/d/TheRecon/chain_wizard' &&
   python3 -m wizard.main; exec bash"`, get its top-level **HWND**, and
   **reparent it into the Qt pane** with Win32 `SetParent` (ctypes `user32`):
   strip `WS_CAPTION`/borders (`GetWindowLong`/`SetWindowLong` with
@@ -78,7 +78,7 @@ terminal (not a pyte re-implementation), selected by `os.name`.**
   color). Prefer classic **conhost** over `wt.exe` — Windows Terminal's window
   model is much harder to reparent reliably.
 - **Linux** → reparent a real terminal via XEmbed, e.g. `xterm -into <winId>
-  -e bash -lc "cd '<repo>/new wizard' && python3 -m wizard.main"`, tracking the
+  -e bash -lc "cd '<repo>/chain_wizard' && python3 -m wizard.main"`, tracking the
   pane the same way. (If XEmbed/xterm is unavailable, fall back to a posix PTY
   backend: `ptyprocess` or stdlib `pty`/`os.openpty` feeding the existing
   pyte renderer.)
@@ -119,10 +119,10 @@ Implementation notes / gotchas:
 
 ```bash
 # CLI standalone (inside WSL on Windows, or native on Linux)
-cd "/mnt/d/TheRecon/new wizard" && python3 -m wizard.main
+cd "/mnt/d/TheRecon/chain_wizard" && python3 -m wizard.main
 
 # Compile-check everything
-cd "/mnt/d/TheRecon/new wizard" && python3 -m py_compile core/*.py library/*.py wizard/*.py
+cd "/mnt/d/TheRecon/chain_wizard" && python3 -m py_compile core/*.py library/*.py wizard/*.py
 
 # GUI (use the venv OR a python that has pyte+pywinpty)
 python -m src.main    # Wizard Console page = the embedded terminal
