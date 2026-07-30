@@ -1,19 +1,14 @@
 # TheRecon — Current Code State (Snapshot for AI)
 
 This file is a **snapshot of what actually exists in the code right now**,
-not a spec. For the normative rules the code is supposed to follow, read
-`ARCHITECTURE.md`, `AI_DEVELOPMENT.md`, `Coding Standards.md`,
-`Resource System.md`. For the GUI file/page map, read `GUI_MISSION_CONTROL.md`.
-Update this file whenever the state below goes stale.
+not a spec. For normative rules, read `CLAUDE.md`. For the current
+Wizard Console embedding plan and remaining TODOs, read
+`CROSS_PLATFORM_TERMINAL_PLAN.md`. Update this file whenever the state below
+goes stale.
 
-Last verified: 2026-07-29, branch `restyle-mission-control-gui`. Code/GUI
-state below is unchanged since the 2026-07-26 "Wizard Console rebuilt as
-gated nmap→hydra wizard, hydra implemented" pass (see `PROGRESS.md`); the
-2026-07-29 update is environment-only — all 6 tools now installed for real
-in WSL2 Ubuntu, see "External tools" section below. **This supersedes the
-plain-bash-only description of Wizard Console below where the two disagree —
-read the `### Wizard / orchestration` and per-tool table sections carefully,
-they've changed.**
+Last verified: 2026-07-31, branch `main`, after the dead-tool-package
+removal + `chain_wizard/` rename (see `PROGRESS.md`, "Dead tool packages
+removed, wizard folder renamed").
 
 ## Entry point
 
@@ -24,235 +19,174 @@ they've changed.**
 
 ### GUI (`src/ui/`)
 
+Sidebar has 6 pages (`Sidebar.NAV_ITEMS`, index 0–5), 1:1 with
+`MainContentArea._build_pages()`:
+
+| Index | Attr | Class | Notes |
+|---|---|---|---|
+| 0 | `wizard_tab` | `PtyTerminal` (Windows, pywinpty+pyte available) or `InteractiveTerminal` fallback | Wizard Console — runs the standalone `chain_wizard/` chain CLI, see below |
+| 1 | `input_tab` | `InputManagementTab` | supporting panel |
+| 2 | `cmd_editor_tab` | `CommandEditorTab` | supporting panel |
+| 3 | `raw_output_tab` | `RawOutputTab` (wraps `InteractiveTerminal`) | plain real shell, ungated by design |
+| 4 | `results_tab` | `ResultsDisplayTab` | Zenmap-style host/port view, starts empty |
+| 5 | `llm_tab` | `InteractiveTerminal` | plain real shell for wiring up your own AI CLI, ungated |
+
 - `main_window.py` — main window assembly, title bar, Settings popup menu,
   wires `Sidebar.navigate` → `MainContentArea.stack`. Top-bar Execute
-  (`_on_execute_clicked`/`_run_gated_command`) and the Wizard Console page
-  (see below) are now the two GUI paths going through `ConfirmationGate` —
-  top-bar feedback is `QMessageBox` dialogs, Wizard Console feedback is
-  printed inline in its own scrollback (see "Known live safety gaps" below).
-- `widgets.py` — `Sidebar`, `TopBar` (mission bar), all pages in
-  `MainContentArea`, `wrap_in_terminal()` helper. **Raw Output and LLM Mode
-  pages are plain `InteractiveTerminal` instances (real shell, ungated).
-  Wizard Console (`wizard_tab`) is now `WizardTerminal`
-  (`src/ui/wizard_terminal.py`) — a scripted, gated nmap/hydra wizard, not a
-  shell.**
-- `terminal.py` — `InteractiveTerminal`: single-view real shell via
-  `QProcess` (WSL Ubuntu bash preferred on Windows, falls back to Git Bash,
-  then PATH bash). User types directly into the scrollback (no separate
-  input line), default text color throughout, no app-injected text of any
-  kind. Used for Raw Output and LLM Mode pages only now.
-- `wizard_terminal.py` (`WizardTerminal`) — **new**, the current Wizard
-  Console page. Same scrollback-as-input UI pattern as `InteractiveTerminal`
-  (single editable `QTextEdit`, `_input_start` guards past output) but it is
-  a state machine, not a shell: target → scan profile → `ConfirmationGate`
-  preview + exact `"yes"` → real `nmap` run via `QProcess` → parse open
-  ports → `nmap.analyzer.recommend_next_tools()` maps ports to next-stage
-  tools (resource-driven, `src/resources/nmap/service_tools.json`) → if
-  hydra applies, a login/password/extra sub-wizard → `ConfirmationGate`
-  again (masked) → real `hydra` run (routed through `wsl.exe -e hydra ...`
-  on Windows, since no Windows-native hydra binary exists) → parse found
-  credentials → if any, notes Evil-WinRM as the next stage (not yet
-  executable — see per-tool table below). Full narrative in
-  `PROGRESS.md`, "Wizard Console rebuilt as gated nmap→hydra wizard" entry.
-- `wizard_console.py` (`WizardConsoleTab`) — an *older* gated Wizard Console
-  attempt, predates `wizard_terminal.py`. **Not imported/used anywhere** —
-  dead code, same status as `llm_mode.py`/`tool_selection.py`. Not deleted;
-  kept per "don't delete without asking." Don't confuse this with the
-  current `wizard_terminal.py`, which is a different, newer file.
-- `llm_mode.py` (`LLMModeTab`) — dead code, not imported.
-- `tool_selection.py` (`ToolSelectionTab`) — dead code, not imported; still
-  contains inline ncat/evil-winrm/ncrack command-building logic that was
-  never moved into the per-tool `builder.py` files.
+  (`_on_execute_clicked`/`_run_gated_command`) is the **only** GUI path that
+  goes through `ConfirmationGate` directly — result is shown via
+  `QMessageBox` dialogs, not mirrored into any terminal.
+- `pty_terminal.py` (`PtyTerminal`) — real ConPTY (`pywinpty`) + `pyte` VT
+  emulator rendered to a `QTextEdit` as HTML. On Windows this is what powers
+  the Wizard Console: it launches `wsl.exe -d Ubuntu bash -lc "cd
+  '/mnt/d/TheRecon/chain_wizard' && python3 -m wizard.main; exec bash -l"` —
+  full color, working `sudo`, TAB completion, identical to a standalone WSL
+  terminal. Falls back to plain `InteractiveTerminal` if `pywinpty`/`pyte`
+  aren't importable.
+- `terminal.py` (`InteractiveTerminal`) — non-PTY real shell via `QProcess`
+  (stdin/stdout pipe, no TTY). Used for Raw Output, LLM Mode, and as the
+  Wizard Console fallback when ConPTY is unavailable. Single `QTextEdit` is
+  both scrollback and input line (no separate input row); Up/Down history
+  recall.
 
-Sidebar has 6 pages (index 0–5): Wizard Console, Input Management, Command
-Editor, Raw Output, Results Display, LLM Mode. Tool Selection was removed
-from navigation. Raw Output and LLM Mode (indices 3, 5) are plain bash
-terminals; Wizard Console (index 0) is the gated `WizardTerminal`. Details of
-every page/attr are in `GUI_MISSION_CONTROL.md` — that file predates the
-`WizardTerminal` change and still describes Wizard Console as plain bash; it
-needs updating too, treat this file as authoritative for Wizard Console until
-that's done.
+Dead UI files from earlier passes (`wizard_terminal.py`, `wizard_console.py`,
+`src/wizard/engine.py`, `tool_selection.py`, `llm_mode.py`) have all been
+**deleted**, not just unwired — don't look for them.
 
 ### Wizard / orchestration
 
-Two separate things exist under this heading, don't conflate them:
+The live wizard is the standalone chain CLI under **`chain_wizard/`** (repo
+root, NOT under `src/`). It does not import anything from `src/` — it's a
+self-contained Python package invoked as a subprocess (`python3 -m
+wizard.main`) inside the terminal described above.
 
-- **`src/ui/wizard_terminal.py` (`WizardTerminal`, ~400 lines) — the live
-  Wizard Console page, actually wired in.** Tool-aware by design (nmap then
-  hydra), calls the real `ConfirmationGate`, calls nmap's and hydra's real
-  builder/validator/parser/analyzer modules directly rather than going
-  through `src/wizard/engine.py`. This is the code path described in the
-  "Wizard / orchestration" bullet further up this file and in
-  `PROGRESS.md`.
-- **`src/wizard/engine.py` (1006 lines) — NOT wired into the GUI at all.**
-  Single large state-machine file, predates `wizard_terminal.py`. Directly
-  imports nmap's builder/validator/analyzer (tool-aware, not tool-agnostic
-  as the architecture spec wants). Hand-builds hydra/evil-winrm command
-  strings inline instead of calling their builders. Its main nmap confirm
-  flow **reimplements** `ConfirmationGate`'s logic rather than calling it,
-  and as a result skips `is_target_in_scope`. Nothing in the current GUI
-  calls into this file — it's dead code in practice, same status as
-  `wizard_console.py`, just not formally deprecated. Don't extend it; extend
-  `wizard_terminal.py` instead.
+- `wizard/main.py` — entry, target/mode/wordlist prompts, loops (Ctrl-C
+  restarts, Ctrl-D exits).
+- `wizard/chain.py` — orchestration: scan → `_select_steps` (impact-ranked
+  menu, `(recommended)`/`(optional)`/`(info)` tags) → per-step confirm → run
+  → `_parse_creds`/`_save_loot` → `_offer_post_exploit`/`_offer_winrm`.
+- `wizard/pipeline.py` — `build_plan()` (AUTO/SEMI), `step_priority()`.
+- `library/scanner.py` — nmap quick/full/stealth (tunable `-T`)/masscan.
+- `library/attack_map.py` + `.json` — port → attack arsenal.
+- `library/post_exploit.py` + `.json` — service → post-exploit action
+  (ncat for ftp/telnet, nmap NSE for smb/mysql; evil-winrm handled
+  separately, only after a real harvested credential).
+- `library/parser.py` — gnmap → `ScanResult`.
+- `core/executor.py` — `subprocess.run(shell=True)`, no `wsl.exe` prefix:
+  routing is handled by **where the CLI itself runs** (inside WSL on
+  Windows, natively on Linux), not by prefixing each tool call.
+- `core/color.py` / `core/display.py` — ANSI (auto-disabled off-TTY),
+  banner/section width adapting to `shutil.get_terminal_size()`.
+- `core/models.py` — `Step`/`ScanResult`/`AttackPlan` dataclasses.
 
-### Validation (`src/validation/common.py`, 204 lines)
+Restricted to the 6 authorized tools: nmap, masscan, hydra, ncrack, ncat,
+evil-winrm.
 
-Shared validation: command-line parsing, exact-confirmation check
-(`"yes"` literal match), etc. Used correctly by `ConfirmationGate`.
+### Validation (`src/validation/common.py`)
 
-### Command builders (`src/tools/<tool>/`)
+Shared validation: command-line parsing, exact-confirmation check (`"yes"`
+literal match). Used by `ConfirmationGate`.
 
-All 6 tools have the full 4-file layout (`builder.py`, `validator.py`,
-`parser.py`, `analyzer.py`, `__init__.py`) per the Windows-Demo architecture
-rule — none are skipped. Depth of real implementation varies sharply:
+### Command builders (`src/tools/`)
 
-| Tool | builder | validator | parser | analyzer | Status |
-|---|---|---|---|---|---|
-| **nmap** | real (`build_nmap_command`, `shlex`-quoted) | real | real (`parse_open_ports`) | real (+ `recommend_next_tools`) | Fully implemented, wired into `WizardTerminal` |
-| **hydra** | real (`HydraSpec`, `build_hydra_argv`/`build_hydra_command` w/ password masking) | real (service whitelist, login/password file-vs-value detection, `-e` letters) | real (credential-line regex, `count_valid_credentials`) | real (brute-force impact text) | Fully implemented, wired into `WizardTerminal`; executes via `wsl.exe -e hydra ...` on Windows (no native Windows binary — installed in WSL, `apt-get install hydra`, v9.6) |
-| masscan | 20 | 18 | 19 | 18 | Placeholder/TODO stubs |
-| ncat | 21 | 17 | 17 | 18 | Placeholder/TODO stubs |
-| ncrack | 22 | 17 | 17 | 18 | Placeholder/TODO stubs; mapped as a chain target in `service_tools.json` (RDP) but nothing executes it yet |
-| evil_winrm | 27 | 17 | 20 | 18 | Placeholder/TODO stubs — **next chain stage to build**; `WizardTerminal` currently only prints what the evil-winrm command *would* be after hydra finds a credential, doesn't run it |
+Only **`src/tools/nmap/`** survives (`builder.py`/`validator.py`/
+`parser.py`/`analyzer.py`/`__init__.py`). Its `analyzer` (
+`format_confirmation_box`, `generate_impact_description`,
+`is_target_in_scope`) is imported directly by `src/core/confirmation_gate.py`
+— it's the only tool package still wired into anything.
 
-`TOOL_ENABLEMENT` in `src/config.py`: `nmap`/`hydra` now `True`, `ncat`/
-`evil-winrm`/`ncrack` `True` (execution-availability flag, separate from the
-"is the builder real" question above), `masscan` `False`.
+The other five packages that used to live here — `hydra`, `masscan`, `ncat`,
+`ncrack`, `evil_winrm` — were **deleted 2026-07-31**. Nothing imported them:
+`chain_wizard/` calls those tools directly via `core/executor.py`
+(`subprocess`, `shell=True`), not through per-tool builder/validator/parser/
+analyzer modules. If a future task needs a gated (non-wizard) path for one
+of those tools, it would need a new package written from scratch — don't
+assume the old placeholders still exist.
 
-nmap and hydra are the two tools with a real, wired end-to-end path — nmap's
-open ports feed `recommend_next_tools()`, which drives the wizard's
-hydra sub-flow. Evil-WinRM is the next piece: `src/resources/nmap/
-service_tools.json` already maps `wsman`/`microsoft-ds` ports to it, and
-`WizardTerminal._maybe_offer_winrm()` already fires when hydra finds a
-credential — it just prints the command instead of building/running it. The
-remaining 2 tools (masscan, ncrack) have the correct module skeleton (per
-`Resource System.md`'s Windows-Demo rule — intentional, not a bug) but no
-real logic yet.
-
-`src/tools/<tool>/resources/` subfolders exist but only hold `.gitkeep` —
-not wired to anything; `src/utils/resource_loader.py` + `src/resources/*.json`
-is the only active resource path.
-
-### Confirmation gate (`src/core/confirmation_gate.py`, 149 lines)
+### Confirmation gate (`src/core/confirmation_gate.py`)
 
 The single human-in-the-loop safety gate. `request()` validates + builds a
 preview only; `execute()` requires an exact literal `"yes"` reply. Supports
-masking secrets via `argv_override`. Correctly used by `wizard_console.py`
-and (partially — see gap above) bypassed by `wizard/engine.py`'s nmap path.
+masking secrets via `argv_override`. Reached only by the top-bar Execute
+button (`main_window._on_execute_clicked`/`_run_gated_command`) — the Wizard
+Console does its own per-step confirmation inside the CLI itself and does
+not call into this class.
 
 ### Other core (`src/core/`)
 
-- `tool_manager.py` (252 lines) — installed-tool detection.
-- `auto_chain.py` (168 lines) — attack-chain automation.
-- `api_key_manager.py` (171 lines) — LLM API key storage via `keyring`.
+- `tool_manager.py` — installed-tool detection.
+- `auto_chain.py` — attack-chain automation.
+- `api_key_manager.py` — LLM API key storage via `keyring`.
 
 ### Resources (`src/resources/*.json` + `src/utils/resource_loader.py`)
 
-`resource_loader.py` (48 lines) is the only component allowed to `open()` a
-resource JSON; `load_json()` caches and degrades to `{}` on missing/malformed
-files. Covers wizard menu/messages, nmap scan profiles/flag impacts, common
-warnings, and (new) `nmap/service_tools.json` — maps an open port's service
-name (or port number as fallback) to the next-stage tool/module/reason used
-by `WizardTerminal`'s chain menu (`nmap.analyzer.recommend_next_tools()`
-reads it). Most prompt/dialog/validation-error text elsewhere (e.g.
-`src/config.py`, 905 lines) is still hardcoded Python strings, not yet
-migrated to resources — partial migration, not started-from-zero.
+`resource_loader.py` is the only component allowed to `open()` a resource
+JSON; `load_json()` caches and degrades to `{}` on missing/malformed files.
+Covers wizard menu/messages, nmap scan profiles/flag impacts, common
+warnings, `nmap/service_tools.json`. Most prompt/dialog/validation-error
+text elsewhere (`src/config.py`) is still hardcoded Python strings, not
+migrated to resources.
 
-### Reporting (`src/report/audit_log.py`, 101 lines)
+`chain_wizard/library/attack_map.json` and `post_exploit.json` are a
+separate, resource-driven data source specific to the wizard CLI — not
+routed through `src/utils/resource_loader.py`.
+
+### Reporting (`src/report/audit_log.py`)
 
 Audit logging for every LLM-mode command (channel, command, target,
-response, executed, provider).
+response, executed, provider). Only fed by the top-bar Execute /
+`ConfirmationGate` path.
 
-### Known live safety gaps (not yet fixed)
+## Known live safety gaps (not yet fixed)
 
-Carried over from the 2026-07-25 audit, updated as of this snapshot —
-**gap #1 is now partially fixed**, the rest still stand:
+1. **`RawOutputTab` and LLM Mode are plain `InteractiveTerminal`s, zero gate
+   involvement** — by explicit user request, not an oversight. So the only
+   GUI path behind `ConfirmationGate` is the top-bar Execute button. The
+   Wizard Console (`chain_wizard/`) has its own per-step "yes" confirmation
+   built into the CLI, but that's a separate, self-contained safety check,
+   not `ConfirmationGate`.
+2. **`src/scripts/llm-tools-nmap.py`** registers `nmap_scan` etc. as `llm`
+   CLI function-call tools — if ever loaded via `llm --functions` from
+   inside the LLM Mode shell, the LLM could invoke `nmap` directly, bypassing
+   all validation/scope checks. The script works standalone; nothing in the
+   GUI auto-loads it, but a user typing the `llm --functions ...` command
+   into the (ungated) LLM Mode shell themselves would activate it.
+3. **Resource-driven migration is partial** — `src/utils/resource_loader.py`
+   + `src/resources/*.json` work correctly, but most prompts,
+   confirmation-box templates, validation-error text, and the LLM system
+   prompt (`src/config.py`) remain hardcoded Python strings.
 
-1. ~~`RawOutputTab`, Wizard Console, and LLM Mode are all plain
-   `InteractiveTerminal`s~~ **Partially fixed**: Wizard Console
-   (`wizard_tab`) is now `WizardTerminal` — every command it runs (nmap,
-   hydra) goes through validation + `build_*_command`/`build_*_argv` +
-   `ConfirmationGate` (exact `"yes"`, password masking, audit log). Raw
-   Output and LLM Mode (2 of the 6 sidebar pages) are still plain
-   `InteractiveTerminal` real shells with zero gate involvement, by explicit
-   user request. So the GUI paths behind `ConfirmationGate` are now: the
-   top-bar mission-bar Execute button (`main_window._on_execute_clicked`)
-   and the Wizard Console page.
-2. ~~`main_window.py` re-pipes already-executed commands from wizard into
-   `RawOutputTab` — risk of double execution.~~ **Fixed**: `RawOutputTab`
-   no longer has `append_log()`/`set_running()`, nothing mirrors into any
-   terminal anymore. Top-bar Execute's preview/result go to `QMessageBox`
-   dialogs instead.
-3. `src/scripts/llm-tools-nmap.py` (300 lines) registers `nmap_scan` etc. as
-   `llm` CLI function-call tools — if `llm_mode.py`'s old `--functions` load
-   path is ever re-enabled, the LLM could invoke `nmap` directly, bypassing
-   `ConfirmationGate` and scope checks. Currently inert since `llm_mode.py`
-   isn't imported, but the script itself still exists and works standalone.
-4. `WizardConsoleTab` (`wizard_console.py`) — was previously "the real gated
-   Wizard Console logic, actually wired in." **No longer wired in at all**
-   as of the plain-bash pass — `wizard_tab` is now `InteractiveTerminal`.
-   The file/class still exists (dead code, not deleted) but nothing in the
-   GUI reaches it, so its gated behavior is moot until/unless it's re-wired.
-5. `wizard/engine.py` reimplements confirmation logic instead of calling
-   `ConfirmationGate`, skipping `is_target_in_scope` — moot for the same
-   reason as #4 (nothing in the GUI currently calls into `wizard/engine.py`
-   either), but the gap is still real in the code if it's re-wired later.
-6. `tool_selection.py` builds ncat/evil-winrm/ncrack commands inline instead
-   of via their builders — moot right now since the tab isn't in the
-   sidebar, but the logic exists and works if someone re-adds it.
+None of the above are Windows-Demo/platform limitations — they're
+intentional trade-offs (#1) or wiring gaps (#2, #3). Treat `RawOutputTab`/
+LLM Mode and `llm-tools-nmap.py`'s direct-execution capability as the
+highest-priority items to reconsider before pointing this app at a real
+target outside the demo.
 
-None of these are Windows-Demo/platform limitations — they are logic/wiring
-gaps, and #1 is now an intentional, user-requested trade-off rather than an
-oversight. Treat the Wizard Console/Raw Output/LLM Mode terminals and
-`llm-tools-nmap.py` as highest priority to reconsider before pointing this
-app at a real target outside the demo.
+## External tools
 
-## External tools (Windows demo, `tools/` — gitignored, not vendored)
+Cloned source under `tools/` (repo root, gitignored, reference-only — nmap,
+thc-hydra, evil-winrm-py, ncrack, ncat-w32) is unrelated to what actually
+runs; see `CROSS_PLATFORM_TERMINAL_PLAN.md`'s platform-routing table for the
+real execution path.
 
-Cloned source (read/reference only, not built from):
+### WSL2 Ubuntu (Windows) — current tool-runner
 
-- `tools/nmap` — github.com/nmap/nmap
-- `tools/thc-hydra` — github.com/vanhauser-thc/thc-hydra
-- `tools/evil-winrm-py` — github.com/adityatelange/evil-winrm-py
-- `tools/ncrack` — github.com/nmap/ncrack
-- `tools/ncat-w32` — gitlab.com/kalilinux/packages/ncat-w32
+All six tools installed via `apt-get`/`gem` inside WSL Ubuntu:
 
-### Windows-native install (legacy, superseded below)
-
-| Tool | Install method | Status |
+| Tool | Install | Verified version |
 |---|---|---|
-| nmap | pre-existing / winget `Insecure.Nmap` | ✅ v7.98 on PATH |
-| ncat | bundled with nmap | ✅ on PATH (`ncat.exe`) |
-| evil-winrm-py | `pip install evil-winrm-py` | ✅ v1.6.0 installed; console scripts (`evil-winrm-py.exe`, `ewp.exe`) not yet on PATH |
-| ncrack | official installer `tools/ncrack-0.7-setup.exe` (nmap.org, v0.7, 2019 — last release, project effectively unmaintained) | downloaded, **not installed** — silent `/S` install didn't take (needs interactive/UAC run) |
-| ncat-w32 | n/a | not needed — ncat already available via nmap bundle |
-| thc-hydra | n/a | no official Windows binary; would need MSYS2/MinGW build or WSL — deferred, not attempted |
+| nmap | `sudo apt-get install -y nmap` | v7.98 |
+| masscan | `sudo apt-get install -y masscan` | v1.3.2 |
+| hydra | `sudo apt-get install -y hydra` | v9.6 |
+| ncrack | `sudo apt-get install -y ncrack` | v0.7 |
+| ncat | `sudo apt-get install -y ncat` (separate package — not bundled with Ubuntu's `nmap` apt package) | v7.98 |
+| evil-winrm | `sudo apt-get install -y ruby ruby-dev && sudo gem install evil-winrm` | v3.9 |
 
-### WSL2 Ubuntu install (2026-07-29 — current path for the full chain)
+`chain_wizard/` targets this tool set directly via `core/executor.py` — see
+"Wizard / orchestration" above for how routing works without per-tool `wsl`
+prefixing.
 
-User installed Docker Desktop + WSL2, deleted the unused `Arch` WSL distro,
-kept `Ubuntu` (26.04 LTS, WSL2, default distro) as the sole tool-runner. All
-six tools now installed for real inside WSL Ubuntu via `apt-get`/`gem`, not
-the Windows-native table above:
+### Linux — native install
 
-| Tool | Install method | Status |
-|---|---|---|
-| nmap | `sudo apt-get install -y nmap` | ✅ v7.98 |
-| masscan | `sudo apt-get install -y masscan` | ✅ v1.3.2 (works, WSL2 raw sockets available) |
-| hydra | `sudo apt-get install -y hydra` (installed in an earlier pass) | ✅ v9.6, `/usr/bin/hydra` |
-| ncrack | `sudo apt-get install -y ncrack` | ✅ v0.7 |
-| ncat | `sudo apt-get install -y ncat` (separate package — Ubuntu's `nmap`/`nmap-common` apt packages do *not* bundle ncat, unlike the Windows nmap installer) | ✅ v7.98, `/usr/bin/ncat` |
-| evil-winrm | `sudo apt-get install -y ruby ruby-dev && sudo gem install evil-winrm` | ✅ v3.9 (ruby 3.3.8), `/usr/local/bin/evil-winrm` |
-
-This is now the tool set `WizardTerminal`/future builders should target —
-route every tool through `wsl.exe -e <tool> ...` the same way hydra already
-does (`WizardTerminal._route_command()`), not through Windows-native binaries.
-Only hydra is actually wired into that route today; nmap runs via its own
-Windows PATH binary in `wizard_terminal.py`'s nmap stage (unchanged, still
-works since nmap is on both Windows PATH and WSL). masscan/ncat/ncrack/
-evil_winrm still need real builders (see "Command builders" table above)
-before anything in the GUI can invoke them.
-
-Docker Desktop and VMware are present on this machine too, but for demo
-*targets* (victim VMs/containers), not as part of the WSL tool-runner —
-unrelated to this table.
+Same package set, installed natively (no WSL layer needed) — see
+`README.md`'s install section.

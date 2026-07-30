@@ -1,8 +1,51 @@
 # Progress Log
 
 Running log of what's done, what's in flight, what's next. Newest entry on
-top. For deep current-state detail see `CURRENT_STATE.md`; for the GUI
-file map see `GUI_MISSION_CONTROL.md`.
+top. For deep current-state detail see `CURRENT_STATE.md`; for the current
+GUI/wizard embedding plan see `CROSS_PLATFORM_TERMINAL_PLAN.md`.
+(`GUI_MISSION_CONTROL.md` was deleted 2026-07-31 — fully superseded, it
+described UI files removed in earlier passes.)
+
+---
+
+## 2026-07-31 — Stale docs cleanup
+
+- **Deleted `docs/GUI_MISSION_CONTROL.md`** — last touched 2026-07-26, still
+  described `wizard_console.py`/`wizard_terminal.py`/`llm_mode.py`/
+  `tool_selection.py` as live code; all four were deleted across two later
+  rewrites (the `wizard_terminal.py` pass, then the `chain_wizard/`
+  rewrite). Also referenced a `Mockup HTML.txt` that doesn't exist anywhere
+  in the repo. Content was fully redundant with `CLAUDE.md`'s GUI section
+  and `CROSS_PLATFORM_TERMINAL_PLAN.md` — nothing worth preserving.
+- **Rewrote `docs/CURRENT_STATE.md`** — it still described the deleted
+  `wizard_terminal.py` as the live Wizard Console and listed
+  hydra/masscan/ncat/ncrack/evil_winrm as `src/tools/` packages with a
+  real/placeholder breakdown, even though all five were deleted the same day
+  (see "Dead tool packages removed" entry below). Rewrote every section
+  against the actual current tree: sidebar page table, `chain_wizard/`
+  orchestration (unchanged in substance, just re-verified), `src/tools/nmap`
+  as the sole surviving package, confirmation-gate scope narrowed to
+  top-bar Execute only, safety-gap list renumbered to 3 (dropped items that
+  no longer apply), external-tools table trimmed to the current WSL2/Linux
+  install path.
+- Removed the now-dangling `GUI_MISSION_CONTROL.md` pointers from
+  `CLAUDE.md`'s doc-index paragraph and this file's header.
+
+---
+
+## 2026-07-31 — README rewritten as install-focused quick start
+
+Pushed to `origin/main` (`243e29a`).
+
+README still described PyQt5, `wizard_engine.py`, and a "Direct Tool Mode"
+that no longer exist (leftover from before the `chain_wizard/` rewrite).
+Dropped the Project Structure, Architecture Overview, Contributing, License,
+Author, and Legal Notice sections — README's job now is just "how do I
+install and run this," not a full architecture doc (that's `CLAUDE.md` +
+`docs/`). New structure: what it does (short) → cross-platform install
+(Windows = WSL2 + tools inside it, Linux = tools natively, same
+apt/gem command either way) → run → pointer to `CLAUDE.md`/
+`CURRENT_STATE.md` for detail → Disclaimer.
 
 ---
 
@@ -32,11 +75,10 @@ Done:
 - Verified: `python -m compileall src` OK; `chain_wizard` py_compile OK; no
   leftover refs to deleted packages except the (now-fixed) config comment.
 
-Next:
-- `docs/CURRENT_STATE.md` + `docs/GUI_MISSION_CONTROL.md` still describe the
-  old 6-package layout / removed UI files — update to match this pass.
-- Cross-platform terminal backend (conhost/xterm reparent) still the main
-  open task — see `CROSS_PLATFORM_TERMINAL_PLAN.md`.
+Next: `docs/CURRENT_STATE.md` still described the old 6-package layout /
+removed UI files at the time — fixed in the entry below (2026-07-31,
+"Stale docs cleanup"). Cross-platform terminal backend (conhost/xterm
+reparent) remains the main open task — see `CROSS_PLATFORM_TERMINAL_PLAN.md`.
 
 ---
 
