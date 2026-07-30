@@ -6,6 +6,48 @@ file map see `GUI_MISSION_CONTROL.md`.
 
 ---
 
+## 2026-07-30 — New chain wizard built, embedded in GUI; cross-platform terminal plan
+
+**Big pass.** A brand-new standalone chain wizard was built under `new wizard/`
+and wired into the GUI Wizard Console. **Read `docs/CROSS_PLATFORM_TERMINAL_PLAN.md`
+before continuing — it is the authoritative handoff for the next task.**
+
+Done:
+- **`new wizard/` chain CLI** — scan → impact-ranked plan (AUTO/SEMI, tags
+  `(recommended)`/`(optional)`/`(info)`) → hydra brute → credential harvest +
+  per-target `loot_*.txt` → in-scope post-exploit (ncat ftp/telnet, nmap NSE
+  smb/mysql, evil-winrm WinRM) → results echoed. nmap **stealth** scan profile
+  with tunable `-T`. Arsenal + post-exploit are JSON resources
+  (`attack_map.json`, `post_exploit.json`). Restricted to the 6 authorized
+  tools. evil-winrm only after a real credential (never a standalone fake-cred
+  step). Ctrl-C loops back to the menu; Ctrl-D exits. Colors auto-disable on
+  non-TTY; banner/section width adapts to `shutil.get_terminal_size()`.
+- **GUI embed** — `src/ui/pty_terminal.py` (`PtyTerminal`): real ConPTY
+  (pywinpty) + pyte VT emulator, runs the CLI inside Ubuntu WSL with real
+  color/sudo/TAB. Wizard Console launches it (`MainContentArea.
+  _make_wizard_terminal`); deferred spawn on `showEvent` sizes it to the pane.
+- **Dead code removed** — `src/ui/wizard_terminal.py`, `src/ui/wizard_console.py`,
+  `src/wizard/engine.py` (all unwired). Kept: everything else in the GUI.
+- **Deps** — `pyte` + `pywinpty` added to `requirements.txt` and installed in
+  both the venv and the global WindowsApps python (the latter is what
+  `python -m src.main` uses — without it the GUI silently falls back to the old
+  plain terminal, which is the "still shows old" symptom to watch for).
+- **Git** — branch `feat/new-wizard-chain` committed + pushed; PR not opened
+  (`gh` CLI absent). rockyou/test lists/runtime artifacts gitignored.
+
+Remaining / next (full list in `CROSS_PLATFORM_TERMINAL_PLAN.md`):
+- Build the **cross-platform real-terminal backend**: Windows = reparent a real
+  `conhost.exe wsl.exe … python3 -m wizard.main` into the pane via Win32
+  `SetParent` (exact cmd-with-WSL experience, full reflow/resize the user
+  asked for); Linux = `xterm -into <winId>` reparent, or a posix PTY
+  (`ptyprocess`/stdlib `pty`) feeding pyte. Keep reparent → PtyTerminal →
+  InteractiveTerminal as a fallback chain.
+- Verify natively on Linux (install the 6 tools, run the CLI, then the GUI).
+- Optional: remove remaining dead pages `src/ui/tool_selection.py` /
+  `src/ui/llm_mode.py`; open the GitHub PR; DPI width polish.
+
+---
+
 ## 2026-07-29 — WSL2 tool-runner finalized: all 6 tools installed in Ubuntu
 
 Environment-only change, no code touched. User installed Docker Desktop +
