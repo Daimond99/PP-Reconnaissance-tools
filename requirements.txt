@@ -1,6 +1,13 @@
 PySide6>=6.6.0
 keyring>=24.0.0
 
+# Wizard Console embedded terminal — real ConPTY-backed PTY (Windows) + VT
+# emulator so the 'new wizard' CLI runs with full color / working sudo, exactly
+# like a standalone Ubuntu WSL terminal. pyte is cross-platform; pywinpty is
+# Windows-only.
+pyte>=0.8.2
+pywinpty>=2.0 ; sys_platform == "win32"
+
 # LLM Mode (llm-nmap plugin) — `llm` CLI + provider plugins.
 # OpenAI support is built into `llm` itself; Anthropic/Gemini need plugins.
 llm>=0.17
