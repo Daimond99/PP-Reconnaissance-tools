@@ -107,11 +107,15 @@ literal match). Used by `ConfirmationGate`.
 
 ### Command builders (`src/tools/`)
 
-Only **`src/tools/nmap/`** survives (`builder.py`/`validator.py`/
-`parser.py`/`analyzer.py`/`__init__.py`). Its `analyzer` (
-`format_confirmation_box`, `generate_impact_description`,
-`is_target_in_scope`) is imported directly by `src/core/confirmation_gate.py`
-— it's the only tool package still wired into anything.
+Only **`src/tools/nmap/`** survives (`parser.py`/`analyzer.py`/
+`__init__.py`). `analyzer` (`format_confirmation_box`,
+`generate_impact_description`, `is_target_in_scope`) is imported directly by
+`src/core/confirmation_gate.py`; `parser.py::parse_nmap_xml()` is called by
+`main_window._ingest_nmap_xml()` to feed Results Display from a Direct Tool
+Mode nmap scan's `-oX` output. `builder.py`/`validator.py` — never wired
+into anything, dead weight — were **deleted 2026-08-01** (with them,
+`validate_port_range`/`PORT_RANGE_PATTERN` dropped from
+`src/validation/common.py`, their only caller).
 
 The other five packages that used to live here — `hydra`, `masscan`, `ncat`,
 `ncrack`, `evil_winrm` — were **deleted 2026-07-31**. Nothing imported them:

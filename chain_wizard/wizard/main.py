@@ -5,7 +5,6 @@ Entry point — command-line interface for the chain wizard.
 import os
 import sys
 import glob
-from datetime import datetime
 from core.display import banner, section, info, ok, warn, fail, bold, cyan, green, yellow
 from wizard.chain import run_chain
 

@@ -4,8 +4,7 @@ This is the main logic that the CLI (or future GUI) calls.
 """
 
 import re
-from datetime import datetime
-from core.display import section, info, ok, warn, fail, impact_box, bold, cyan, green, red, yellow
+from core.display import section, info, ok, warn, impact_box, bold, cyan, green
 from core.executor import run_cmd
 from core.models import AttackPlan, Step
 from library.scanner import scan_target

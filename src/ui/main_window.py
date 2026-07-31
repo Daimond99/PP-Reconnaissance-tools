@@ -6,12 +6,15 @@ Recon Tool - Main Window Module
 import os
 import shlex
 import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional, Tuple
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QMessageBox, QMenu, QFileDialog,
+    QMessageBox, QMenu, QFileDialog, QSplitter,
 )
-from PySide6.QtCore import Qt, QRect, QEvent
+from PySide6.QtCore import Qt, QRect, QEvent, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 
 from src.config import (
@@ -21,6 +24,15 @@ from src.config import (
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
 from src.tools.nmap.parser import parse_nmap_xml
+
+
+@dataclass
+class _PendingDirectScan:
+    """One in-flight Direct Tool Mode Execute run, tracked from the moment
+    the Raw Output terminal starts it until its `commandDone` fires."""
+    gate: ConfirmationGate
+    row: int
+    xml_paths: Optional[Tuple[str, str]]  # (shell_path, host_path) or None
 
 
 class ReconMainWindow(QMainWindow):
@@ -148,27 +160,30 @@ class ReconMainWindow(QMainWindow):
         self.top_bar = TopBar()
         root.addWidget(self.top_bar)
 
-        # Body
-        body = QHBoxLayout()
+        # Body — a QSplitter so the sidebar can be drag-resized VS
+        # Code-style; the handle itself is the divider (styled to a thin
+        # line, same as the old static #VLine it replaces).
+        body = QSplitter(Qt.Orientation.Horizontal)
+        body.setObjectName("BodySplitter")
         body.setContentsMargins(12, 12, 12, 12)
-        body.setSpacing(12)
+        body.setHandleWidth(9)
+        body.setChildrenCollapsible(False)
 
         self.sidebar = Sidebar()
         self.main_area = MainContentArea()
         body.addWidget(self.sidebar)
-
-        self.sidebar_vline = QFrame()
-        self.sidebar_vline.setObjectName("VLine")
-        self.sidebar_vline.setFixedWidth(1)
-        body.addWidget(self.sidebar_vline)
 
         content_card = QFrame()
         content_card.setObjectName("ContentCard")
         content_layout = QVBoxLayout(content_card)
         content_layout.setContentsMargins(10, 10, 10, 10)
         content_layout.addWidget(self.main_area)
-        body.addWidget(content_card, 1)
-        root.addLayout(body, 1)
+        body.addWidget(content_card)
+
+        body.setStretchFactor(0, 0)
+        body.setStretchFactor(1, 1)
+        body.setSizes([220, max(WINDOW_WIDTH - 220, 400)])
+        root.addWidget(body, 1)
 
         status_bar = QFrame()
         status_bar.setObjectName("StatusBar")
@@ -295,61 +310,10 @@ class ReconMainWindow(QMainWindow):
         cursor = cursor_map.get(direction, Qt.ArrowCursor)
         self.setCursor(cursor)
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            pos = event.pos()
-            
-            # ตรวจสอบว่าอยู่ใน title bar หรือไม่
-            # title bar อยู่ที่ y = 6 ถึง 40 (เนื่องจากมี margin 6px)
-            if 6 <= pos.y() <= 40:
-                # Drag window
-                self.dragPos = event.globalPos()
-                self.is_resizing = False
-                self._click_pos = pos
-            else:
-                # Check resize
-                if not self.isMaximized():
-                    direction = self._get_resize_direction(pos)
-                    if direction:
-                        self.is_resizing = True
-                        self.resize_direction = direction
-                        self.drag_start_pos = event.globalPos()
-                        self.drag_start_geometry = QRect(self.geometry())
-                        self.dragPos = None
-
-    def mouseMoveEvent(self, event):
-        # Update cursor ตลอดเวลาเมื่อไม่ได้ maximize
-        if not self.isMaximized():
-            self._update_cursor(event.pos())
-        
-        if event.buttons() == Qt.LeftButton:
-            if self.is_resizing and self.resize_direction:
-                self._handle_resize(event.globalPos())
-                event.accept()
-            elif self.dragPos is not None:
-                # Drag window
-                self.move(self.pos() + event.globalPos() - self.dragPos)
-                self.dragPos = event.globalPos()
-                event.accept()
-    
-    def enterEvent(self, event):
-        """Update cursor when mouse enters window"""
-        if not self.isMaximized():
-            self._update_cursor(event.pos())
-        super().enterEvent(event)
-
     def leaveEvent(self, event):
         """Reset cursor when mouse leaves window"""
         self.setCursor(Qt.ArrowCursor)
         super().leaveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        """Reset resize state"""
-        self.is_resizing = False
-        self.resize_direction = None
-        self.dragPos = None
-        self.drag_start_pos = None
-        self.drag_start_geometry = None
 
     def _handle_resize(self, global_pos):
         """จัดการการปรับขนาดหน้าต่าง"""
@@ -403,7 +367,7 @@ class ReconMainWindow(QMainWindow):
         self.top_bar.tool_combo.currentTextChanged.connect(self._on_tool_change)
         self.top_bar.execute_btn.clicked.connect(self._on_execute_clicked)
         self.top_bar.command_input.returnPressed.connect(self._on_execute_clicked)
-        self.top_bar.target_input.editTextChanged.connect(self._on_target_changed)
+        self.top_bar.target_input.textChanged.connect(self._on_target_changed)
         self._last_target = self._get_target()
 
         input_tab = self.main_area.input_tab
@@ -415,9 +379,9 @@ class ReconMainWindow(QMainWindow):
         # here regardless of whether the real terminal has been created yet.
         self.main_area.raw_output_tab.commandDone.connect(self._on_direct_command_done)
 
-        # token -> (ConfirmationGate, queue row), for the async completion
+        # run_command() token -> _PendingDirectScan, for the async completion
         # signal from the Raw Output terminal (Direct Tool Mode Execute).
-        self._pending_direct_scans: dict = {}
+        self._pending_direct_scans: dict[str, _PendingDirectScan] = {}
 
         self.new_scan_action.triggered.connect(self._on_new_scan)
         self.open_scan_action.triggered.connect(self._on_open_scan)
@@ -426,16 +390,18 @@ class ReconMainWindow(QMainWindow):
 
         self._on_tool_change(self.top_bar.tool_combo.currentText())
         self._on_warhead_change(self.top_bar.warhead_combo.currentText())
+        self._on_opmode_change(self.top_bar.opmode_combo.currentText())
 
     # Sidebar index of the Raw Output page (see Sidebar.NAV_ITEMS).
     RAW_OUTPUT_INDEX = 2
 
     def _toggle_sidebar(self):
-        """Fully hide/show the sidebar (and its divider), Claude Code
-        desktop-style — the main content reclaims the full width."""
+        """Fully hide/show the sidebar, Claude Code desktop-style — the
+        main content reclaims the full width. The splitter handle hides
+        along with it automatically (Qt ties a handle's visibility to the
+        pane it precedes)."""
         self._sidebar_hidden = not getattr(self, "_sidebar_hidden", False)
         self.sidebar.setVisible(not self._sidebar_hidden)
-        self.sidebar_vline.setVisible(not self._sidebar_hidden)
 
     def _on_sidebar_navigation(self, index: int):
         self.main_area.stack.setCurrentIndex(index)
@@ -467,11 +433,25 @@ class ReconMainWindow(QMainWindow):
         btn = self.settings_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
+    # Sidebar index of the Wizard Console page (see Sidebar.NAV_ITEMS).
+    WIZARD_CONSOLE_INDEX = 0
+
     def _on_opmode_change(self, mode):
-        # Wizard Console page is a plain bash terminal now — both operation
-        # modes just land on it, no separate wizard/direct-tool content to
-        # switch between.
-        self.main_area.stack.setCurrentIndex(0)
+        """OPERATION MODE gates the command box + Execute button: picking
+        "Wizard Mode" jumps to the Wizard Console page; picking "Direct Tool
+        Mode" unlocks typing a command and running it; the placeholder
+        ("Select Mode…", or anything else) leaves both locked."""
+        if mode == "Wizard Mode":
+            self.sidebar.select_index(self.WIZARD_CONSOLE_INDEX)
+            self.main_area.stack.setCurrentIndex(self.WIZARD_CONSOLE_INDEX)
+            self.top_bar.command_input.setEnabled(False)
+            self.top_bar.execute_btn.setEnabled(False)
+        elif mode == "Direct Tool Mode":
+            self.top_bar.command_input.setEnabled(True)
+            self.top_bar.execute_btn.setEnabled(True)
+        else:
+            self.top_bar.command_input.setEnabled(False)
+            self.top_bar.execute_btn.setEnabled(False)
 
     def _get_target(self) -> str:
         return self.top_bar.target_text() or "192.168.1.0/24"
@@ -511,12 +491,13 @@ class ReconMainWindow(QMainWindow):
         the Raw Output terminal (same xterm.js backend as the Wizard
         Console) so real color/output show live, and queued in the Input
         Management scan-history table."""
+        # Guards the "New Scan" menu action / Ctrl+N too, not just the
+        # Execute button itself — both reach this method directly.
+        if self.top_bar.opmode_combo.currentText() != "Direct Tool Mode":
+            return
         cmd = self.top_bar.command_input.text().strip()
         if not cmd:
             return
-
-        # Record the executed target in the TARGET dropdown history.
-        self.top_bar.add_target_history(self._get_target())
 
         # If this is a plain nmap invocation with no output-format flag of
         # its own, tack on `-oX <file>` so Results Display can be populated
@@ -589,36 +570,55 @@ class ReconMainWindow(QMainWindow):
 
         token = self.main_area.raw_output_tab.run_command(shlex.join(gate.argv))
         if token:
-            self._pending_direct_scans[token] = (gate, row, xml_paths)
+            self._pending_direct_scans[token] = _PendingDirectScan(gate, row, xml_paths)
         else:
             # Backend can't report completion (legacy fallback) — best effort.
             gate.mark_executed_result(0)
             self.main_area.input_tab.set_status(row, "Done")
 
+    # How long \\wsl$ can lag showing a file the WSL side just finished
+    # writing, observed in practice: the first read right after exit_code
+    # arrives can legitimately come up empty even though the scan worked.
+    _XML_READ_RETRIES = 6
+    _XML_READ_RETRY_MS = 300
+
     def _on_direct_command_done(self, token: str, exit_code: int) -> None:
         pending = self._pending_direct_scans.pop(token, None)
         if not pending:
             return
-        gate, row, xml_paths = pending
-        gate.mark_executed_result(exit_code)
-        self.main_area.input_tab.set_status(row, "Done" if exit_code == 0 else "Error")
-        if exit_code == 0 and xml_paths:
-            self._ingest_nmap_xml(xml_paths[1])
+        pending.gate.mark_executed_result(exit_code)
+        self.main_area.input_tab.set_status(pending.row, "Done" if exit_code == 0 else "Error")
+        if exit_code == 0 and pending.xml_paths:
+            self._ingest_nmap_xml(pending.xml_paths[1], self._XML_READ_RETRIES)
 
-    def _ingest_nmap_xml(self, host_path: str) -> None:
+    def _ingest_nmap_xml(self, host_path: str, retries_left: int) -> None:
         """Parse the scratch `-oX` file a completed Direct Tool Mode nmap
-        scan wrote and feed it into Results Display. Best-effort — a WSL
-        distro named something other than "Ubuntu", or the file not showing
-        up yet on the `\\\\wsl$` share, just means Results Display stays as
-        it was; the scan itself already succeeded and is visible in Raw
-        Output regardless."""
+        scan wrote and feed it into Results Display. `parse_nmap_xml` comes
+        back empty both on a genuine parse failure AND on the file simply
+        not existing yet from this (Windows-native) process's point of view
+        — the two look identical, so on empty we retry a few times on a
+        timer instead of giving up on the first miss. A WSL distro named
+        something other than "Ubuntu" still degrades to "no update", same
+        as before."""
         hosts = parse_nmap_xml(host_path)
         if hosts:
-            self.main_area.results_tab.merge_hosts(hosts)
-        try:
-            os.remove(host_path)
-        except OSError:
-            pass
+            # Every scan gets its own row, even a repeat of the same IP with
+            # different flags — label it with the time so duplicate-IP rows
+            # are still tellable apart in the host list.
+            stamp = datetime.now().strftime("%H:%M:%S")
+            for host in hosts:
+                host["label"] = f"{host['host']} · {stamp}"
+            self.main_area.results_tab.add_scan_results(hosts)
+            try:
+                os.remove(host_path)
+            except OSError:
+                pass
+            return
+        if retries_left > 0:
+            QTimer.singleShot(
+                self._XML_READ_RETRY_MS,
+                lambda: self._ingest_nmap_xml(host_path, retries_left - 1),
+            )
 
     def _on_queue_cancel(self, _row: int) -> None:
         # One shared Raw Output terminal — Cancel Scan interrupts whatever
@@ -649,7 +649,7 @@ class ReconMainWindow(QMainWindow):
         tokens = command.split()
         target = tokens[-1] if tokens else ""
         if target:
-            self.top_bar.add_target_history(target)
+            self.top_bar.target_input.setText(target)
             self._last_target = target
         self.top_bar.command_input.setText(command)
         self.main_area.input_tab.add_entry(command, status="Loaded", xml_path=path)

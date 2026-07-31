@@ -22,7 +22,7 @@ There is no configured lint/test/build tooling in this repo (no pytest config, n
 
 `docs/ARCHITECTURE.md`, `docs/Resource System.md`, `docs/AI_DEVELOPMENT.md`, and `docs/Coding Standards.md` (the original normative specs) have been removed — their load-bearing rules are folded into this file's `## Architecture` section below and into the docs that remain. `docs/CURRENT_STATE.md` is a snapshot of what's actually implemented vs. placeholder in the code right now, including live safety gaps (read this first in a fresh session — cheaper than re-deriving it). `docs/PROGRESS.md` is the running log of what's been done recently. **`docs/CROSS_PLATFORM_TERMINAL_PLAN.md` is the authoritative handoff for the current in-flight work — the new `chain_wizard/` chain CLI, its GUI embedding, and the agreed cross-platform terminal plan + remaining TODOs. Read it first if you are continuing that effort.** Key points that aren't obvious from skimming the code:
 
-- **Windows Demo is an execution profile, not an architecture limitation.** If a tool can't currently execute on this platform, still create the full module structure (`builder.py`, `validator.py`, `parser.py`, `analyzer.py`) with placeholder implementations and TODO docstrings — never skip or omit modules because execution is unavailable.
+- **Windows Demo is an execution profile, not an architecture limitation.** If a tool can't currently execute on this platform, that's fine — but don't scaffold `builder.py`/`validator.py`/`parser.py`/`analyzer.py` placeholders that nothing ever calls "to preserve the layout." `src/tools/nmap/builder.py` and `validator.py` were exactly that (never imported by anything, dead since day one) and were deleted 2026-08-01. Only add a module in `src/tools/<tool>/` once something real is going to call it.
 - **Resource-driven architecture**: menus, help text, warnings, impact descriptions, prompt templates, dialog text — all of it lives in `src/resources/*.json`, never hardcoded as Python string literals.
 
 ## Architecture
@@ -31,16 +31,15 @@ Fixed layer pipeline, no layer may skip another:
 
 ```
 GUI (src/ui/) → Wizard/AI (src/wizard/, src/ui/llm_mode.py) → Validation (src/validation/)
-  → Command Builder (src/tools/<tool>/builder.py) → Confirmation Gate (src/core/confirmation_gate.py)
+  → Confirmation Gate (src/core/confirmation_gate.py)
   → Execution (QProcess) → Parser (src/tools/<tool>/parser.py) → Analysis (src/tools/<tool>/analyzer.py)
   → Report (src/report/)
 ```
 
 Hard rules that hold across the codebase:
-- Builders only build command objects; they never execute, parse, or touch the GUI.
 - The GUI never builds commands or contains security/business logic.
 - Validation always runs before a command is built; execution always runs behind the confirmation gate.
-- The one remaining tool package `src/tools/nmap/` keeps the four-file layout: `builder.py`, `validator.py`, `parser.py`, `analyzer.py`, `__init__.py`. (The other five tool packages — hydra/masscan/ncat/ncrack/evil_winrm — were removed as dead code; the live wizard `chain_wizard/` runs those tools directly, not through per-tool `src/tools/` packages.)
+- The one remaining tool package `src/tools/nmap/` only has what's actually wired: `parser.py`, `analyzer.py`, `__init__.py`. (`builder.py`/`validator.py` were never called by anything and were deleted 2026-08-01; the other five tool packages — hydra/masscan/ncat/ncrack/evil_winrm — were removed earlier as dead code. The live wizard `chain_wizard/` runs tools directly, not through per-tool `src/tools/` packages.)
 
 ### Key modules
 
@@ -50,9 +49,9 @@ Hard rules that hold across the codebase:
 - `src/core/tool_manager.py` — installed-tool detection (`get_tool_manager()`), used by the TopBar tool combo.
 - `src/utils/resource_loader.py` — the *only* component allowed to `open()` a resource JSON file. Always go through `load_json()`; it caches results and degrades to `{}` on missing/malformed files rather than crashing.
 - `src/validation/common.py` — shared validation: command-line parsing, exact-confirmation check, etc.
-- `src/report/audit_log.py` — `audit_log_llm()`: append-only JSONL safety trail (`logs/audit_log.jsonl`) for every gated Direct Tool Mode Execute (channel, command, target, response, executed, provider). Nothing reads it back; it is the compliance record. (Kept deliberately; the old `audit_log_confirmation/cancel/fallback` variants + the `auto_chain.py`/`api_key_manager.py` modules that used them were removed as dead code.)
+- `src/report/audit_log.py` — `audit_log_llm()`: append-only JSONL safety trail (`logs/audit_log.jsonl`) for every gated Direct Tool Mode Execute (channel, command, target, response, executed, provider). Nothing reads it back; it is the compliance record. Size-based rotation (5 MB/file, 3 backups kept as `.1`/`.2`/`.3`) added 2026-08-01 so it doesn't grow unbounded — oldest backup is dropped, never the live file mid-write. (Kept deliberately; the old `audit_log_confirmation/cancel/fallback` variants + the `auto_chain.py`/`api_key_manager.py` modules that used them were removed as dead code.)
 - `src/resources/` — the only live resource is `nmap/flag_impacts.json` (read by `nmap.analyzer`). The old wizard/tool-selection resources (`wizard/menu.json`, `wizard/messages.json`, `nmap/scan_profiles.json`, `nmap/service_tools.json`, `common/warnings.json`) were deleted — nothing loaded them after the `chain_wizard/` rewrite (the live wizard carries its own JSON).
-- `src/tools/nmap/` — the only surviving tool package (`builder.py` / `validator.py` / `parser.py` / `analyzer.py`). Only `analyzer` is wired: `src/core/confirmation_gate.py` imports `format_confirmation_box` / `generate_impact_description` / `is_target_in_scope` for the Direct Tool Mode Execute path. `builder`/`parser`/`validator` are kept unwired to preserve the documented four-file layout. The other five tool packages (masscan/ncat/hydra/ncrack/evil_winrm) were deleted; the live wizard `chain_wizard/` invokes those tools directly.
+- `src/tools/nmap/` — the only surviving tool package, now just `parser.py` / `analyzer.py` / `__init__.py`. `analyzer` is imported by `src/core/confirmation_gate.py` (`format_confirmation_box` / `generate_impact_description` / `is_target_in_scope`) for the Direct Tool Mode Execute path; `parser.py::parse_nmap_xml()` is called by `main_window._ingest_nmap_xml()` to populate Results Display from a completed nmap scan's `-oX` file. `builder.py`/`validator.py` — never wired into anything — were deleted 2026-08-01. The other five tool packages (masscan/ncat/hydra/ncrack/evil_winrm) were deleted earlier; the live wizard `chain_wizard/` invokes those tools directly.
 - `src/ui/` — `main_window.py` (layout, title-bar Settings dropdown + sidebar toggle, Direct Tool Mode Execute → Raw Output, Open/Save scan XML), `widgets.py` (Sidebar/TopBar/`InputManagementTab` scan queue/`RawOutputTab`/`ResultsDisplayTab`), `terminal.py` (plain-pipe `InteractiveTerminal`), `terminal_tabs.py` (`TerminalTabsWidget` — PyCharm-style tab bar for the Wizard Console), `webterm/` (`XtermTerminal` — xterm.js in QWebEngineView + real PTY, the primary terminal backend), `pty_terminal.py` (`PtyTerminal` — pyte + ConPTY, legacy fallback). Sidebar pages are now 5 (Command Editor removed): Wizard Console / Input Management / Raw Output / Results Display / LLM Mode. See `docs/CURRENT_STATE.md`.
 - **`chain_wizard/`** (repo root, NOT under `src/`) — the live chain wizard: scan → impact-ranked plan (AUTO/SEMI) → hydra brute → credential harvest/loot → in-scope post-exploit (ncat/nmap-NSE/evil-winrm). Self-contained Python, 6-tool-restricted, arsenal/post-exploit in JSON. This is the current Wizard Console.
 

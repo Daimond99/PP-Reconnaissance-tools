@@ -161,11 +161,11 @@ QComboBox QAbstractItemView {{
     selection-background-color: {PURPLE};
     border: 1px solid {BORDER};
     border-radius: 4px;
-    padding: 4px;
+    padding: 3px;
     outline: none;
 }}
 QComboBox QAbstractItemView::item {{
-    padding: 8px 10px;
+    padding: 5px 8px;
     border-radius: 4px;
 }}
 QComboBox QAbstractItemView::item:hover {{
@@ -547,8 +547,8 @@ QComboBox QAbstractItemView, QListWidget {{
     padding: 3px;
 }}
 QComboBox QAbstractItemView::item, QListWidget::item {{
-    min-height: 22px;
-    padding: 8px 10px;
+    min-height: 18px;
+    padding: 5px 8px;
     border-bottom: 1px solid #44475a;
 }}
 QComboBox QAbstractItemView::item:hover, QListWidget::item:hover {{ background-color: #44475a; }}
@@ -598,8 +598,14 @@ QToolButton#IconButton:hover {{ background-color: #343b47; }}
 #Sidebar {{
     background-color: {BG_PANEL_2};
     border-right: 1px solid {BORDER_SOFT};
-    min-width: 220px;
-    max-width: 220px;
+    min-width: 160px;
+    max-width: 420px;
+}}
+QSplitter#BodySplitter::handle {{
+    background-color: {BORDER};
+}}
+QSplitter#BodySplitter::handle:hover {{
+    background-color: {PURPLE};
 }}
 #Sidebar[collapsed="true"] {{
     min-width: 68px;

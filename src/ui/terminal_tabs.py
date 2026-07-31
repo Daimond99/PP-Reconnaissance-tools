@@ -253,10 +253,7 @@ class TerminalTabsWidget(QWidget):
             border-radius: 6px;
             background: transparent;
         }}
-        QToolButton#TermTabBtn:hover {{
-            color: {CONSOLE_TEXT};
-            background: {PANEL_LIGHT};
-        }}
+        QToolButton#TermTabBtn:hover {{ color: {CONSOLE_TEXT}; }}
         QToolButton#TermTabBtn::menu-indicator {{ image: none; width: 0; }}
         QMenu#TermTabMenu {{
             background: {TERM_BAR};

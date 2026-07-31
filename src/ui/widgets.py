@@ -148,15 +148,10 @@ class TopBar(QFrame):
         target_col = QVBoxLayout()
         target_col.setSpacing(5)
         target_col.addWidget(self._field_label("TARGET"))
-        # Editable combo = text field + dropdown arrow holding the history
-        # of targets the user has typed and executed.
-        self.target_input = QComboBox()
+        self.target_input = QLineEdit()
         self.target_input.setObjectName("MissionCombo")
-        self.target_input.setEditable(True)
-        self.target_input.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.target_input.setFixedWidth(150)
-        self.target_input.addItem("192.168.1.0/24")
-        self.target_input.setCurrentText("192.168.1.0/24")
+        self.target_input.setText("192.168.1.0/24")
         target_col.addWidget(self.target_input)
         row1.addLayout(target_col)
 
@@ -165,20 +160,23 @@ class TopBar(QFrame):
         mode_col.addWidget(self._field_label("OPERATION MODE"))
         self.opmode_combo = QComboBox()
         self.opmode_combo.setObjectName("MissionCombo")
+        # Defaults to "Wizard Mode" (index 0 of OPERATION_MODES) — the
+        # command box/Execute stay disabled until Direct Tool Mode is
+        # explicitly picked (see main_window._on_opmode_change).
         self.opmode_combo.addItems(OPERATION_MODES)
-        self.opmode_combo.setFixedWidth(180)
+        self.opmode_combo.setFixedWidth(150)
         mode_col.addWidget(self.opmode_combo)
         row1.addLayout(mode_col)
 
         tool_col = QVBoxLayout()
         tool_col.setSpacing(5)
-        tool_col.addWidget(self._field_label("TOOL / SCANNER"))
+        tool_col.addWidget(self._field_label("TOOLS"))
         tm = get_tool_manager()
         tool_names = [info.display_name for info in tm.tools.values()]
         self.tool_combo = QComboBox()
         self.tool_combo.setObjectName("MissionCombo")
         self.tool_combo.addItems(tool_names if tool_names else TOOL_LIST)
-        self.tool_combo.setFixedWidth(220)
+        self.tool_combo.setFixedWidth(130)
         tool_col.addWidget(self.tool_combo)
         row1.addLayout(tool_col)
 
@@ -188,7 +186,7 @@ class TopBar(QFrame):
         self.warhead_combo = QComboBox()
         self.warhead_combo.setObjectName("MissionCombo")
         self.warhead_combo.addItems(WARHEAD_PROFILES)
-        self.warhead_combo.setFixedWidth(300)
+        self.warhead_combo.setFixedWidth(220)
         profile_col.addWidget(self.warhead_combo)
         row1.addLayout(profile_col)
 
@@ -211,15 +209,7 @@ class TopBar(QFrame):
         outer.addLayout(row2)
 
     def target_text(self) -> str:
-        return self.target_input.currentText().strip()
-
-    def add_target_history(self, target: str) -> None:
-        target = (target or "").strip()
-        if not target:
-            return
-        if self.target_input.findText(target) == -1:
-            self.target_input.insertItem(0, target)
-        self.target_input.setCurrentText(target)
+        return self.target_input.text().strip()
 
 
 # ============================================================================
@@ -324,7 +314,11 @@ class ResultsDisplayTab(QWidget):
 
         self.host_list = QListWidget()
         self.host_list.setObjectName("ZmHostList")
-        self.host_list.setFixedWidth(260)
+        self.host_list.setFixedWidth(190)
+        # Rows carry a timestamp suffix now (see add_scan_results) — elide
+        # instead of growing a horizontal scrollbar if one still overflows.
+        self.host_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.host_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.host_list.currentRowChanged.connect(self._on_host_selected)
         layout.addWidget(self.host_list)
 
@@ -347,7 +341,7 @@ class ResultsDisplayTab(QWidget):
         self._hosts = hosts
         self.host_list.clear()
         for host in hosts:
-            item = QListWidgetItem(host["host"])
+            item = QListWidgetItem(host.get("label", host["host"]))
             self.host_list.addItem(item)
         if hosts:
             self.host_list.setCurrentRow(0)
@@ -359,27 +353,17 @@ class ResultsDisplayTab(QWidget):
             )
             placeholder.setDisabled(True)
 
-    def merge_hosts(self, new_hosts: list[dict]) -> None:
-        """Fold `new_hosts` (freshly parsed from one scan) into the running
-        host list — updates an existing entry sharing the same IP in place,
-        appends otherwise — then selects the last host in `new_hosts` so the
-        scan just run is what's visible."""
+    def add_scan_results(self, new_hosts: list[dict]) -> None:
+        """Append `new_hosts` (freshly parsed from one scan) as new rows —
+        every scan run gets its own entry, even a repeat scan of the same
+        IP with different flags/warhead, so nothing gets silently
+        overwritten. Selects the first of the newly-added hosts."""
         if not new_hosts:
             return
-        by_ip = {h.get("ip"): i for i, h in enumerate(self._hosts)}
-        for host in new_hosts:
-            existing = by_ip.get(host.get("ip"))
-            if existing is not None:
-                self._hosts[existing] = host
-            else:
-                by_ip[host.get("ip")] = len(self._hosts)
-                self._hosts.append(host)
+        first_new_row = len(self._hosts)
+        self._hosts.extend(new_hosts)
         self.set_hosts(self._hosts)
-        target_ip = new_hosts[-1].get("ip")
-        for row, host in enumerate(self._hosts):
-            if host.get("ip") == target_ip:
-                self.host_list.setCurrentRow(row)
-                break
+        self.host_list.setCurrentRow(first_new_row)
 
     def _on_host_selected(self, row: int) -> None:
         if row < 0 or row >= len(self._hosts):

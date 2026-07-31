@@ -3,7 +3,6 @@ Command execution and logging.
 """
 
 import subprocess
-import shlex
 from datetime import datetime
 from core.display import info, ok, warn
 

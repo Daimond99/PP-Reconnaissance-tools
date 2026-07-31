@@ -4,7 +4,7 @@ Port scanner abstraction — supports nmap and masscan.
 
 import os
 from datetime import datetime
-from core.display import section, info, warn, fail
+from core.display import section, warn, fail
 from core.executor import run_cmd
 from core.models import ScanResult
 from library.parser import parse_gnmap
