@@ -6,9 +6,9 @@ Wizard Console embedding plan and remaining TODOs, read
 `CROSS_PLATFORM_TERMINAL_PLAN.md`. Update this file whenever the state below
 goes stale.
 
-Last verified: 2026-07-31, branch `main`, after the dead-tool-package
-removal + `chain_wizard/` rename (see `PROGRESS.md`, "Dead tool packages
-removed, wizard folder renamed").
+Last verified: 2026-07-31, branch `main`, after the Direct Tool Mode wiring
++ dead-code sweep (see `PROGRESS.md`, "Direct Tool Mode + Zenmap scan queue,
+dead-code sweep").
 
 ## Entry point
 
@@ -19,17 +19,26 @@ removed, wizard folder renamed").
 
 ### GUI (`src/ui/`)
 
-Sidebar has 6 pages (`Sidebar.NAV_ITEMS`, index 0–5), 1:1 with
+Sidebar has 5 pages (`Sidebar.NAV_ITEMS`, index 0–4), 1:1 with
 `MainContentArea._build_pages()`:
 
 | Index | Attr | Class | Notes |
 |---|---|---|---|
 | 0 | `wizard_tab` | `TerminalTabsWidget` — VS Code-style tabbed terminal; each tab is `XtermTerminal` (xterm.js in QWebEngineView + real PTY) → `PtyTerminal` (pyte/ConPTY) → `InteractiveTerminal`, first available wins | Wizard Console — first tab runs `chain_wizard/` CLI; `+`/`⌄` open more Wizard or plain Shell tabs, see below |
-| 1 | `input_tab` | `InputManagementTab` | supporting panel |
-| 2 | `cmd_editor_tab` | `CommandEditorTab` | supporting panel |
-| 3 | `raw_output_tab` | `RawOutputTab` (wraps `InteractiveTerminal`) | plain real shell, ungated by design |
-| 4 | `results_tab` | `ResultsDisplayTab` | Zenmap-style host/port view, starts empty |
-| 5 | `llm_tab` | `InteractiveTerminal` | plain real shell for wiring up your own AI CLI, ungated |
+| 1 | `input_tab` | `InputManagementTab` | Zenmap-style scan queue (Status/Command). Direct Tool Mode Execute lands a row here; Append/Remove/Cancel Scan; double-click a row → command back to top-bar |
+| 2 | `raw_output_tab` | `RawOutputTab` (wraps `make_terminal("shell")` — same xterm.js backend as Wizard) | real shell; also the live display surface for Direct Tool Mode Execute |
+| 3 | `results_tab` | `ResultsDisplayTab` | Zenmap-style host/port view, starts empty |
+| 4 | `llm_tab` | `InteractiveTerminal` | plain real shell for wiring up your own AI CLI, ungated |
+
+The **Command Editor** page (old index 2, `CommandEditorTab`) was removed
+2026-07-31.
+
+**Title bar** carries a left-corner sidebar collapse toggle (fully hides the
+sidebar + divider, Claude Code desktop-style) and a **Settings** dropdown
+(New Scan / Stop Scan / Open Scan… / Save Scan… / Save All Scans… / Quit).
+Open/Save round-trip a scan as minimal nmap XML (`<nmaprun args="…">`): Save
+writes the selected Input Management row; Open parses the command back into
+the top-bar command box + TARGET field and adds an Input Management row.
 
 - `main_window.py` — main window assembly, title bar, Settings popup menu,
   wires `Sidebar.navigate` → `MainContentArea.stack`. Top-bar Execute
@@ -115,26 +124,32 @@ assume the old placeholders still exist.
 ### Confirmation gate (`src/core/confirmation_gate.py`)
 
 The single human-in-the-loop safety gate. `request()` validates + builds a
-preview only; `execute()` requires an exact literal `"yes"` reply. Supports
-masking secrets via `argv_override`. Reached only by the top-bar Execute
-button (`main_window._on_execute_clicked`/`_run_gated_command`) — the Wizard
-Console does its own per-step confirmation inside the CLI itself and does
-not call into this class.
+preview only; `confirm("yes")` requires an exact literal `"yes"` reply.
+Supports masking secrets via `argv_override`. Reached only by the top-bar
+Direct Tool Mode Execute button (`main_window._on_execute_clicked` →
+`_run_direct_command`), which passes `skip_scope=True` (the user types their
+own lab IP into TARGET) and then streams the command into the Raw Output
+terminal, marking the Input Management row Done/Error on completion. The
+Wizard Console does its own per-step confirmation inside the CLI itself and
+does not call into this class.
 
 ### Other core (`src/core/`)
 
-- `tool_manager.py` — installed-tool detection.
-- `auto_chain.py` — attack-chain automation.
-- `api_key_manager.py` — LLM API key storage via `keyring`.
+- `tool_manager.py` — installed-tool detection (`get_tool_manager()`), used
+  by the TopBar tool combo.
+- `auto_chain.py` and `api_key_manager.py` were **deleted 2026-07-31** — dead
+  code, nothing imported them (LLM Mode is a plain terminal now, no API-key
+  UI; no auto-chain caller).
 
 ### Resources (`src/resources/*.json` + `src/utils/resource_loader.py`)
 
 `resource_loader.py` is the only component allowed to `open()` a resource
 JSON; `load_json()` caches and degrades to `{}` on missing/malformed files.
-Covers wizard menu/messages, nmap scan profiles/flag impacts, common
-warnings, `nmap/service_tools.json`. Most prompt/dialog/validation-error
-text elsewhere (`src/config.py`) is still hardcoded Python strings, not
-migrated to resources.
+The only live resource is **`nmap/flag_impacts.json`** (read by
+`nmap.analyzer`). The old wizard/tool-selection resources
+(`wizard/menu.json`, `wizard/messages.json`, `nmap/scan_profiles.json`,
+`nmap/service_tools.json`, `common/warnings.json`) were deleted 2026-07-31 —
+nothing loaded them after the `chain_wizard/` rewrite.
 
 `chain_wizard/library/attack_map.json` and `post_exploit.json` are a
 separate, resource-driven data source specific to the wizard CLI — not
@@ -142,33 +157,28 @@ routed through `src/utils/resource_loader.py`.
 
 ### Reporting (`src/report/audit_log.py`)
 
-Audit logging for every LLM-mode command (channel, command, target,
-response, executed, provider). Only fed by the top-bar Execute /
-`ConfirmationGate` path.
+`audit_log_llm()` appends every gated Direct Tool Mode Execute to
+`logs/audit_log.jsonl` (channel, command, target, response, executed,
+provider — never a secret). Only fed by the `ConfirmationGate` path; nothing
+reads it back (it is the compliance record). The old
+`audit_log_confirmation/cancel/fallback` variants were removed as dead code.
 
 ## Known live safety gaps (not yet fixed)
 
-1. **`RawOutputTab` and LLM Mode are plain `InteractiveTerminal`s, zero gate
-   involvement** — by explicit user request, not an oversight. So the only
-   GUI path behind `ConfirmationGate` is the top-bar Execute button. The
-   Wizard Console (`chain_wizard/`) has its own per-step "yes" confirmation
-   built into the CLI, but that's a separate, self-contained safety check,
-   not `ConfirmationGate`.
-2. **`src/scripts/llm-tools-nmap.py`** registers `nmap_scan` etc. as `llm`
-   CLI function-call tools — if ever loaded via `llm --functions` from
-   inside the LLM Mode shell, the LLM could invoke `nmap` directly, bypassing
-   all validation/scope checks. The script works standalone; nothing in the
-   GUI auto-loads it, but a user typing the `llm --functions ...` command
-   into the (ungated) LLM Mode shell themselves would activate it.
-3. **Resource-driven migration is partial** — `src/utils/resource_loader.py`
-   + `src/resources/*.json` work correctly, but most prompts,
-   confirmation-box templates, validation-error text, and the LLM system
-   prompt (`src/config.py`) remain hardcoded Python strings.
+1. **`RawOutputTab` and LLM Mode are plain terminals, zero gate involvement**
+   — by explicit user request, not an oversight. The only GUI path behind
+   `ConfirmationGate` is the top-bar Direct Tool Mode Execute button (which
+   then displays its output in Raw Output). The Wizard Console
+   (`chain_wizard/`) has its own per-step "yes" confirmation built into the
+   CLI, a separate, self-contained safety check.
+2. **Resource-driven migration is partial** — most prompts, confirmation-box
+   templates, and validation-error text in `src/config.py` remain hardcoded
+   Python strings rather than resources.
 
-None of the above are Windows-Demo/platform limitations — they're
-intentional trade-offs (#1) or wiring gaps (#2, #3). Treat `RawOutputTab`/
-LLM Mode and `llm-tools-nmap.py`'s direct-execution capability as the
-highest-priority items to reconsider before pointing this app at a real
+The old `llm-tools-nmap.py` direct-execution gap was **closed 2026-07-31** by
+deleting the script (it was orphaned and never GUI-loaded). Neither remaining
+gap is a Windows-Demo/platform limitation — #1 is an intentional trade-off,
+#2 is a migration gap. Reconsider #1 before pointing this app at a real
 target outside the demo.
 
 ## External tools

@@ -325,6 +325,24 @@ class PtyTerminal(QWidget):
         except Exception:
             pass
 
+    # -- external command injection (Direct Tool Mode → this terminal) -----
+    def write_text(self, text: str) -> None:
+        if self._proc:
+            try:
+                self._proc.write(text + "\r")
+            except Exception:
+                pass
+
+    def interrupt(self) -> None:
+        if self._proc:
+            try:
+                self._proc.write("\x03")
+            except Exception:
+                pass
+
+    def focus(self) -> None:
+        self.view.setFocus()
+
     # --------------------------------------------------------------- teardown
     def stop(self) -> None:
         if self._reader:

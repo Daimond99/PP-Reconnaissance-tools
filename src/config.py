@@ -457,6 +457,27 @@ QTabBar::tab:hover {{
     background-color: #e81123;
 }}
 #TitleDragArea {{ background: transparent; }}
+#TitleToolBtn {{
+    color: {TEXT};
+    background: transparent;
+    border: none;
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 30px;
+    border-radius: 6px;
+}}
+#TitleToolBtn:hover {{ background-color: {PANEL_LIGHT}; }}
+#TitleSettingsBtn {{
+    color: {TEXT};
+    background: transparent;
+    border: none;
+    min-height: 30px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+#TitleSettingsBtn:hover {{ background-color: {PANEL_LIGHT}; color: {PURPLE}; }}
 
 /* Dracula theme overrides: visual styling only, no layout changes. */
 QMainWindow, QWidget {{
@@ -749,6 +770,21 @@ WARHEAD_COMMANDS = {
     "Full Aggressive": "nmap -A -T4 -p- 192.168.1.0/24",
     "Web Focus": "nmap -sV -p 80,443,8080,8443 192.168.1.0/24",
     "Vulnerability Scan": "nmap --script vuln -sV 192.168.1.0/24",
+    "Ping Scan (Evasion)":
+        "nmap -sn -PE -PP -PY -PA80,443 -T2 -f --ttl 64 --data-length 16 "
+        "--randomize-hosts --source-port 53 192.168.1.0/24",
+    "Honeypot Version Demo":
+        "nmap -sV -p 1433,3306,4899,5900,8000,10000 -n -Pn -r -f --ttl 128 "
+        "--data-length 32 --source-port 53 -T2 192.168.1.0/24",
+    "Common TCP SYN Scan":
+        "nmap -sS -p 17,19,21-32764,5985,5986 -n -Pn -r 192.168.1.0/24",
+    "Quick Scan Plus": "nmap -sV -T4 -O -F --version-light 192.168.1.0/24",
+    "Intense Scan": "nmap -T4 -A -v 192.168.1.0/24",
+    "Comprehensive Scan":
+        'nmap -sS -sU -T4 -A -v -PE -PS80,443 -PA3389 -PP -PU40125 -PY '
+        '--source-port 53 --script "default or (discovery and safe)" 192.168.1.0/24',
+    "Intense Scan (No Ping)": "nmap -T4 -A -v -Pn 192.168.1.0/24",
+    "Telnet Random Port Scan": "nmap -sS -p 23 -n -Pn --open 192.168.1.0/24",
 }
 
 TOOL_LIST = [
@@ -761,145 +797,20 @@ TOOL_LIST = [
     "Evil-WinRM - Windows Access",
 ]
 
-WARHEAD_PROFILES = ["Stealth Recon", "Full Aggressive", "Web Focus", "Vulnerability Scan"]
+WARHEAD_PROFILES = [
+    "Stealth Recon", "Full Aggressive", "Web Focus", "Vulnerability Scan",
+    "Ping Scan (Evasion)", "Honeypot Version Demo", "Common TCP SYN Scan",
+    "Quick Scan Plus", "Intense Scan", "Comprehensive Scan",
+    "Intense Scan (No Ping)", "Telnet Random Port Scan",
+]
 
 OPERATION_MODES = ["Wizard Mode", "Direct Tool Mode"]
 
 # ============================================================================
-# CONTENT TEXT - ข้อความสำหรับแต่ละโหมด
+# SCOPE - authorized test range
 # ============================================================================
 
-DIRECT_TOOL_CONTENT = """\
-DIRECT TOOL MODE - Select a Tool
-
-Available Tools:
-- Nmap
-- Masscan
-- Hydra
-- Ncrack
-- Ncat
-- Evil-WinRM
-
-Select tool (or type command):"""
-
-WIZARD_CONTENT = """\
-WIZARD MODE - Expert Attack Chain Guide
-
-What do you want to find?
-
- 1. Web Servers
- 2. SSH Services
- 3. Windows Systems
- 4. Databases
- 5. Full Network Scan
- 6. Custom Scan
-
-Select option (1-6) :"""
-
-# ============================================================================
-# LLM MODE - Scope, credential store, and AI provider configuration
-# ============================================================================
-
-# Sandbox/lab scope that every LLM-suggested target must fall inside before
-# the Confirmation Gate will even build a preview. Adjust to your authorized
-# test range.
+# Sandbox/lab scope used by the Confirmation Gate's default scope check.
+# Direct Tool Mode passes skip_scope=True (the user types their own lab IP),
+# so this is the fallback default only.
 AUTHORIZED_SCOPE = "192.168.1.0/24"
-
-# Name under which API keys are namespaced in the OS credential store
-# (Windows Credential Manager / macOS Keychain / Secret Service on Linux).
-KEYRING_SERVICE_NAME = "TheRecon"
-
-# ----------------------------------------------------------------------------
-# Tool Selection menu — Windows-native (no WSL2) enable/disable registry.
-# Nmap was already usable via the Wizard Console. Ncat and Evil-WinRM are the
-# next two tools enabled for real execution on Windows. Everything else stays
-# disabled until a Windows-native path is validated.
-# ----------------------------------------------------------------------------
-TOOL_ENABLEMENT = {
-    "nmap": True,
-    "ncat": True,
-    "evil-winrm": True,
-    "ncrack": True,
-    "masscan": False,
-    "hydra": True,  # runs via WSL on Windows (chain_wizard CLI)
-}
-
-TOOL_NOT_SUPPORTED_MESSAGE = "[!] เครื่องมือนี้ยังไม่รองรับบน Windows ในเวอร์ชัน demo ปัจจุบัน"
-
-# Ncrack on Windows relies on an old, unmaintained binary — always warn
-# before entering the wizard, every single time it's selected.
-NCRACK_STABILITY_WARNING = (
-    "[!] Ncrack บน Windows ใช้ binary เก่าที่ไม่ได้รับการดูแลต่อแล้ว\n"
-    "ผลลัพธ์อาจไม่เสถียรเท่าเวอร์ชัน Linux แนะนำให้ใช้เพื่อ demo เท่านั้น\n"
-    "ต้องการดำเนินการต่อหรือไม่? (yes/no)"
-)
-
-# Protocols offered as a numbered pick-list (never free-typed) to avoid
-# syntax mistakes in the ncrack://<protocol> URI.
-NCRACK_PROTOCOLS = ["rdp", "ssh", "ftp", "telnet", "http", "pop3", "vnc", "smb"]
-
-# Path to the llm-tools-nmap.py functions file used with `llm --functions`.
-# Download from: https://github.com/peter-hackertarget/llm-tools-nmap
-# Defaults to the project root; change this if you keep it elsewhere.
-LLM_TOOLS_NMAP_PATH = "src/scripts/llm-tools-nmap.py"
-
-AI_MODE_PROVIDERS = {
-    "openai": {
-        "label": "OpenAI (GPT-4o-mini)",
-        "keyring_key": "openai_api_key",
-        "env_var": "OPENAI_API_KEY",
-        "model": "gpt-4o-mini",
-    },
-    "anthropic": {
-        "label": "Anthropic (Claude)",
-        "keyring_key": "anthropic_api_key",
-        "env_var": "ANTHROPIC_API_KEY",
-        "model": "claude-3-5-sonnet-latest",
-    },
-    "gemini": {
-        "label": "Google (Gemini)",
-        "keyring_key": "gemini_api_key",
-        "env_var": "GEMINI_API_KEY",
-        "model": "gemini-1.5-flash-latest",
-    },
-}
-
-# System prompt sent with EVERY AI Mode (`llm -s ...`) call. Keeps the model
-# scoped to nmap-based network recon only and unable to drift into general
-# conversation, other tools, or auto-execution.
-SYSTEM_PROMPT = """\
-คุณคือ Network Recon Assistant สำหรับโปรแกรม TheRecon เท่านั้น
-หน้าที่ของคุณคือช่วยแปลงคำขอภาษาคนของผู้ใช้ให้เป็นคำสั่ง nmap ที่เหมาะสม
-ผ่าน function ที่มีอยู่ใน llm-tools-nmap plugin เท่านั้น (nmap_quick_scan,
-nmap_port_scan, nmap_service_detection, nmap_os_detection, nmap_ping_scan,
-nmap_script_scan, nmap_scan)
-
-กฎเคร่งครัดที่ต้องปฏิบัติตามเสมอ:
-1. ตอบเฉพาะเรื่อง network scanning, port enumeration, service/OS detection
-   ที่เกี่ยวข้องกับ nmap เท่านั้น
-2. ถ้าผู้ใช้ถามเรื่องอื่นที่ไม่เกี่ยวกับ network recon (เช่น คำถามทั่วไป,
-   เขียนโค้ดเรื่องอื่น, สนทนาเล่น) ให้ตอบกลับว่า:
-   "ขออภัย ผมสามารถช่วยเฉพาะเรื่อง network reconnaissance ผ่าน nmap เท่านั้น
-   กรุณาระบุคำขอที่เกี่ยวข้องกับการสแกนเครือข่าย"
-3. ห้ามแนะนำหรือรันคำสั่งใดๆ ที่ไม่ใช่ nmap function ที่กำหนดไว้
-   (ห้าม suggest เครื่องมืออื่นนอกเหนือจากที่ระบบอนุญาต แม้จะรู้จักก็ตาม)
-4. ห้าม generate คำสั่งที่มี target อยู่นอกขอบเขต scope ที่ผู้ใช้ระบุไว้ต้นโปรแกรม
-5. ทุกคำสั่งที่แนะนำต้องมาพร้อมคำอธิบายสั้นๆ ว่าทำอะไร เพื่อให้ผู้ใช้ตัดสินใจ
-   ก่อน confirm ได้ง่าย
-6. ห้ามรันคำสั่งเองโดยตรง มีหน้าที่แค่ "แนะนำ" คำสั่งเท่านั้น ระบบจะเป็นผู้
-   ดำเนินการรันจริงหลังผู้ใช้ยืนยันผ่าน Confirmation Gate
-"""
-
-LLM_DEMO_TEXT = """\
-# Discover your local network
-llm --functions src/scripts/llm-tools-nmap.py "What's my local network information?"
-
-# Find live hosts on your network
-llm --functions src/scripts/llm-tools-nmap.py "Scan my local network to find live hosts"
-
-# Quick port scan of a hosts in /etc/hosts using pipe capability
-cat /etc/hosts | llm --functions src/scripts/llm-tools-nmap.py "Do a quick port scan of these hosts"
-
-# Detailed service detection
-llm --functions src/scripts/llm-tools-nmap.py "Scan 192.168.1.1 for services on ports 80,443,22"
-"""

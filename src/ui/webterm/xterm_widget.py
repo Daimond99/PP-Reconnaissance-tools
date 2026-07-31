@@ -34,7 +34,9 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import signal
+import uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -67,7 +69,6 @@ else:
         import fcntl  # noqa: F401
         import termios  # noqa: F401
         import struct  # noqa: F401
-        import subprocess  # noqa: F401
         _PTY_OK = True
     except Exception:  # pragma: no cover
         _PTY_OK = False
@@ -223,6 +224,10 @@ class XtermTerminal(QWidget):
     """A real, IDE-grade terminal running `argv` behind xterm.js + a PTY."""
 
     processFinished = Signal()
+    # Emitted when a run_command()-launched command finishes: (token, exit_code).
+    commandDone = Signal(str, int)
+
+    _DONE_RE = re.compile(r"__TR_DONE_([0-9a-f]{8})_(-?\d+)__")
 
     def __init__(self, argv: List[str], cols: int = 110, rows: int = 32, parent=None):
         super().__init__(parent)
@@ -232,6 +237,8 @@ class XtermTerminal(QWidget):
         self._backend = None
         self._reader: Optional[_Reader] = None
         self._spawned = False
+        self._pending: Optional[str] = None
+        self._out_buffer = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -280,10 +287,21 @@ class XtermTerminal(QWidget):
         self._reader.dataReady.connect(self._on_data)
         self._reader.closed.connect(self._on_closed)
         self._reader.start()
+        if self._pending:
+            try:
+                self._backend.write(self._pending)
+            except Exception:
+                pass
+            self._pending = None
 
     def _on_data(self, data: bytes) -> None:
         b64 = base64.b64encode(data).decode("ascii")
         self._bridge.dataToTerm.emit(b64)
+        self._out_buffer = (self._out_buffer + data.decode("utf-8", "replace"))[-4096:]
+        m = self._DONE_RE.search(self._out_buffer)
+        if m:
+            self._out_buffer = ""
+            self.commandDone.emit(m.group(1), int(m.group(2)))
 
     def _on_closed(self) -> None:
         self.processFinished.emit()
@@ -302,6 +320,39 @@ class XtermTerminal(QWidget):
                 self._backend.resize(cols, rows)
             except Exception:
                 pass
+
+    # -- external command injection (Direct Tool Mode → this terminal) -----
+    def write_text(self, text: str) -> None:
+        """Inject `text` into the shell as if typed, followed by Enter."""
+        if self._backend:
+            try:
+                self._backend.write(text + "\r")
+            except Exception:
+                pass
+        else:
+            self._pending = (self._pending or "") + text + "\r"
+
+    def run_command(self, cmd: str) -> str:
+        """Run `cmd` in the shell; emits commandDone(token, exit_code) when
+        it finishes. Returns the token."""
+        token = uuid.uuid4().hex[:8]
+        wrapped = f"{cmd}; printf '__TR_DONE_%s_%d__\\n' {token} $?"
+        self.write_text(wrapped)
+        return token
+
+    def interrupt(self) -> None:
+        if self._backend:
+            try:
+                self._backend.write("\x03")
+            except Exception:
+                pass
+
+    def focus(self) -> None:
+        """Give the terminal real keyboard focus — Qt widget focus alone
+        doesn't focus xterm.js's own hidden textarea, so Ctrl+C typed right
+        after switching tabs would otherwise go nowhere."""
+        self.view.setFocus()
+        self.view.page().runJavaScript("term.focus();")
 
     # -- teardown ----------------------------------------------------------
     def stop(self) -> None:

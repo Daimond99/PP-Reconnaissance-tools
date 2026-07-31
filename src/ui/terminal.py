@@ -158,6 +158,20 @@ class InteractiveTerminal(QWidget):
         """Inject external (already-gated) command output into the view."""
         self._append(text + "\n")
 
+    def write_text(self, cmd: str) -> None:
+        """Type `cmd` into the current input line and send it, as if the
+        user had typed it. No completion signal (no PTY to sniff for a
+        sentinel) — callers just get "sent", not "done"."""
+        self._replace_input(cmd)
+        self._send_command()
+
+    def interrupt(self) -> None:
+        if self._proc and self._proc.state() != QProcess.ProcessState.NotRunning:
+            self._proc.write(b"\x03")
+
+    def focus(self) -> None:
+        self.output.setFocus()
+
     def eventFilter(self, obj, event):
         if obj is self.output and event.type() == event.Type.KeyPress:
             return self._handle_key(event)

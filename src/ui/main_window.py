@@ -3,20 +3,21 @@ Recon Tool - Main Window Module
 หน้าต่างหลักของแอปพลิเคชัน
 """
 
-from typing import List
+import os
+import shlex
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QMessageBox, QMenu,
+    QMessageBox, QMenu, QFileDialog,
 )
-from PySide6.QtCore import Qt, QRect, QEvent, QProcess
-from PySide6.QtGui import QAction, QCursor, QKeySequence
+from PySide6.QtCore import Qt, QRect, QEvent
+from PySide6.QtGui import QAction, QKeySequence
 
 from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     WARHEAD_COMMANDS, TOOL_COMMANDS,
 )
-from src.ui.widgets import Sidebar, TopBar, MainContentArea, svg_icon
+from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
 
 
@@ -44,27 +45,20 @@ class ReconMainWindow(QMainWindow):
         self._connect_signals()
 
     def _build_menu(self):
-        menubar = self.menuBar()
-
+        # The QMainWindow menu bar is hidden — all actions live in the
+        # title-bar Settings dropdown. These QActions are kept only so their
+        # keyboard shortcuts stay live app-wide.
         self.new_scan_action = QAction("New Scan", self)
-        self.stop_scan_action = QAction("Stop Scan", self)
-        scan_menu = menubar.addMenu("Scan")
-        scan_menu.addAction(self.new_scan_action)
-        scan_menu.addAction(self.stop_scan_action)
-
-        self.profile_mgmt_action = QAction("Profile Management", self)
-        self.import_yaml_action = QAction("Import Profile (YAML)", self)
-        self.export_mission_action = QAction("Export Current Mission", self)
-        tools_menu = menubar.addMenu("Tools")
-        tools_menu.addAction(self.profile_mgmt_action)
-        tools_menu.addAction(self.import_yaml_action)
-        tools_menu.addAction(self.export_mission_action)
-
-        self.about_action = QAction("About", self)
-        self.doc_action = QAction("Documentation", self)
-        help_menu = menubar.addMenu("Help")
-        help_menu.addAction(self.about_action)
-        help_menu.addAction(self.doc_action)
+        self.new_scan_action.setShortcut(QKeySequence("Ctrl+N"))
+        self.open_scan_action = QAction("Open Scan", self)
+        self.open_scan_action.setShortcut(QKeySequence("Ctrl+O"))
+        self.save_scan_action = QAction("Save Scan", self)
+        self.save_scan_action.setShortcut(QKeySequence("Ctrl+S"))
+        self.save_all_action = QAction("Save All Scans", self)
+        self.save_all_action.setShortcut(QKeySequence("Ctrl+Alt+S"))
+        for action in (self.new_scan_action, self.open_scan_action,
+                       self.save_scan_action, self.save_all_action):
+            self.addAction(action)
 
     def _build_ui(self):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowCloseButtonHint)
@@ -89,6 +83,23 @@ class ReconMainWindow(QMainWindow):
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(10, 0, 6, 0)
         title_layout.setSpacing(2)
+
+        # Left cluster: sidebar collapse/expand toggle + Settings dropdown.
+        left_controls = QHBoxLayout()
+        left_controls.setSpacing(2)
+
+        self.sidebar_toggle_btn = QPushButton()
+        self.sidebar_toggle_btn.setObjectName("TitleToolBtn")
+        self.sidebar_toggle_btn.setIcon(svg_icon("M4 6h16M4 12h16M4 18h16", color="#b8b8c4"))
+        self.sidebar_toggle_btn.setToolTip("Collapse / expand sidebar")
+        self.sidebar_toggle_btn.setCursor(Qt.PointingHandCursor)
+
+        self.settings_btn = QPushButton("  Settings  ▾")
+        self.settings_btn.setObjectName("TitleSettingsBtn")
+        self.settings_btn.setCursor(Qt.PointingHandCursor)
+
+        left_controls.addWidget(self.sidebar_toggle_btn)
+        left_controls.addWidget(self.settings_btn)
 
         # Plain, empty drag area — no brand mark, no title text (per mockup).
         drag_spacer = QLabel("")
@@ -119,6 +130,7 @@ class ReconMainWindow(QMainWindow):
         controls_layout.addWidget(btn_max)
         controls_layout.addWidget(btn_close)
 
+        title_layout.addLayout(left_controls)
         title_layout.addWidget(drag_spacer, 1)
         title_layout.addLayout(controls_layout)
         self._drag_widgets = (self.title_bar, drag_spacer)
@@ -143,10 +155,10 @@ class ReconMainWindow(QMainWindow):
         self.main_area = MainContentArea()
         body.addWidget(self.sidebar)
 
-        vline = QFrame()
-        vline.setObjectName("VLine")
-        vline.setFixedWidth(1)
-        body.addWidget(vline)
+        self.sidebar_vline = QFrame()
+        self.sidebar_vline.setObjectName("VLine")
+        self.sidebar_vline.setFixedWidth(1)
+        body.addWidget(self.sidebar_vline)
 
         content_card = QFrame()
         content_card.setObjectName("ContentCard")
@@ -382,41 +394,63 @@ class ReconMainWindow(QMainWindow):
 
     def _connect_signals(self):
         self.sidebar.navigate.connect(self._on_sidebar_navigation)
-        self.sidebar.settings_btn.clicked.connect(self._on_settings_clicked)
+        self.settings_btn.clicked.connect(self._on_settings_clicked)
+        self.sidebar_toggle_btn.clicked.connect(self._toggle_sidebar)
         self.top_bar.opmode_combo.currentTextChanged.connect(self._on_opmode_change)
         self.top_bar.warhead_combo.currentTextChanged.connect(self._on_warhead_change)
         self.top_bar.tool_combo.currentTextChanged.connect(self._on_tool_change)
         self.top_bar.execute_btn.clicked.connect(self._on_execute_clicked)
         self.top_bar.command_input.returnPressed.connect(self._on_execute_clicked)
+        self.top_bar.target_input.editTextChanged.connect(self._on_target_changed)
+        self._last_target = self._get_target()
 
-        self._top_bar_gate: ConfirmationGate | None = None
-        self._top_bar_proc: QProcess | None = None
+        input_tab = self.main_area.input_tab
+        input_tab.reuseRequested.connect(self.top_bar.command_input.setText)
+        input_tab.cancelRequested.connect(self._on_queue_cancel)
+
+        done_signal = getattr(self.main_area.raw_output_tab.terminal, "commandDone", None)
+        if done_signal is not None:
+            done_signal.connect(self._on_direct_command_done)
+
+        # token -> (ConfirmationGate, queue row), for the async completion
+        # signal from the Raw Output terminal (Direct Tool Mode Execute).
+        self._pending_direct_scans: dict = {}
 
         self.new_scan_action.triggered.connect(self._on_new_scan)
-        self.stop_scan_action.triggered.connect(self._on_stop_scan)
-        self.profile_mgmt_action.triggered.connect(self._on_profile_management)
-        self.import_yaml_action.triggered.connect(self._on_import_yaml)
-        self.export_mission_action.triggered.connect(self._on_export_mission)
-        self.about_action.triggered.connect(self._on_about)
-        self.doc_action.triggered.connect(self._on_documentation)
+        self.open_scan_action.triggered.connect(self._on_open_scan)
+        self.save_scan_action.triggered.connect(self._on_save_scan)
+        self.save_all_action.triggered.connect(self._on_save_all_scans)
 
         self._on_tool_change(self.top_bar.tool_combo.currentText())
         self._on_warhead_change(self.top_bar.warhead_combo.currentText())
 
+    # Sidebar index of the Raw Output page (see Sidebar.NAV_ITEMS).
+    RAW_OUTPUT_INDEX = 2
+
+    def _toggle_sidebar(self):
+        """Fully hide/show the sidebar (and its divider), Claude Code
+        desktop-style — the main content reclaims the full width."""
+        self._sidebar_hidden = not getattr(self, "_sidebar_hidden", False)
+        self.sidebar.setVisible(not self._sidebar_hidden)
+        self.sidebar_vline.setVisible(not self._sidebar_hidden)
+
     def _on_sidebar_navigation(self, index: int):
         self.main_area.stack.setCurrentIndex(index)
+        if index == self.RAW_OUTPUT_INDEX:
+            self.main_area.raw_output_tab.focus()
 
     def _on_settings_clicked(self):
-        """Pop a File/Settings menu (Zenmap-style) at the Settings button."""
+        """Pop the Settings menu below the title-bar button. Only actions the
+        app can actually perform — Zenmap-style scan file management + run."""
         menu = QMenu(self)
         entries = [
-            ("New Window", "Ctrl+N", self._on_new_scan),
-            ("Open Scan", "Ctrl+O", self._on_import_yaml),
-            ("Open Scan in This Window", "", self._on_import_yaml),
-            ("Save Scan", "Ctrl+S", self._on_export_mission),
-            ("Save All Scans to Directory", "Ctrl+Alt+S", self._on_export_mission),
+            ("New Scan", "Ctrl+N", self._on_new_scan),
+            ("Stop Scan", "", self._on_stop_scan),
             (None, None, None),
-            ("Close Window", "Ctrl+W", self.close),
+            ("Open Scan…", "Ctrl+O", self._on_open_scan),
+            ("Save Scan…", "Ctrl+S", self._on_save_scan),
+            ("Save All Scans…", "Ctrl+Alt+S", self._on_save_all_scans),
+            (None, None, None),
             ("Quit", "Ctrl+Q", self.close),
         ]
         for label, shortcut, handler in entries:
@@ -427,8 +461,8 @@ class ReconMainWindow(QMainWindow):
             if shortcut:
                 action.setShortcut(QKeySequence(shortcut))
             action.triggered.connect(handler)
-        btn = self.sidebar.settings_btn
-        menu.exec(btn.mapToGlobal(btn.rect().topRight()))
+        btn = self.settings_btn
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _on_opmode_change(self, mode):
         # Wizard Console page is a plain bash terminal now — both operation
@@ -448,17 +482,32 @@ class ReconMainWindow(QMainWindow):
         template = WARHEAD_COMMANDS.get(profile, "")
         if template:
             self.top_bar.command_input.setText(self._apply_command_template(template))
+            self._last_target = self._get_target()
 
     def _on_tool_change(self, tool):
         template = TOOL_COMMANDS.get(tool, "")
         if template:
             self.top_bar.command_input.setText(self._apply_command_template(template))
+            self._last_target = self._get_target()
+
+    def _on_target_changed(self, text: str) -> None:
+        """Typing a new TARGET live-updates the command box — swaps whatever
+        target substring is currently in there for the new one, so the user
+        just types their own IP and the command follows along."""
+        text = text.strip()
+        if not text or text == self._last_target:
+            return
+        current = self.top_bar.command_input.text()
+        if self._last_target and self._last_target in current:
+            self.top_bar.command_input.setText(current.replace(self._last_target, text))
+        self._last_target = text
 
     def _on_execute_clicked(self):
-        """Top-bar quick execute — validated + confirmed through
-        ConfirmationGate before anything reaches QProcess, same as every
-        other execution path in the app. Feedback goes through dialogs only —
-        Raw Output / LLM Mode stay plain, unmodified bash terminals."""
+        """Top-bar Direct Tool Mode Execute — validated + confirmed through
+        ConfirmationGate, same as every other execution path, then run in
+        the Raw Output terminal (same xterm.js backend as the Wizard
+        Console) so real color/output show live, and queued in the Input
+        Management scan-history table."""
         cmd = self.top_bar.command_input.text().strip()
         if not cmd:
             return
@@ -467,7 +516,9 @@ class ReconMainWindow(QMainWindow):
         self.top_bar.add_target_history(self._get_target())
 
         gate = ConfirmationGate(channel="direct")
-        result = gate.request(cmd, self._get_target())
+        # Direct Tool Mode targets are whatever the user typed into TARGET
+        # themselves (their own lab/VM) — no AUTHORIZED_SCOPE block here.
+        result = gate.request(cmd, self._get_target(), skip_scope=True)
         if not result.ok:
             QMessageBox.warning(self, "Command Rejected", result.message)
             return
@@ -483,56 +534,120 @@ class ReconMainWindow(QMainWindow):
             return
 
         gate.confirm("yes")
-        self._run_gated_command(gate)
+        self._run_direct_command(gate)
 
-    def _run_gated_command(self, gate: ConfirmationGate):
-        proc = QProcess(self)
-        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        output_chunks: List[str] = []
+    def _run_direct_command(self, gate: ConfirmationGate) -> None:
+        row = self.main_area.input_tab.add_entry(gate.command, status="Running")
 
-        def on_output():
-            data = bytes(proc.readAllStandardOutput()).decode("utf-8", errors="replace")
-            if data:
-                output_chunks.append(data)
+        # Jump the view to Raw Output so the scan is visible immediately, and
+        # give the terminal real keyboard focus so Ctrl+C interrupts it.
+        self.sidebar.select_index(self.RAW_OUTPUT_INDEX)
+        self.main_area.stack.setCurrentIndex(self.RAW_OUTPUT_INDEX)
+        self.main_area.raw_output_tab.focus()
 
-        def on_finished(exit_code, _exit_status):
-            gate.mark_executed_result(exit_code)
-            self._top_bar_proc = None
-            output = "".join(output_chunks)
-            QMessageBox.information(
-                self, "Execution Finished",
-                f"Exit code {exit_code}\n\n{output[-2000:]}",
-            )
+        token = self.main_area.raw_output_tab.run_command(shlex.join(gate.argv))
+        if token:
+            self._pending_direct_scans[token] = (gate, row)
+        else:
+            # Backend can't report completion (legacy fallback) — best effort.
+            gate.mark_executed_result(0)
+            self.main_area.input_tab.set_status(row, "Done")
 
-        proc.readyReadStandardOutput.connect(on_output)
-        proc.finished.connect(on_finished)
-        argv = gate.argv
-        self._top_bar_proc = proc
-        proc.start(argv[0], argv[1:])
+    def _on_direct_command_done(self, token: str, exit_code: int) -> None:
+        pending = self._pending_direct_scans.pop(token, None)
+        if not pending:
+            return
+        gate, row = pending
+        gate.mark_executed_result(exit_code)
+        self.main_area.input_tab.set_status(row, "Done" if exit_code == 0 else "Error")
+
+    def _on_queue_cancel(self, _row: int) -> None:
+        # One shared Raw Output terminal — Cancel Scan interrupts whatever
+        # is currently running there (Ctrl+C).
+        self.main_area.raw_output_tab.interrupt()
 
     def _on_new_scan(self):
         self._on_execute_clicked()
 
     def _on_stop_scan(self):
-        if self._top_bar_proc and self._top_bar_proc.state() != QProcess.ProcessState.NotRunning:
-            self._top_bar_proc.terminate()
+        self.main_area.raw_output_tab.interrupt()
 
-    def _on_profile_management(self):
-        pass
+    # -- scan file management (Settings ▸ Open/Save) -----------------------
+    def _on_open_scan(self):
+        """Open a saved scan XML: repopulate the command box + TARGET field,
+        and add it back into the Input Management history table."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Scan", "", "Nmap XML (*.xml)"
+        )
+        if not path:
+            return
+        command = InputManagementTab._parse_nmap_xml_command(path)
+        if not command:
+            QMessageBox.warning(
+                self, "Open Scan", "Could not read a command from that XML file."
+            )
+            return
+        tokens = command.split()
+        target = tokens[-1] if tokens else ""
+        if target:
+            self.top_bar.add_target_history(target)
+            self._last_target = target
+        self.top_bar.command_input.setText(command)
+        self.main_area.input_tab.add_entry(command, status="Loaded", xml_path=path)
 
-    def _on_import_yaml(self):
-        pass
+    def _on_save_scan(self):
+        """Save the scan selected in Input Management as an XML file."""
+        command = self.main_area.input_tab.selected_command()
+        if not command:
+            QMessageBox.information(
+                self, "Save Scan",
+                "Select a scan in Input Management first.",
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Scan", "scan.xml", "Nmap XML (*.xml)"
+        )
+        if not path:
+            return
+        if self._write_scan_xml(command, path):
+            self.main_area.input_tab.add_entry(command, status="Loaded", xml_path=path)
 
-    def _on_export_mission(self):
-        pass
+    def _on_save_all_scans(self):
+        """Save every scan in Input Management to a chosen directory."""
+        commands = self.main_area.input_tab.all_commands()
+        if not commands:
+            QMessageBox.information(
+                self, "Save All Scans", "No scans in Input Management to save."
+            )
+            return
+        directory = QFileDialog.getExistingDirectory(
+            self, "Save All Scans to Directory"
+        )
+        if not directory:
+            return
+        saved = 0
+        for i, command in enumerate(commands, 1):
+            if self._write_scan_xml(command, os.path.join(directory, f"scan_{i}.xml")):
+                saved += 1
+        QMessageBox.information(
+            self, "Save All Scans", f"Saved {saved} scan(s) to:\n{directory}"
+        )
 
-    def _on_about(self):
-        pass
-
-    def _on_documentation(self):
-        pass
+    def _write_scan_xml(self, command: str, path: str) -> bool:
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(InputManagementTab.build_scan_xml(command))
+            return True
+        except OSError as exc:
+            QMessageBox.warning(self, "Save Scan", f"Could not write file:\n{exc}")
+            return False
 
     def closeEvent(self, event):
-        if self._top_bar_proc and self._top_bar_proc.state() != QProcess.ProcessState.NotRunning:
-            self._top_bar_proc.terminate()
+        stop = getattr(self.main_area.wizard_tab, "stop_all", None)
+        if callable(stop):
+            stop()
+        for term in (self.main_area.raw_output_tab.terminal, self.main_area.llm_tab):
+            stop = getattr(term, "stop", None)
+            if callable(stop):
+                stop()
         super().closeEvent(event)

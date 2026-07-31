@@ -19,53 +19,6 @@ def _flag_impact_map() -> dict:
     return load_json("nmap/flag_impacts.json")
 
 
-def _service_tool_map() -> dict:
-    return load_json("nmap/service_tools.json")
-
-
-def recommend_next_tools(ports: List[dict]) -> List[dict]:
-    """
-    Given parsed open ports (from parser.parse_open_ports), decide which
-    next-stage tool applies to each — the intelligence behind the attack
-    chain: an open ssh -> Hydra ssh, an open winrm -> Evil-WinRM, etc.
-
-    Mapping lives in resources/nmap/service_tools.json (resource-driven, per
-    docs/Resource System.md), matched first by nmap's service name, then by
-    port number as a fallback. Returns one dict per recognized open port:
-
-        {"port","protocol","service","tool","module","why"}
-
-    Unrecognized services are skipped (no chain step known for them yet).
-    """
-    smap = _service_tool_map()
-    by_service = smap.get("by_service", {})
-    by_port = smap.get("by_port", {})
-
-    recommendations: List[dict] = []
-    for p in ports:
-        service = (p.get("service") or "").strip().lower()
-        port = str(p.get("port") or "").strip()
-
-        entry = by_service.get(service)
-        if entry is None:
-            mapped_service = by_port.get(port)
-            entry = by_service.get(mapped_service) if mapped_service else None
-        if entry is None:
-            continue
-
-        recommendations.append(
-            {
-                "port": port,
-                "protocol": p.get("protocol", ""),
-                "service": service or entry.get("module", ""),
-                "tool": entry.get("tool", ""),
-                "module": entry.get("module", ""),
-                "why": entry.get("why", ""),
-            }
-        )
-    return recommendations
-
-
 def _estimate_host_count(target: str) -> Optional[int]:
     """Rough estimate of how many hosts a target expression covers."""
     if "/" in target:

@@ -8,6 +8,71 @@ described UI files removed in earlier passes.)
 
 ---
 
+## 2026-07-31 — Direct Tool Mode + Zenmap scan queue, dead-code sweep
+
+Big feature + cleanup pass. GUI now has a real Direct Tool Mode end-to-end,
+plus a substantial dead-code removal (~750 lines / 8 files deleted).
+
+Direct Tool Mode (feature):
+- **`InputManagementTab` rebuilt** as a Zenmap-style scan queue
+  (`Status | Command`) with **Append / Remove / Cancel Scan**. Append opens a
+  saved nmap `-oX` XML and reads its command back (`<nmaprun args="…">`);
+  double-click a row sends its command to the top-bar box (`reuseRequested`).
+  Every top-bar Execute lands a row (Running → Done/Error). Old key/value
+  param table removed.
+- **`RawOutputTab`** now uses `make_terminal("shell")` (same xterm.js+PTY
+  backend as the Wizard Console, not a plain pipe) and gained
+  `run_command()` / `interrupt()` / `focus()`. `XtermTerminal` gained
+  `write_text` / `run_command` (sentinel `printf __TR_DONE_<tok>_$?__` →
+  `commandDone(token, exit_code)`) / `interrupt` / `focus`; parity stubs added
+  to `PtyTerminal` and `InteractiveTerminal`.
+- **`main_window._on_execute_clicked`** still gates through `ConfirmationGate`
+  (preview + literal "yes"), then runs the command **in Raw Output** (auto-
+  jumps + focuses the terminal so Ctrl+C interrupts) instead of the old
+  QProcess+QMessageBox. Completion marks the queue row and logs the real
+  exit via `mark_executed_result`. `skip_scope=True` — Direct Tool Mode
+  targets are the user's own lab IP typed into TARGET; typing a new TARGET
+  live-swaps it into the command box (`_on_target_changed`).
+- **8 new warhead profiles** added from the user's `warhead.txt` (evasion
+  ping, honeypot version, common TCP SYN, quick/intense/comprehensive scans,
+  telnet). #3's `...` port list fixed to `17,19,21-32764,5985,5986`; #9's
+  `-iR 100` (random-internet) replaced with a scoped target placeholder.
+  Warhead combo widened 180→300px.
+- **Settings moved to the title bar** (top-left): sidebar collapse toggle
+  (fully hides the sidebar + divider, Claude Code desktop-style) + a Settings
+  dropdown trimmed to what the app can do — New/Stop Scan, Open/Save/Save-All
+  Scan (XML round-trip), Quit. Open Scan fills the command box + TARGET +
+  Input Management row.
+
+Dead-code sweep (no runtime behavior change):
+- **Deleted files**: `src/core/auto_chain.py`, `src/core/api_key_manager.py`
+  (nothing imported them), `src/scripts/llm-tools-nmap.py` (orphaned +
+  closed the direct-nmap safety gap), `src/ui/widgets.py::CommandEditorTab`
+  (sidebar page removed → 5 pages, Raw Output now index 2), and 5 orphaned
+  resource JSONs (`wizard/menu.json`, `wizard/messages.json`,
+  `nmap/scan_profiles.json`, `nmap/service_tools.json`, `common/warnings.json`
+  — only `nmap/flag_impacts.json` is still loaded).
+- **`audit_log.py`** trimmed to just `audit_log_llm` (the active safety
+  trail, `logs/audit_log.jsonl`); dropped dead `audit_log_confirmation/
+  cancel/fallback`.
+- **`config.py`** dropped the dead LLM/tool-selection constants
+  (`DIRECT_TOOL_CONTENT`, `WIZARD_CONTENT`, `LLM_DEMO_TEXT`, `SYSTEM_PROMPT`,
+  `AI_MODE_PROVIDERS`, `KEYRING_SERVICE_NAME`, `TOOL_ENABLEMENT`,
+  `NCRACK_*`, `TOOL_NOT_SUPPORTED_MESSAGE`, `LLM_TOOLS_NMAP_PATH`).
+- **`nmap/analyzer.py`** dropped the unused `recommend_next_tools` +
+  `_service_tool_map`. `nmap/builder|parser|validator.py` kept unwired to
+  preserve the documented four-file layout.
+- Removed all unused imports (pyflakes clean across `src/`).
+- Verified: `compileall src` OK, `pyflakes src/` clean, headless
+  `ReconMainWindow` smoke test (5 pages, sidebar toggle, XML save/open
+  round-trip) OK.
+
+Next: manual GUI pass (`python -m src.main`) — verify Direct Tool Mode run in
+Raw Output, Ctrl+C interrupt, Settings dropdown/file dialogs, sidebar
+collapse; Linux native run still pending.
+
+---
+
 ## 2026-07-31 — VS Code-style tabbed terminal + copy/paste hotkeys
 
 Built on the xterm.js terminal (entry below). GUI layout unchanged — the
