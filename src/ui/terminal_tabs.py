@@ -231,8 +231,10 @@ class TerminalTabsWidget(QWidget):
             background: transparent;
             color: {TERM_MUTE};
             padding: 6px 10px 6px 12px;
+            margin: 4px 2px 0 2px;
             border: none;
             border-bottom: 2px solid transparent;
+            border-radius: 6px;
         }}
         QTabBar#TermTabBar::tab:hover {{
             background: {PANEL_LIGHT};
@@ -248,9 +250,13 @@ class TerminalTabsWidget(QWidget):
             font-size: 16px;
             font-weight: 700;
             border: none;
+            border-radius: 6px;
             background: transparent;
         }}
-        QToolButton#TermTabBtn:hover {{ color: {CONSOLE_TEXT}; }}
+        QToolButton#TermTabBtn:hover {{
+            color: {CONSOLE_TEXT};
+            background: {PANEL_LIGHT};
+        }}
         QToolButton#TermTabBtn::menu-indicator {{ image: none; width: 0; }}
         QMenu#TermTabMenu {{
             background: {TERM_BAR};

@@ -154,7 +154,7 @@ class TopBar(QFrame):
         self.target_input.setObjectName("MissionCombo")
         self.target_input.setEditable(True)
         self.target_input.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.target_input.setFixedWidth(230)
+        self.target_input.setFixedWidth(150)
         self.target_input.addItem("192.168.1.0/24")
         self.target_input.setCurrentText("192.168.1.0/24")
         target_col.addWidget(self.target_input)
@@ -231,22 +231,53 @@ class RawOutputTab(QWidget):
     (XtermTerminal → PtyTerminal → InteractiveTerminal). Used interactively
     as a plain shell, and as the display surface for Direct Tool Mode: the
     top-bar Execute button sends its gated command here instead of a
-    QMessageBox, so the scan runs with real color/output in a real terminal."""
+    QMessageBox, so the scan runs with real color/output in a real terminal.
+
+    The terminal itself (one QWebEngineView = one Chromium renderer process,
+    plus a real wsl.exe/bash PTY) is not spawned until this page is actually
+    needed — first shown, or first fed a command — instead of eagerly at app
+    startup. `commandDone` is a stable signal owned by this tab (not the
+    inner terminal), so callers can connect to it once at construction and
+    it keeps working correctly regardless of when the real terminal ends up
+    getting created underneath."""
+
+    commandDone = Signal(str, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(0)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(16, 16, 16, 16)
+        self._layout.setSpacing(0)
 
+        self.terminal = None
+        self.console = None
+        self._placeholder = QLabel("Idle — starts a real shell on first use.")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setStyleSheet(f"color: {TEXT_MUTE};")
+        self._layout.addWidget(self._placeholder, 1)
+
+    def _ensure_terminal(self) -> None:
+        if self.terminal is not None:
+            return
         self.terminal = make_terminal("shell")
         self.console = self.terminal
-        layout.addWidget(wrap_in_terminal(self.terminal), 1)
+        self._layout.removeWidget(self._placeholder)
+        self._placeholder.deleteLater()
+        self._placeholder = None
+        self._layout.addWidget(wrap_in_terminal(self.terminal), 1)
+        done_signal = getattr(self.terminal, "commandDone", None)
+        if done_signal is not None:
+            done_signal.connect(self.commandDone.emit)
+
+    def showEvent(self, event) -> None:
+        self._ensure_terminal()
+        super().showEvent(event)
 
     def run_command(self, command: str):
         """Send an already-gated command into the live shell as if typed.
         Returns a completion token if the backend supports done-detection
         (xterm.js), else None."""
+        self._ensure_terminal()
         run = getattr(self.terminal, "run_command", None)
         if callable(run):
             return run(command)
@@ -256,11 +287,14 @@ class RawOutputTab(QWidget):
         return None
 
     def interrupt(self) -> None:
+        if self.terminal is None:
+            return
         interrupt = getattr(self.terminal, "interrupt", None)
         if callable(interrupt):
             interrupt()
 
     def focus(self) -> None:
+        self._ensure_terminal()
         focus = getattr(self.terminal, "focus", None)
         if callable(focus):
             focus()
@@ -298,6 +332,10 @@ class ResultsDisplayTab(QWidget):
         self.detail_tree.setObjectName("ZmDetailTree")
         self.detail_tree.setHeaderHidden(True)
         self.detail_tree.setIndentation(16)
+        # Detail rows are read-only info, not clickable controls — only the
+        # section expand/collapse arrows should respond to a click.
+        self.detail_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.detail_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         layout.addWidget(self.detail_tree, 1)
 
         # Empty until a real nmap scan populates it via set_hosts().
@@ -321,6 +359,28 @@ class ResultsDisplayTab(QWidget):
             )
             placeholder.setDisabled(True)
 
+    def merge_hosts(self, new_hosts: list[dict]) -> None:
+        """Fold `new_hosts` (freshly parsed from one scan) into the running
+        host list — updates an existing entry sharing the same IP in place,
+        appends otherwise — then selects the last host in `new_hosts` so the
+        scan just run is what's visible."""
+        if not new_hosts:
+            return
+        by_ip = {h.get("ip"): i for i, h in enumerate(self._hosts)}
+        for host in new_hosts:
+            existing = by_ip.get(host.get("ip"))
+            if existing is not None:
+                self._hosts[existing] = host
+            else:
+                by_ip[host.get("ip")] = len(self._hosts)
+                self._hosts.append(host)
+        self.set_hosts(self._hosts)
+        target_ip = new_hosts[-1].get("ip")
+        for row, host in enumerate(self._hosts):
+            if host.get("ip") == target_ip:
+                self.host_list.setCurrentRow(row)
+                break
+
     def _on_host_selected(self, row: int) -> None:
         if row < 0 or row >= len(self._hosts):
             return
@@ -330,6 +390,8 @@ class ResultsDisplayTab(QWidget):
     def _kv_item(self, parent: QTreeWidgetItem, key: str, value: str) -> None:
         child = QTreeWidgetItem(parent)
         row = QWidget()
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.setStyleSheet("background: transparent;")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(4, 2, 4, 2)
         row_layout.setSpacing(8)
@@ -345,6 +407,8 @@ class ResultsDisplayTab(QWidget):
     def _accuracy_row(self, parent: QTreeWidgetItem, accuracy: int) -> None:
         child = QTreeWidgetItem(parent)
         row = QWidget()
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.setStyleSheet("background: transparent;")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(4, 2, 4, 2)
         row_layout.setSpacing(8)
@@ -409,8 +473,8 @@ class ResultsDisplayTab(QWidget):
 
         addr_node = QTreeWidgetItem(self.detail_tree, ["Addresses"])
         self._kv_item(addr_node, "IPv4", host["ip"])
-        self._kv_item(addr_node, "IPv6", "-")
-        self._kv_item(addr_node, "MAC", "-")
+        self._kv_item(addr_node, "IPv6", host.get("ipv6", "-"))
+        self._kv_item(addr_node, "MAC", host.get("mac", "-"))
 
         hostname_node = QTreeWidgetItem(self.detail_tree, ["Hostnames"])
         self._kv_item(hostname_node, "Name - Type", host["hostname"])

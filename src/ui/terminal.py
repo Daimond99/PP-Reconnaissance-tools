@@ -79,6 +79,14 @@ class InteractiveTerminal(QWidget):
         self.output = QTextEdit()
         self.output.setReadOnly(False)
         self.output.setAcceptRichText(False)
+        # Unbounded scrollback means a long-running session (masscan floods,
+        # a chatty AI CLI left open for hours) keeps every line of process
+        # output live in the QTextDocument forever. Cap it like any log
+        # console would — oldest blocks drop automatically, `_input_start`
+        # is safe because it's recomputed from the cursor position (which
+        # Qt keeps correct across the trim) on every `_append`, never a
+        # stale offset.
+        self.output.document().setMaximumBlockCount(5000)
         self.output.setFont(font)
         self.output.setStyleSheet(f"""
             background-color: {CONSOLE_BG}; color: {CONSOLE_TEXT};

@@ -5,6 +5,7 @@ Recon Tool - Main Window Module
 
 import os
 import shlex
+import uuid
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
@@ -19,6 +20,7 @@ from src.config import (
 )
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
+from src.tools.nmap.parser import parse_nmap_xml
 
 
 class ReconMainWindow(QMainWindow):
@@ -408,9 +410,10 @@ class ReconMainWindow(QMainWindow):
         input_tab.reuseRequested.connect(self.top_bar.command_input.setText)
         input_tab.cancelRequested.connect(self._on_queue_cancel)
 
-        done_signal = getattr(self.main_area.raw_output_tab.terminal, "commandDone", None)
-        if done_signal is not None:
-            done_signal.connect(self._on_direct_command_done)
+        # RawOutputTab.commandDone is a stable signal owned by the tab
+        # itself (not the lazily-spawned inner terminal) — safe to connect
+        # here regardless of whether the real terminal has been created yet.
+        self.main_area.raw_output_tab.commandDone.connect(self._on_direct_command_done)
 
         # token -> (ConfirmationGate, queue row), for the async completion
         # signal from the Raw Output terminal (Direct Tool Mode Execute).
@@ -515,6 +518,15 @@ class ReconMainWindow(QMainWindow):
         # Record the executed target in the TARGET dropdown history.
         self.top_bar.add_target_history(self._get_target())
 
+        # If this is a plain nmap invocation with no output-format flag of
+        # its own, tack on `-oX <file>` so Results Display can be populated
+        # with real structured data once the scan finishes. This happens
+        # BEFORE gate.request() so the confirmation preview shows the exact
+        # command that will run — nothing hidden from the "yes" prompt.
+        xml_paths = self._nmap_xml_capture_paths(cmd)
+        if xml_paths:
+            cmd = f"{cmd} -oX {xml_paths[0]}"
+
         gate = ConfirmationGate(channel="direct")
         # Direct Tool Mode targets are whatever the user typed into TARGET
         # themselves (their own lab/VM) — no AUTHORIZED_SCOPE block here.
@@ -534,9 +546,39 @@ class ReconMainWindow(QMainWindow):
             return
 
         gate.confirm("yes")
-        self._run_direct_command(gate)
+        self._run_direct_command(gate, xml_paths)
 
-    def _run_direct_command(self, gate: ConfirmationGate) -> None:
+    def _nmap_xml_capture_paths(self, cmd: str) -> tuple[str, str] | None:
+        """If `cmd` is a bare `nmap ...` invocation with no `-oX`/`-oA`/`-oN`/
+        `-oG` of its own, return (shell_path, host_path) for a fresh scratch
+        XML file: `shell_path` is the path as seen inside the shell the
+        command actually runs in (WSL Ubuntu bash on Windows, native bash on
+        Linux), `host_path` is how this (Windows-native) Python process reads
+        that same file back afterward. Returns None for anything else —
+        masscan/hydra/ncrack/ncat/evil-winrm, or a command with its own -o*
+        flag, are left untouched."""
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            return None
+        if not tokens:
+            return None
+        if os.path.basename(tokens[0]).lower() == "sudo":
+            tokens = tokens[1:]
+        if not tokens or os.path.basename(tokens[0]).lower() not in ("nmap", "nmap.exe"):
+            return None
+        if any(tok in ("-oX", "-oA", "-oN", "-oG", "-oS") for tok in tokens[1:]):
+            return None
+
+        shell_path = f"/tmp/therecon_scan_{uuid.uuid4().hex[:8]}.xml"
+        if os.name == "nt":
+            host_path = "\\\\wsl$\\Ubuntu" + shell_path.replace("/", "\\")
+        else:
+            host_path = shell_path
+        return shell_path, host_path
+
+    def _run_direct_command(self, gate: ConfirmationGate,
+                             xml_paths: tuple[str, str] | None = None) -> None:
         row = self.main_area.input_tab.add_entry(gate.command, status="Running")
 
         # Jump the view to Raw Output so the scan is visible immediately, and
@@ -547,7 +589,7 @@ class ReconMainWindow(QMainWindow):
 
         token = self.main_area.raw_output_tab.run_command(shlex.join(gate.argv))
         if token:
-            self._pending_direct_scans[token] = (gate, row)
+            self._pending_direct_scans[token] = (gate, row, xml_paths)
         else:
             # Backend can't report completion (legacy fallback) — best effort.
             gate.mark_executed_result(0)
@@ -557,9 +599,26 @@ class ReconMainWindow(QMainWindow):
         pending = self._pending_direct_scans.pop(token, None)
         if not pending:
             return
-        gate, row = pending
+        gate, row, xml_paths = pending
         gate.mark_executed_result(exit_code)
         self.main_area.input_tab.set_status(row, "Done" if exit_code == 0 else "Error")
+        if exit_code == 0 and xml_paths:
+            self._ingest_nmap_xml(xml_paths[1])
+
+    def _ingest_nmap_xml(self, host_path: str) -> None:
+        """Parse the scratch `-oX` file a completed Direct Tool Mode nmap
+        scan wrote and feed it into Results Display. Best-effort — a WSL
+        distro named something other than "Ubuntu", or the file not showing
+        up yet on the `\\\\wsl$` share, just means Results Display stays as
+        it was; the scan itself already succeeded and is visible in Raw
+        Output regardless."""
+        hosts = parse_nmap_xml(host_path)
+        if hosts:
+            self.main_area.results_tab.merge_hosts(hosts)
+        try:
+            os.remove(host_path)
+        except OSError:
+            pass
 
     def _on_queue_cancel(self, _row: int) -> None:
         # One shared Raw Output terminal — Cancel Scan interrupts whatever

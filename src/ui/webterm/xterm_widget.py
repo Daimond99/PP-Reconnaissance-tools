@@ -250,6 +250,20 @@ class XtermTerminal(QWidget):
         s = self.view.settings()
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanAccessClipboard, True)
         s.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanPaste, True)
+        # term.html is a static local page (xterm.js + vendor JS only, no
+        # network, no forms, no <video>/<canvas> WebGL) — every renderer
+        # subsystem below is dead weight for it. One QWebEngineView (one
+        # Chromium renderer process) is spun up per terminal tab, so
+        # trimming what each one initializes matters: this is the actual
+        # per-tab RAM cost in this app, not anything on the Python side.
+        for attr in (
+            "PluginsEnabled", "WebGLEnabled", "LocalStorageEnabled",
+            "AutoLoadIconsForPage", "HyperlinkAuditingEnabled",
+            "ScreenCaptureEnabled", "PdfViewerEnabled", "DnsPrefetchEnabled",
+        ):
+            web_attr = getattr(QWebEngineSettings.WebAttribute, attr, None)
+            if web_attr is not None:
+                s.setAttribute(web_attr, False)
         layout.addWidget(self.view, 1)
 
         self._bridge = _Bridge(self)
