@@ -6,10 +6,14 @@ Wizard Console embedding plan and remaining TODOs, read
 `CROSS_PLATFORM_TERMINAL_PLAN.md`. Update this file whenever the state below
 goes stale.
 
-Last verified: 2026-08-01, branch `main`, after the OpenCode/Shell/Raw
-Output hardening pass (see `PROGRESS.md`, "OpenCode exit-loop, Ctrl+Z,
-opencode-block, path confinement, Raw Output read-only") — itself on top
-of the LLM Mode llm-nmap/OpenCode pass ("LLM Mode: llm-tools-nmap +
+Last verified: 2026-08-01, branch `main`, after the portability pass
+(WSL-side paths now derived at runtime instead of hardcoded to the dev
+machine's `D:\TheRecon`; `install.sh`/`install.ps1` added; README gained
+per-platform quick-install + an "Optional: LLM Mode setup" section — see
+`PROGRESS.md`'s three entries under that date). Before that, the
+OpenCode/Shell/Raw Output hardening pass ("OpenCode exit-loop, Ctrl+Z,
+opencode-block, path confinement, Raw Output read-only"), which was on
+top of the LLM Mode llm-nmap/OpenCode pass ("LLM Mode: llm-tools-nmap +
 OpenCode agent, square-corner tab style"), which was on top of the earlier
 sudo/cred-capture/Results-Display-for-all-tools pass the same day.
 
@@ -79,11 +83,15 @@ empty, so the `else TOOL_LIST` branch could never run) was deleted
   splash in `src/main.py` waits on it via `TerminalTabsWidget.firstTabReady`).
 - `pty_terminal.py` (`PtyTerminal`) — legacy fallback. Real ConPTY (`pywinpty`) + `pyte` VT
   emulator rendered to a `QTextEdit` as HTML. On Windows this is what powers
-  the Wizard Console: it launches `wsl.exe -d Ubuntu bash -lc "cd
-  '/mnt/d/TheRecon/chain_wizard' && python3 -m wizard.main; exec bash -l"` —
-  full color, working `sudo`, TAB completion, identical to a standalone WSL
-  terminal. Falls back to plain `InteractiveTerminal` if `pywinpty`/`pyte`
-  aren't importable.
+  the Wizard Console: it launches `wsl.exe -e bash -lc "cd '<wsl-repo-root>/
+  chain_wizard' && python3 -m wizard.main; ..."` — full color, working
+  `sudo`, TAB completion, identical to a standalone WSL terminal.
+  `<wsl-repo-root>` (`terminal_tabs._wsl_root_dir()`) is derived at runtime
+  from wherever this repo actually lives on the current machine (see
+  `_win_to_wsl_path()`), not hardcoded to the original dev machine's
+  `D:\TheRecon` → `/mnt/d/TheRecon` — fixed 2026-08-01 so the app doesn't
+  break on a clone living on a different drive/folder. Falls back to plain
+  `InteractiveTerminal` if `pywinpty`/`pyte` aren't importable.
 - `terminal.py` (`InteractiveTerminal`) — non-PTY real shell via `QProcess`
   (stdin/stdout pipe, no TTY). Bottom-tier fallback across every terminal
   page (Raw Output, Wizard Console, LLM Mode) when ConPTY/xterm.js aren't

@@ -8,6 +8,95 @@ described UI files removed in earlier passes.)
 
 ---
 
+## 2026-08-01 — README: per-platform install steps + LLM Mode setup gap documented
+
+Follow-up to the installer pass below: `install.sh`/`install.ps1` only
+cover the 6 core tools + the app itself, not the LLM Mode page's two tabs
+(`llm-tools-nmap` clone + `llm` CLI, OpenCode's own installer) — a real
+portability gap flagged when the user asked "does this actually work if
+someone else clones it". Rather than fold LLM Mode into the installers
+(optional feature, needs an API key either way, better as an explicit
+opt-in step), documented it instead:
+
+- README's feature list corrected — Raw Output described as display-only
+  now (was still saying "plain, ungated shell", stale since the read-only
+  change earlier this session); LLM Mode split out as its own bullet
+  pointing at the new setup section.
+- New "Optional: LLM Mode setup" section — the exact commands for both
+  tabs (`pipx install llm` + clone `tools/llm-tools-nmap` + `llm keys set`;
+  `curl -fsSL https://opencode.ai/install | bash`), same on both platforms
+  since they run inside WSL/native shell either way, matching the existing
+  "run this inside WSL Ubuntu or your native shell" pattern the 6-tool
+  section already uses.
+
+---
+
+## 2026-08-01 — One-command installers (`install.sh` / `install.ps1`)
+
+Follow-up to the WSL-path-portability fix below: user asked whether a
+single command could install-and-run-ready on both platforms. Answer was
+yes for Linux, "yes but with one unavoidable manual reboot" for Windows
+(WSL2 install requires it, no way around that), so built both.
+
+- **`install.sh`** (repo root) — found an existing, uncommitted, undocumented
+  draft already sitting in the working tree from an earlier session
+  (Debian/apt-based, idempotent venv reuse, real `--version` checks, a
+  root-user guard). Extended it rather than replacing it: added clone/
+  update handling so it also works piped via `curl | bash` with no
+  existing checkout (`$THERECON_DIR`, default `~/TheRecon`), not just when
+  run from inside an already-cloned repo. Installs the 6 tools via apt +
+  `gem install evil-winrm`, creates `.venv`, `pip install -r
+  requirements.txt`.
+- **`install.ps1`** (new) — Windows counterpart. Checks WSL readiness with
+  the same "real distro, not just Docker Desktop's pseudo-entries" logic
+  `terminal_tabs._wsl_available()` uses in the app itself, so the script
+  and the app agree on what counts as "ready". If WSL isn't installed:
+  requires an elevated PowerShell, runs `wsl --install -d Ubuntu`, then
+  stops and tells the user to reboot and re-run — genuinely can't be
+  skipped, Windows enforces the reboot before WSL is usable, so this
+  isn't a fully silent one-shot on a machine starting from zero. If WSL
+  already has a distro: installs the 6 tools inside it via
+  `wsl.exe -e bash -lc "..."`, then clones the repo, creates a venv, and
+  installs Python deps on the Windows side — this half *is* one-shot.
+- **README.md** gained a "Quick install" section pointing at both,
+  ahead of the existing step-by-step manual instructions (kept as-is,
+  useful for anyone who wants to see/control each step).
+
+Verified: `bash -n install.sh` clean; `install.ps1` parsed clean via
+`[System.Management.Automation.Language.Parser]::ParseFile`. Not yet
+run end-to-end on a real machine (`install.sh` on the Kali VMware box
+mentioned this session, `install.ps1` on a clean Windows machine without
+WSL already installed) — that's the next real test, not just a syntax
+check.
+
+---
+
+## 2026-08-01 — WSL-side paths derived at runtime, not hardcoded to the dev machine
+
+Found while discussing cross-machine portability: `terminal_tabs.py` had
+four WSL-side path constants (`_WSL_DIR`/`_WSL_LLM_DIR`/`_WSL_OPENCODE_DIR`/
+`_WSL_ROOT_DIR`) hardcoded to `/mnt/d/TheRecon/...` — the dev machine's
+literal `D:\TheRecon` clone location. Any other Windows machine with the
+repo cloned to a different drive or folder would `cd` into a path that
+doesn't exist there. The Linux-side paths (`_repo_local_dir()` etc.) were
+never affected — those were already computed from `__file__` at runtime.
+
+Fixed with `_win_to_wsl_path()` (same drive-letter → `/mnt/x` mapping
+`validation.common.convert_windows_paths_to_wsl` already uses for
+user-supplied command paths, applied here once to the repo's own on-disk
+location) plus `_wsl_root_dir()`/`_wsl_dir()`/`_wsl_llm_dir()`/
+`_wsl_opencode_dir()` functions replacing the four constants — computed
+from `_repo_root_dir()` (already `__file__`-based) instead of a literal
+string. No behavior change on the dev machine (`D:\TheRecon` still
+converts to `/mnt/d/TheRecon`, verified) — the app now works from any
+drive/folder on any Windows machine.
+
+Verified: printed all four resolved paths on this machine (matched the
+old hardcoded values exactly); every generated launch script re-checked
+with `bash -n` after the change.
+
+---
+
 ## 2026-08-01 — OpenCode exit-loop, Ctrl+Z, opencode-block, path confinement, Raw Output read-only
 
 Follow-up hardening pass on top of the LLM Mode entry below, driven by

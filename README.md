@@ -8,7 +8,8 @@
 
 - **Wizard Console** — tabbed terminal (PyCharm-style tabs, drag to reorder): the first tab runs the embedded chain CLI (`chain_wizard/`): target → scan → impact-ranked attack plan → hydra brute-force → credential harvest → in-scope post-exploit (ncat / nmap-NSE / evil-winrm). `+`/`▾` open more Wizard or plain Shell tabs. Terminal itself is a real xterm.js emulator (the one VS Code uses) over a real PTY — full color, resize reflow, mouse selection, copy/paste, curses apps (vim/htop).
 - **Top-bar Execute** — manual command entry, validated and confirmed through the same `ConfirmationGate` (exact `"yes"` to run, secrets masked in previews/logs) as the wizard.
-- **Raw Output / LLM Mode** — plain, ungated real shells for free-form use.
+- **Raw Output** — display-only surface for Top-bar Execute's output; nothing typed into it is ever sent to a shell.
+- **LLM Mode** — two ungated real shells for free-form AI-tool use: an `llm` CLI tab pre-wired with nmap function-calling tools, and a PATH-scoped OpenCode coding-agent tab. See "Optional: LLM Mode setup" below — not installed by `install.sh`/`install.ps1`.
 
 Supported tools: **Nmap, Masscan, Hydra, Ncrack, Ncat, Evil-WinRM**.
 
@@ -20,6 +21,22 @@ Routing happens at the "where the tools run" level:
 
 - **Windows** → tools run **inside WSL2 (Ubuntu)**. Install WSL first, then the tools inside it.
 - **Linux** → tools run **natively**. Just install the tools directly.
+
+### Quick install (one command)
+
+**Linux:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.sh | bash
+```
+
+**Windows** (from an elevated PowerShell the *first* run only, if WSL isn't installed yet — installing WSL needs admin + a reboot, so the script will stop and ask you to reboot then re-run it once):
+
+```powershell
+irm https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.ps1 | iex
+```
+
+Both scripts install the 6 tools, clone the repo (default `~/TheRecon`, override with `$THERECON_DIR`/`THERECON_DIR` env var), create a venv, and install Python deps — see [`install.sh`](install.sh)/[`install.ps1`](install.ps1). Re-running either is safe (idempotent). The manual steps below are the same thing spelled out, useful if you want to see/control each step yourself.
 
 ### 1. Windows only — install WSL2 + Ubuntu
 
@@ -59,6 +76,30 @@ pip install -r requirements.txt
 ```bash
 python -m src.main
 ```
+
+---
+
+## Optional: LLM Mode setup
+
+Not covered by `install.sh`/`install.ps1` — only needed if you want the **LLM Mode** page's two tabs. Run these **inside WSL Ubuntu** (Windows) or your **native shell** (Linux) — same commands either way, same as the 6-tool install above.
+
+**"LLM" tab — `llm` CLI + nmap function-calling tools:**
+
+```bash
+pipx install llm
+git clone https://gitlab.com/kalilinux/packages/llm-tools-nmap.git tools/llm-tools-nmap
+llm keys set openai          # or: llm install llm-gemini && llm keys set gemini
+```
+
+(the tab itself offers to run `llm keys set openai` on first open if no key is stored yet)
+
+**"OpenCode" tab — scoped coding agent:**
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+The tab handles the rest itself on first open — creates `tools/opencode-workspace/`, drops a scope-note `AGENTS.md` there, and restricts `$PATH` to the 6 authorized tools before launching OpenCode.
 
 ---
 

@@ -45,13 +45,10 @@ from src.ui.webterm import XtermTerminal, XTERM_AVAILABLE
 # user pile up processes until the machine chokes.
 _MAX_TABS = 4
 
-_WSL_DIR = "/mnt/d/TheRecon/chain_wizard"
-_WSL_LLM_DIR = "/mnt/d/TheRecon/tools/llm-tools-nmap"
-_WSL_OPENCODE_DIR = "/mnt/d/TheRecon/tools/opencode-workspace"
-# Repo root — the "own path" a plain Shell tab is confined to (see
-# _confine_snippet); wider than the other tabs' single-purpose dirs since
-# Shell is meant to be usable across the whole project, not just one tool.
-_WSL_ROOT_DIR = "/mnt/d/TheRecon"
+# WSL-side paths are derived at runtime from wherever this repo actually
+# lives on THIS machine (see _wsl_root_dir() below) -- not hardcoded to the
+# original dev machine's `D:\TheRecon`, which would break the app on any
+# other Windows machine with the repo cloned to a different drive/folder.
 
 # What OpenCode's own shell tool is allowed to invoke by bare name, once
 # PATH is restricted to `~/.recon_agent_bin` — the 6 authorized tools plus
@@ -154,6 +151,34 @@ def _repo_local_llm_dir() -> str:
 def _repo_local_opencode_dir() -> str:
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     return os.path.join(repo_root, "tools", "opencode-workspace")
+
+
+def _win_to_wsl_path(win_path: str) -> str:
+    """Convert an absolute Windows path (`D:\\TheRecon`) to its WSL
+    mount-point form (`/mnt/d/TheRecon`) -- same drive-letter-to-/mnt/x
+    mapping `validation.common.convert_windows_paths_to_wsl` uses for
+    user-supplied command paths, applied here once to the repo's own
+    on-disk location instead of scanning a whole command string."""
+    drive, rest = os.path.splitdrive(os.path.abspath(win_path))
+    return f"/mnt/{drive.rstrip(':').lower()}/{rest.replace(chr(92), '/').lstrip('/')}"
+
+
+def _wsl_root_dir() -> str:
+    """Repo root as seen from inside WSL -- wherever this repo actually
+    lives on THIS machine, not the original dev machine's `D:\\TheRecon`."""
+    return _win_to_wsl_path(_repo_root_dir())
+
+
+def _wsl_dir() -> str:
+    return f"{_wsl_root_dir()}/chain_wizard"
+
+
+def _wsl_llm_dir() -> str:
+    return f"{_wsl_root_dir()}/tools/llm-tools-nmap"
+
+
+def _wsl_opencode_dir() -> str:
+    return f"{_wsl_root_dir()}/tools/opencode-workspace"
 
 
 def _bashrc_once(marker: str, body: str) -> str:
@@ -389,16 +414,17 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
         # Confined *after* the wizard CLI itself runs, not before — the CLI
         # needs to run unconfined (it's the trusted, gated path), this only
         # locks the plain `bash -l` the script drops to once the CLI exits.
-        wsl_launch = f"cd '{_WSL_DIR}' && python3 -m wizard.main; {_shell_launch(_WSL_DIR)}"
+        wsl_dir = _wsl_dir()
+        wsl_launch = f"cd '{wsl_dir}' && python3 -m wizard.main; {_shell_launch(wsl_dir)}"
         lin_launch = f"cd '{local_dir}' && python3 -m wizard.main; {_shell_launch(local_dir)}"
     elif profile == "llm-nmap":
-        wsl_launch = _llm_launch(_WSL_LLM_DIR)
+        wsl_launch = _llm_launch(_wsl_llm_dir())
         lin_launch = _llm_launch(_repo_local_llm_dir())
     elif profile == "opencode":
-        wsl_launch = _opencode_launch(_WSL_OPENCODE_DIR)
+        wsl_launch = _opencode_launch(_wsl_opencode_dir())
         lin_launch = _opencode_launch(_repo_local_opencode_dir())
     else:  # plain interactive shell — opencode blocked, see _shell_launch()
-        wsl_launch = _shell_launch(_WSL_ROOT_DIR)
+        wsl_launch = _shell_launch(_wsl_root_dir())
         lin_launch = _shell_launch(_repo_root_dir())
 
     _SIMPLE_PROFILES = ("shell", "llm-nmap", "opencode")
@@ -426,7 +452,7 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
     # 3. plain-pipe fallback — no TTY.
     if os.name == "nt":
         inner = wsl_launch if profile in _SIMPLE_PROFILES else \
-            f"cd '{_WSL_DIR}' && python3 -m wizard.main"
+            f"cd '{_wsl_dir()}' && python3 -m wizard.main"
         return InteractiveTerminal("wsl.exe", ["-e", "bash", "-lc", inner])
     inner = lin_launch if profile in _SIMPLE_PROFILES else \
         f"cd '{local_dir}' && python3 -m wizard.main"
