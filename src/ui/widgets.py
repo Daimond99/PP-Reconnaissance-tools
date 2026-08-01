@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor, QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
 from src.config import (
-    TOOL_LIST, WARHEAD_PROFILES, OPERATION_MODES,
+    WARHEAD_BY_TOOL, OPERATION_MODES,
     PURPLE, TEXT, TEXT_DIM, BORDER,
     BG_PANEL_2, TEXT_MUTE, ORANGE, ACCENT_GREEN,
 )
@@ -175,7 +175,7 @@ class TopBar(QFrame):
         tool_names = [info.display_name for info in tm.tools.values()]
         self.tool_combo = QComboBox()
         self.tool_combo.setObjectName("MissionCombo")
-        self.tool_combo.addItems(tool_names if tool_names else TOOL_LIST)
+        self.tool_combo.addItems(tool_names)
         self.tool_combo.setFixedWidth(130)
         tool_col.addWidget(self.tool_combo)
         row1.addLayout(tool_col)
@@ -185,7 +185,7 @@ class TopBar(QFrame):
         profile_col.addWidget(self._field_label("WARHEAD PROFILE"))
         self.warhead_combo = QComboBox()
         self.warhead_combo.setObjectName("MissionCombo")
-        self.warhead_combo.addItems(WARHEAD_PROFILES)
+        self.warhead_combo.addItems(WARHEAD_BY_TOOL.get(tool_names[0] if tool_names else "", {}).keys())
         self.warhead_combo.setFixedWidth(220)
         profile_col.addWidget(self.warhead_combo)
         row1.addLayout(profile_col)
@@ -210,6 +210,17 @@ class TopBar(QFrame):
 
     def target_text(self) -> str:
         return self.target_input.text().strip()
+
+    def set_warhead_profiles(self, tool: str) -> None:
+        """Repopulate WARHEAD PROFILE with just `tool`'s own warheads —
+        each tool has its own attack profiles (stealth/critical/quality),
+        not a single shared nmap-flavored list. Signals blocked during the
+        swap so this doesn't fire a stray currentTextChanged for an
+        in-between/empty combo state while it's being rebuilt."""
+        self.warhead_combo.blockSignals(True)
+        self.warhead_combo.clear()
+        self.warhead_combo.addItems(WARHEAD_BY_TOOL.get(tool, {}).keys())
+        self.warhead_combo.blockSignals(False)
 
 
 # ============================================================================
@@ -349,14 +360,14 @@ class ResultsDisplayTab(QWidget):
             self.detail_tree.clear()
             placeholder = QTreeWidgetItem(
                 self.detail_tree,
-                ["No results yet — run an nmap scan to see host details here."],
+                ["No results yet — run a scan or credential attack to see details here."],
             )
             placeholder.setDisabled(True)
 
     def add_scan_results(self, new_hosts: list[dict]) -> None:
-        """Append `new_hosts` (freshly parsed from one scan) as new rows —
-        every scan run gets its own entry, even a repeat scan of the same
-        IP with different flags/warhead, so nothing gets silently
+        """Append `new_hosts` (freshly parsed from one nmap/masscan scan) as
+        new rows — every scan run gets its own entry, even a repeat scan of
+        the same IP with different flags/warhead, so nothing gets silently
         overwritten. Selects the first of the newly-added hosts."""
         if not new_hosts:
             return
@@ -365,11 +376,35 @@ class ResultsDisplayTab(QWidget):
         self.set_hosts(self._hosts)
         self.host_list.setCurrentRow(first_new_row)
 
+    def add_credential_results(self, tool: str, target: str, creds: list[dict],
+                                stamp: str) -> None:
+        """Append one row for a completed hydra/ncrack run's found
+        credentials — a differently-shaped entry (`kind: "credentials"`)
+        rendered by `_render_credentials_detail` instead of the nmap/
+        masscan host-detail view, but living in the same host_list/
+        detail_tree split view so every tool's results show up in one
+        place."""
+        entry = {
+            "host": target,
+            "label": f"{tool} · {target} · {stamp}",
+            "kind": "credentials",
+            "tool": tool,
+            "credentials": creds,
+        }
+        first_new_row = len(self._hosts)
+        self._hosts.append(entry)
+        self.set_hosts(self._hosts)
+        self.host_list.setCurrentRow(first_new_row)
+
     def _on_host_selected(self, row: int) -> None:
         if row < 0 or row >= len(self._hosts):
             return
         self._selected_index = row
-        self._render_detail(self._hosts[row])
+        entry = self._hosts[row]
+        if entry.get("kind") == "credentials":
+            self._render_credentials_detail(entry)
+        else:
+            self._render_detail(entry)
 
     def _kv_item(self, parent: QTreeWidgetItem, key: str, value: str) -> None:
         child = QTreeWidgetItem(parent)
@@ -472,6 +507,44 @@ class ResultsDisplayTab(QWidget):
 
         for node in (status_node, addr_node, hostname_node, os_node, ports_node):
             node.setExpanded(node is not ports_node)
+
+    def _creds_table(self, parent: QTreeWidgetItem, creds: list[dict]) -> None:
+        child = QTreeWidgetItem(parent)
+        table = QTableWidget(len(creds), 5)
+        table.setHorizontalHeaderLabels(["Host", "Port", "Service", "Login", "Password"])
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionMode(QAbstractItemView.NoSelection)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setStyleSheet(
+            f"background-color: transparent; color: {TEXT_DIM}; border: none; gridline-color: {BORDER};"
+        )
+        for row_idx, cred in enumerate(creds):
+            table.setItem(row_idx, 0, QTableWidgetItem(cred["host"]))
+            table.setItem(row_idx, 1, QTableWidgetItem(str(cred["port"])))
+            table.setItem(row_idx, 2, QTableWidgetItem(cred["service"]))
+            login_item = QTableWidgetItem(cred["login"])
+            login_item.setForeground(QColor(ACCENT_GREEN))
+            table.setItem(row_idx, 3, login_item)
+            pass_item = QTableWidgetItem(cred["password"])
+            pass_item.setForeground(QColor(ACCENT_GREEN))
+            table.setItem(row_idx, 4, pass_item)
+        table.setFixedHeight(28 + 26 * len(creds))
+        self.detail_tree.setItemWidget(child, 0, table)
+
+    def _render_credentials_detail(self, entry: dict) -> None:
+        self.detail_tree.clear()
+
+        summary_node = QTreeWidgetItem(self.detail_tree, ["Attack Summary"])
+        self._kv_item(summary_node, "Tool", entry["tool"])
+        self._kv_item(summary_node, "Target", entry["host"])
+        self._kv_item(summary_node, "Credentials found", str(len(entry["credentials"])))
+
+        creds_node = QTreeWidgetItem(self.detail_tree, ["Credentials Found"])
+        self._creds_table(creds_node, entry["credentials"])
+
+        summary_node.setExpanded(True)
+        creds_node.setExpanded(True)
 
 
 class InputManagementTab(QWidget):

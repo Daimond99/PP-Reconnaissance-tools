@@ -8,6 +8,133 @@ described UI files removed in earlier passes.)
 
 ---
 
+## 2026-08-01 — Sudo support, per-tool warheads, Results Display for masscan/hydra/ncrack, splash screen
+
+Big pass, several independently-requested pieces landed together.
+
+**WSL lifecycle / startup UX:**
+- **App-close confirmation + WSL shutdown** — `main_window.closeEvent` now
+  asks Yes/No before closing; on Yes (Windows), runs `wsl.exe --shutdown`
+  after stopping all terminals. Fixes: closing the app used to leave the
+  WSL2 VM running in the background (killing the PTY's `wsl.exe` client
+  process doesn't stop the VM itself).
+- **No more hardcoded "Ubuntu"** — `terminal_tabs.py` no longer passes
+  `-d Ubuntu` to `wsl.exe`; launches whatever the user's WSL *default*
+  distro is. `_wsl_available()` checks for *any* real distro (excludes
+  Docker Desktop's pseudo-entries) and shows a plain "install WSL"
+  placeholder instead of a silently-blank terminal if none exists.
+  `main_window.closeEvent`'s `--shutdown` also doesn't need a distro name
+  (tears down the whole VM, not one distro).
+- **Terminal tab cap** — `_MAX_TABS = 4`; `+`/`⌄` disable at cap. Each tab is
+  a separate Chromium renderer + PTY, a real resource cost on lower-spec
+  machines.
+- **Startup splash screen** (`src/main.py`) — shown until the Wizard
+  Console's first terminal actually produces output
+  (`XtermTerminal.firstOutput` → `TerminalTabsWidget.firstTabReady`), not
+  just until widget construction returns. First cut waited on
+  `backendReady` (PTY *spawned*) which fires almost instantly — WSL can
+  still take several seconds to actually boot after that, so the splash
+  was closing too early; fixed by adding the separate `firstOutput` signal
+  tied to real bytes coming back. 20s safety-cap timer either way.
+
+**Sudo + shell-metacharacter validation:**
+- **Bare `sudo <tool>` now allowed** (`validation/common.py`,
+  `confirmation_gate.py`) — masscan always needs raw sockets in WSL, nmap's
+  `-sS`/`-O`/privileged ping probes do too, `setcap` isn't always set up.
+  Only the bare form (`sudo nmap ...`, no sudo flags) passes; the impact
+  preview gets an explicit "[!] running as root" line whenever it fires.
+- **Quote-aware dangerous-metacharacter check** — replaced the old
+  `re.search` over the whole raw string (which blocked `;|&`$()<>\`
+  *anywhere*, including inside legitimate quoted data) with
+  `_has_unquoted_shell_metachar()`, a small scanner that tracks
+  `'...'`/`"..."` regions and only rejects those characters *outside* a
+  quoted region. Found via testing: this was rejecting a real, useful
+  warhead (`Hydra - Targeted Web Login`, whose `http-post-form` payload
+  has a literal `&` inside quotes). Security posture unchanged for actual
+  injection shapes (unquoted `;`, `|`, `&`, backtick, `$()` all still
+  rejected) — verified with 9 test cases covering both the fix and the
+  still-blocked attack patterns.
+- **`convert_windows_paths_to_wsl()`** — rewrites `C:\...`-style paths
+  (quoted or bare) to `/mnt/c/...` before validation, on Windows. Lets a
+  user paste a Windows Explorer path for a hydra/ncrack wordlist directly
+  instead of hand-translating it (the command actually executes inside WSL
+  bash, which has no drive letters).
+
+**Warhead profiles reworked (per user request: "warhead แยกชื่อแต่ละเครื่องมือ"):**
+- Moved `TOOL_COMMANDS`/`WARHEAD_COMMANDS` out of hardcoded `config.py`
+  dicts into `src/resources/tool_commands.json` + one
+  `src/resources/warheads/<tool>.json` per tool (resource-driven, per
+  CLAUDE.md's own rule — this data was a hardcoded-string violation of it).
+  `config.py` still exposes the same `TOOL_COMMANDS`/`WARHEAD_COMMANDS`/
+  `WARHEAD_BY_TOOL` names, so nothing downstream needed to change.
+- **Deleted genuinely-dead code found in the process**: `TOOL_LIST` (7
+  "legacy display name" entries) was an unreachable fallback —
+  `ToolManager.tools` is a fixed 6-entry dict, never empty, so
+  `tool_names if tool_names else TOOL_LIST` could never take the `TOOL_LIST`
+  branch. Deleted the constant, its 7 dead `tool_commands.json` entries,
+  and the dead branch in `widgets.py`.
+- **36 new warhead profiles** — 6 per tool (nmap/masscan/ncat/hydra/ncrack/
+  evil-winrm), 2 stealth / 2 critical / 2 quality-normal each.
+  `TopBar.set_warhead_profiles(tool)` repopulates WARHEAD PROFILE from
+  `WARHEAD_BY_TOOL[tool]` whenever TOOLS changes (`blockSignals` during the
+  swap so it doesn't fire a stray `_on_warhead_change` mid-rebuild).
+  `sudo` prefixed onto the masscan warheads (all need it) and the nmap ones
+  using `-sS`/`-O`/raw ping (4 of 6 — `Vulnerability Scan`/`Web Focus` don't
+  need root).
+- **Bug found + fixed during testing**: masscan warheads originally wrote
+  glued flag+value (`-p1-65535`, `--rate=100000`) — real, valid masscan
+  syntax, but it meant the token never exact-matched the `-p`/`--rate` keys
+  in `flag_impacts.json`, so no impact-warning line ever showed. Rewrote to
+  spaced form (`-p 1-65535 --rate 100000`, masscan accepts both) so the
+  matcher actually fires. Verified all 42 (6 base + 36 warhead) commands
+  pass `ConfirmationGate` end-to-end after the fix.
+
+**Per-tool impact warnings** — `nmap.analyzer.generate_impact_description`
+generalized to take a `tool` argument and read
+`src/resources/<tool>/flag_impacts.json`; added that file for `masscan`,
+`ncat`, `hydra`, `ncrack`, `evil-winrm` (previously nmap-only). Confirmation
+preview now shows a real per-flag warning for every tool's command, not
+just nmap's.
+
+**Results Display now covers 4 of 6 tools:**
+- **Masscan** — `main_window._scan_xml_capture_paths` (renamed from
+  `_nmap_xml_capture_paths`) now also recognizes a bare masscan invocation
+  and auto-appends `-oX <file>`. No new parser needed: `parse_nmap_xml`
+  never checks `scanner=`, it just walks `<host>`/`<address>`/`<ports>`/
+  `<port>`, and masscan's `-oX` output is a compatible subset of nmap's
+  schema.
+- **Hydra/Ncrack → new "Credentials Found" view** (user chose this over
+  forcing them into the nmap host/port shape, which doesn't fit what they
+  produce). New `src/tools/hydra/parser.py` / `src/tools/ncrack/parser.py`
+  (regex over `hydra -o <file>` / `ncrack -oN <file>` output — first real
+  callers, so adding these packages doesn't violate the "don't scaffold
+  unwired tool packages" rule). `main_window._cred_capture_paths()` mirrors
+  the scan-capture mechanism to auto-append the right output flag.
+  `ResultsDisplayTab` gained `add_credential_results()` /
+  `_render_credentials_detail()` — a `kind: "credentials"` entry rendered
+  as a Host/Port/Service/Login/Password table instead of the nmap detail
+  view, living in the same host_list/detail_tree split view so every
+  tool's results show up in one place.
+- **Ncat/Evil-WinRM intentionally left alone** — interactive sessions, no
+  structured "scan result" to parse; stay as live terminal output only.
+
+Verified throughout: all edits `py_compile` clean; headless `QApplication` +
+`ReconMainWindow()` construction smoke-tested after each change (tool/
+warhead combo repopulation, `_scan_xml_capture_paths`/`_cred_capture_paths`
+routing for all 9 representative commands including `sudo`-prefixed ones,
+`ResultsDisplayTab.add_credential_results` rendering); parser unit tests for
+both new hydra/ncrack parsers against synthetic output files; app actually
+launched once via `python -m src.main` (window opened, correct title,
+closed cleanly, exit code 0, no traceback).
+
+Next: gap #2 in `CURRENT_STATE.md` — `main_window.py`'s `QMessageBox`
+prompt text (Execute confirmation body, close-confirmation prompt) is still
+hardcoded Python strings, not resources. Linux-native verification of the
+whole pass (everything above was only exercised on Windows/WSL2) still
+pending, same open item as before.
+
+---
+
 ## 2026-07-31 — Direct Tool Mode + Zenmap scan queue, dead-code sweep
 
 Big feature + cleanup pass. GUI now has a real Direct Tool Mode end-to-end,

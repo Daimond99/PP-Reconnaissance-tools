@@ -1,0 +1,8 @@
+{
+  "Evil-WinRM - Quiet Connect": "evil-winrm -i 192.168.1.1 -u Administrator -p password --no-colors",
+  "Evil-WinRM - Minimal Session": "evil-winrm -i 192.168.1.1 -u Administrator -p password -P 5985",
+  "Evil-WinRM - Full Access Toolkit": "evil-winrm -i 192.168.1.1 -u Administrator -p password -s /path/to/scripts -e /path/to/executables",
+  "Evil-WinRM - SSL Full Access": "evil-winrm -i 192.168.1.1 -u Administrator -p password -S -P 5986",
+  "Evil-WinRM - Windows Access": "evil-winrm -i 192.168.1.1 -u Administrator -p password",
+  "Evil-WinRM - Logged Session": "evil-winrm -i 192.168.1.1 -u Administrator -p password -l"
+}

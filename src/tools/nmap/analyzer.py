@@ -14,9 +14,22 @@ _SUBNET_HOST_ESTIMATE = {
     "8": 16777214, "16": 65534, "24": 254, "28": 14, "30": 2,
 }
 
+# One flag_impacts.json per authorized tool (src/resources/<tool>/) — same
+# resource-driven pattern nmap already used, extended to the other 5 so the
+# Confirmation Gate can show a real per-flag warning no matter which tool's
+# command is being confirmed, not just nmap's.
+_FLAG_IMPACT_FILES = {
+    "nmap": "nmap/flag_impacts.json",
+    "masscan": "masscan/flag_impacts.json",
+    "ncat": "ncat/flag_impacts.json",
+    "hydra": "hydra/flag_impacts.json",
+    "ncrack": "ncrack/flag_impacts.json",
+    "evil-winrm": "evil-winrm/flag_impacts.json",
+}
 
-def _flag_impact_map() -> dict:
-    return load_json("nmap/flag_impacts.json")
+
+def _flag_impact_map(tool: str) -> dict:
+    return load_json(_FLAG_IMPACT_FILES.get(tool, _FLAG_IMPACT_FILES["nmap"]))
 
 
 def _estimate_host_count(target: str) -> Optional[int]:
@@ -37,9 +50,13 @@ def _estimate_host_count(target: str) -> Optional[int]:
     return 1
 
 
-def generate_impact_description(flags: List[str], target: str) -> str:
-    """Auto-generate a plain-language impact summary for the confirmation gate."""
-    flag_impact = _flag_impact_map()
+def generate_impact_description(flags: List[str], target: str, tool: str = "nmap") -> str:
+    """Auto-generate a plain-language impact summary for the confirmation gate.
+
+    `tool` picks which flag_impacts.json to read (defaults to nmap for
+    backward compatibility with existing callers) — each of the 6
+    authorized tools has its own flag vocabulary."""
+    flag_impact = _flag_impact_map(tool)
     notes: List[str] = []
 
     host_count = _estimate_host_count(target)

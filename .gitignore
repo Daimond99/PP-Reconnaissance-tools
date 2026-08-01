@@ -44,8 +44,11 @@ logs/
 docs/*.bak
 docs/*.orig
 
-# External tool source (cloned, not vendored — each has own .git)
-tools/
+# External tool source (cloned, not vendored — each has own .git).
+# Anchored to repo root (/tools/) — a bare "tools/" pattern matches any
+# directory named "tools" anywhere, which was silently swallowing
+# src/tools/hydra/ and src/tools/ncrack/ too.
+/tools/
 
 # Wordlists and local test credential lists (large / machine-specific)
 rockyou.txt

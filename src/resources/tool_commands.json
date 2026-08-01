@@ -1,0 +1,10 @@
+{
+  "commands": {
+    "Nmap": "sudo nmap -sS -sV -p- 192.168.1.0/24",
+    "Masscan": "sudo masscan -p 1-65535 --rate 10000 192.168.1.0/24",
+    "Ncat": "ncat -v 192.168.1.1 80",
+    "Hydra": "hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
+    "Ncrack": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
+    "Evil-WinRM": "evil-winrm -i 192.168.1.1 -u Administrator -p password"
+  }
+}

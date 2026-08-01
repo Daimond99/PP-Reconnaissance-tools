@@ -19,8 +19,10 @@ InteractiveTerminal, first available wins.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget, QTabBar,
     QToolButton, QLabel, QMenu,
@@ -37,7 +39,78 @@ from src.ui.terminal import InteractiveTerminal
 from src.ui.pty_terminal import PtyTerminal, PTY_AVAILABLE
 from src.ui.webterm import XtermTerminal, XTERM_AVAILABLE
 
+# Each tab is a separate QWebEngineView = a separate Chromium renderer
+# process (plus its own wsl.exe/bash PTY) — capping how many can be open at
+# once keeps the app usable on lower-spec machines instead of letting the
+# user pile up processes until the machine chokes.
+_MAX_TABS = 4
+
 _WSL_DIR = "/mnt/d/TheRecon/chain_wizard"
+
+# Pseudo-distros WSL lists that are never a real Linux userspace to launch a
+# shell in — Docker Desktop registers these even if the user never touches
+# WSL directly.
+_WSL_PSEUDO_DISTROS = {"docker-desktop", "docker-desktop-data"}
+
+# Cached across every terminal spawned this run — checking the distro list
+# is a real subprocess round-trip, not worth repeating per tab.
+_wsl_checked: bool | None = None
+
+
+def _wsl_available() -> bool:
+    """Windows-only: is `wsl.exe` on PATH AND at least one real distro
+    registered? Deliberately not tied to any distro name (Ubuntu, Debian,
+    Kali, ...) — whatever the user has installed and set as their WSL
+    default is used via `wsl.exe` with no `-d` flag. This app has no
+    installer step for WSL itself (a Windows feature + reboot, out of scope
+    for anything this app can do unattended) — this check exists purely so
+    a missing WSL shows a clear message instead of a silently blank
+    terminal."""
+    global _wsl_checked
+    if _wsl_checked is not None:
+        return _wsl_checked
+    _wsl_checked = False
+    if shutil.which("wsl.exe"):
+        try:
+            result = subprocess.run(
+                ["wsl.exe", "-l", "-q"], capture_output=True, timeout=5,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            # wsl.exe emits UTF-16LE (with stray NULs) even when piped.
+            listed = result.stdout.decode("utf-16-le", "ignore").replace("\x00", "")
+            distros = {line.strip() for line in listed.splitlines() if line.strip()}
+            if distros - _WSL_PSEUDO_DISTROS:
+                _wsl_checked = True
+        except Exception:
+            pass
+    return _wsl_checked
+
+
+def _wsl_missing_widget() -> QWidget:
+    """Plain placeholder shown instead of a terminal when no usable WSL
+    distro is registered. Deliberately has none of the terminal methods
+    (run_command/stop/focus/...) — every caller reaches those through
+    `getattr(..., None)` + `callable()` guards, so a plain widget here is
+    safe everywhere a real terminal would otherwise go."""
+    from src.config import CONSOLE_BG, CONSOLE_TEXT
+
+    w = QWidget()
+    layout = QVBoxLayout(w)
+    layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label = QLabel(
+        "No WSL2 Linux distro found.\n\n"
+        "This app runs its tools (nmap, hydra, ...) inside WSL2 on Windows.\n"
+        "Install one, then restart this app:\n\n"
+        "    wsl --install\n\n"
+        "(first-time install needs a reboot; any distro works as long as\n"
+        "the 6 tools are installed in it and it's set as your WSL default)"
+    )
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setWordWrap(True)
+    label.setStyleSheet(f"color: {CONSOLE_TEXT}; padding: 24px; font-size: 13px;")
+    layout.addWidget(label)
+    w.setStyleSheet(f"background-color: {CONSOLE_BG};")
+    return w
 
 
 def _repo_local_dir() -> str:
@@ -51,6 +124,9 @@ def make_terminal(profile: str) -> QWidget:
     Same backend fallback chain (Xterm → Pty → Interactive) for both profiles;
     only the launch command differs.
     """
+    if os.name == "nt" and not _wsl_available():
+        return _wsl_missing_widget()
+
     local_dir = _repo_local_dir()
 
     if profile == "wizard":
@@ -63,14 +139,14 @@ def make_terminal(profile: str) -> QWidget:
     # 1. xterm.js web terminal — preferred, cross-platform.
     if XTERM_AVAILABLE:
         if os.name == "nt":
-            argv = ["wsl.exe", "-d", "Ubuntu", "bash", "-lc", wsl_launch]
+            argv = ["wsl.exe", "bash", "-lc", wsl_launch]  # default distro
         else:
             argv = ["bash", "-lc", lin_launch]
         return XtermTerminal(argv)
 
     # 2. pyte ConPTY terminal — Windows-only legacy fallback.
     if PTY_AVAILABLE and os.name == "nt":
-        return PtyTerminal(["wsl.exe", "-d", "Ubuntu", "bash", "-lc", wsl_launch])
+        return PtyTerminal(["wsl.exe", "bash", "-lc", wsl_launch])
 
     # 3. plain-pipe fallback — no TTY.
     if os.name == "nt":
@@ -84,6 +160,16 @@ def make_terminal(profile: str) -> QWidget:
 
 class TerminalTabsWidget(QWidget):
     """Tab bar + stack of terminals, VS Code style."""
+
+    # Emitted once the first (Wizard) tab's shell has actually produced its
+    # first output — i.e. WSL finished booting and bash is really running,
+    # not just that `wsl.exe` was spawned (that returns immediately, well
+    # before the VM finishes booting). Fires immediately for tabs with no
+    # such async concept (fallback terminal, or the WSL-missing
+    # placeholder). Startup can wait on this to keep a splash screen up
+    # until WSL is genuinely usable, not just until widget construction
+    # returns.
+    firstTabReady = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -152,10 +238,17 @@ class TerminalTabsWidget(QWidget):
         self.setStyleSheet(self._qss())
 
         # first tab is always the Wizard (preserves original behavior)
+        self._first_tab_wired = False
         self.new_tab("wizard")
 
     # -- tab management ----------------------------------------------------
     def new_tab(self, profile: str) -> None:
+        if self.tabbar.count() >= _MAX_TABS:
+            # Refuse before make_terminal() ever runs — that's what actually
+            # spawns the Chromium process + PTY, so the cap has to gate here,
+            # not just disable the buttons (belt-and-suspenders against any
+            # other caller reaching new_tab directly).
+            return
         term = make_terminal(profile)
         if profile == "wizard":
             name = "Wizard"
@@ -163,10 +256,31 @@ class TerminalTabsWidget(QWidget):
             self._shell_count += 1
             name = "Shell" if self._shell_count == 1 else f"Shell ({self._shell_count})"
 
+        if not self._first_tab_wired:
+            self._first_tab_wired = True
+            ready_signal = getattr(term, "firstOutput", None)
+            if ready_signal is not None:
+                ready_signal.connect(self.firstTabReady.emit)
+            else:
+                # No async spawn concept (PtyTerminal/InteractiveTerminal
+                # spawn synchronously in their constructor; the WSL-missing
+                # placeholder has nothing to wait for) — fire on the next
+                # event-loop tick so callers can always just connect+wait.
+                QTimer.singleShot(0, self.firstTabReady.emit)
+
         self.stack.addWidget(term)          # stack index == tab index (no reorder)
         idx = self.tabbar.addTab(name)
         self.tabbar.setCurrentIndex(idx)
         self.stack.setCurrentIndex(idx)
+        self._update_add_controls()
+
+    def _update_add_controls(self) -> None:
+        at_cap = self.tabbar.count() >= _MAX_TABS
+        self.add_btn.setEnabled(not at_cap)
+        self.menu_btn.setEnabled(not at_cap)
+        tip = f"Max {_MAX_TABS} terminal tabs open at once" if at_cap else "New shell tab"
+        self.add_btn.setToolTip(tip)
+        self.menu_btn.setToolTip(tip if at_cap else "New terminal by profile")
 
     def stack_set_current(self, index: int) -> None:
         if 0 <= index < self.stack.count():
@@ -197,6 +311,7 @@ class TerminalTabsWidget(QWidget):
         self.tabbar.removeTab(index)
         cur = self.tabbar.currentIndex()
         self.stack.setCurrentIndex(cur)
+        self._update_add_controls()
 
     # -- teardown ----------------------------------------------------------
     def stop_all(self) -> None:

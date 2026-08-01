@@ -1,0 +1,8 @@
+{
+  "Masscan - Slow Ghost Sweep": "sudo masscan -p 1-1000 --rate 50 --wait 5 192.168.1.0/24",
+  "Masscan - Low-Rate Probe": "sudo masscan -p 22,80,443 --rate 20 --wait 3 192.168.1.0/24",
+  "Masscan - Full Port Blast": "sudo masscan -p 1-65535 --rate 100000 192.168.1.0/24",
+  "Masscan - Banner Grab Blast": "sudo masscan -p 1-65535 --rate 25000 --banners 192.168.1.0/24",
+  "Masscan - Fast Sweep": "sudo masscan -p 1-65535 --rate 10000 192.168.1.0/24",
+  "Masscan - Common Services Sweep": "sudo masscan -p 21,22,23,25,53,80,110,143,443,445,3389,8080 --rate 5000 192.168.1.0/24"
+}

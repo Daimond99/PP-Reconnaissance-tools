@@ -226,6 +226,16 @@ class XtermTerminal(QWidget):
     processFinished = Signal()
     # Emitted when a run_command()-launched command finishes: (token, exit_code).
     commandDone = Signal(str, int)
+    # Emitted once the PTY backend (wsl.exe/bash) has actually spawned. Not
+    # useful as a "ready" signal by itself: spawning `wsl.exe` returns
+    # immediately even though the WSL2 VM can still take several seconds to
+    # finish booting in the background — the process handle exists long
+    # before the shell inside it produces anything.
+    backendReady = Signal()
+    # Emitted once the PTY has actually produced its first bytes of output
+    # (a prompt, a banner, anything) — this is the real "WSL is up and the
+    # shell is usable" signal, and what a startup splash should wait on.
+    firstOutput = Signal()
 
     _DONE_RE = re.compile(r"__TR_DONE_([0-9a-f]{8})_(-?\d+)__")
 
@@ -239,6 +249,7 @@ class XtermTerminal(QWidget):
         self._spawned = False
         self._pending: Optional[str] = None
         self._out_buffer = ""
+        self._first_output_seen = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -301,6 +312,7 @@ class XtermTerminal(QWidget):
         self._reader.dataReady.connect(self._on_data)
         self._reader.closed.connect(self._on_closed)
         self._reader.start()
+        self.backendReady.emit()
         if self._pending:
             try:
                 self._backend.write(self._pending)
@@ -309,6 +321,9 @@ class XtermTerminal(QWidget):
             self._pending = None
 
     def _on_data(self, data: bytes) -> None:
+        if not self._first_output_seen:
+            self._first_output_seen = True
+            self.firstOutput.emit()
         b64 = base64.b64encode(data).decode("ascii")
         self._bridge.dataToTerm.emit(b64)
         self._out_buffer = (self._out_buffer + data.decode("utf-8", "replace"))[-4096:]

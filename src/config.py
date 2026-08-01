@@ -754,61 +754,37 @@ TERMINAL_PROMPT = "recon> "
 # COMMANDS - คำสั่งและ Profiles
 # ============================================================================
 
-TOOL_COMMANDS = {
-    "Masscan": "masscan -p1-65535 --rate=10000 192.168.1.0/24",
-    "Nmap": "nmap -sS -sV -p- 192.168.1.0/24",
-    "Ncat": "ncat -v 192.168.1.1 80",
-    "Hydra": "hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
-    "Ncrack": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
-    "Evil-WinRM": "evil-winrm -i 192.168.1.1 -u Administrator -p password",
-    # Legacy display names (backward compatibility)
-    "Masscan - Fast Sweep": "masscan -p1-65535 --rate=10000 192.168.1.0/24",
-    "Nmap - Detailed Scan": "nmap -sS -sV -p- 192.168.1.0/24",
-    "Hybrid Recon": "masscan -p1-65535 --rate=1000 192.168.1.0/24 && nmap -sV -p $(masscan --readformat=file) 192.168.1.0/24",
-    "Ncat - Banner Grab": "ncat -v 192.168.1.1 80",
-    "Hydra - Brute Force": "hydra -l admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
-    "Ncrack - Credential Test": "ncrack -u admin -P /usr/share/wordlists/rockyou.txt ssh://192.168.1.1",
-    "Evil-WinRM - Windows Access": "evil-winrm -i 192.168.1.1 -u Administrator -p password",
-}
+# Both loaded from src/resources/*.json (resource-driven, per the
+# architecture rule in CLAUDE.md) instead of hardcoded here. load_json()
+# degrades to {} on a missing/malformed file rather than crashing, so a
+# corrupt resource just means an empty tool/warhead list, not a startup
+# crash.
+from src.utils.resource_loader import load_json as _load_json
 
+TOOL_COMMANDS = _load_json("tool_commands.json").get("commands", {})
+
+# Warhead profiles are per-tool (2 stealth / 2 critical / 2 quality-normal
+# each), one JSON file per tool under src/resources/warheads/ — same
+# per-tool-subfolder convention as nmap/flag_impacts.json. WARHEAD_BY_TOOL
+# drives the WARHEAD PROFILE combo, re-populated whenever the TOOLS combo
+# changes (src/ui/widgets.py TopBar). WARHEAD_COMMANDS is the flattened
+# lookup `_on_warhead_change` uses to resolve a picked profile name to its
+# command — safe to flatten since every profile name is already
+# tool-prefixed and therefore unique across tools.
+_WARHEAD_FILES = {
+    "Nmap": "warheads/nmap.json",
+    "Masscan": "warheads/masscan.json",
+    "Ncat": "warheads/ncat.json",
+    "Hydra": "warheads/hydra.json",
+    "Ncrack": "warheads/ncrack.json",
+    "Evil-WinRM": "warheads/evil-winrm.json",
+}
+WARHEAD_BY_TOOL = {tool: _load_json(path) for tool, path in _WARHEAD_FILES.items()}
 WARHEAD_COMMANDS = {
-    "Stealth Recon": "masscan -p1-65535 --rate=10000 192.168.1.0/24",
-    "Full Aggressive": "nmap -A -T4 -p- 192.168.1.0/24",
-    "Web Focus": "nmap -sV -p 80,443,8080,8443 192.168.1.0/24",
-    "Vulnerability Scan": "nmap --script vuln -sV 192.168.1.0/24",
-    "Ping Scan (Evasion)":
-        "nmap -sn -PE -PP -PY -PA80,443 -T2 -f --ttl 64 --data-length 16 "
-        "--randomize-hosts --source-port 53 192.168.1.0/24",
-    "Honeypot Version Demo":
-        "nmap -sV -p 1433,3306,4899,5900,8000,10000 -n -Pn -r -f --ttl 128 "
-        "--data-length 32 --source-port 53 -T2 192.168.1.0/24",
-    "Common TCP SYN Scan":
-        "nmap -sS -p 17,19,21-32764,5985,5986 -n -Pn -r 192.168.1.0/24",
-    "Quick Scan Plus": "nmap -sV -T4 -O -F --version-light 192.168.1.0/24",
-    "Intense Scan": "nmap -T4 -A -v 192.168.1.0/24",
-    "Comprehensive Scan":
-        'nmap -sS -sU -T4 -A -v -PE -PS80,443 -PA3389 -PP -PU40125 -PY '
-        '--source-port 53 --script "default or (discovery and safe)" 192.168.1.0/24',
-    "Intense Scan (No Ping)": "nmap -T4 -A -v -Pn 192.168.1.0/24",
-    "Telnet Random Port Scan": "nmap -sS -p 23 -n -Pn --open 192.168.1.0/24",
+    profile: cmd
+    for tool_profiles in WARHEAD_BY_TOOL.values()
+    for profile, cmd in tool_profiles.items()
 }
-
-TOOL_LIST = [
-    "Masscan - Fast Sweep",
-    "Nmap - Detailed Scan",
-    "Hybrid Recon",
-    "Ncat - Banner Grab",
-    "Hydra - Brute Force",
-    "Ncrack - Credential Test",
-    "Evil-WinRM - Windows Access",
-]
-
-WARHEAD_PROFILES = [
-    "Stealth Recon", "Full Aggressive", "Web Focus", "Vulnerability Scan",
-    "Ping Scan (Evasion)", "Honeypot Version Demo", "Common TCP SYN Scan",
-    "Quick Scan Plus", "Intense Scan", "Comprehensive Scan",
-    "Intense Scan (No Ping)", "Telnet Random Port Scan",
-]
 
 OPERATION_MODES = ["Wizard Mode", "Direct Tool Mode"]
 

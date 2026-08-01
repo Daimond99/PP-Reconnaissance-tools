@@ -24,6 +24,8 @@ from src.config import (
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
 from src.tools.nmap.parser import parse_nmap_xml
+from src.tools.hydra.parser import parse_hydra_output
+from src.tools.ncrack.parser import parse_ncrack_output
 
 
 @dataclass
@@ -32,7 +34,11 @@ class _PendingDirectScan:
     the Raw Output terminal starts it until its `commandDone` fires."""
     gate: ConfirmationGate
     row: int
-    xml_paths: Optional[Tuple[str, str]]  # (shell_path, host_path) or None
+    # (kind, shell_path, host_path) or None. kind is "scan" (nmap/masscan
+    # -oX, parsed by parse_nmap_xml) or "hydra"/"ncrack" (their own found-
+    # credentials output, parsed into Results Display's Credentials Found
+    # view).
+    capture: Optional[Tuple[str, str, str]]
 
 
 class ReconMainWindow(QMainWindow):
@@ -468,6 +474,7 @@ class ReconMainWindow(QMainWindow):
             self._last_target = self._get_target()
 
     def _on_tool_change(self, tool):
+        self.top_bar.set_warhead_profiles(tool)
         template = TOOL_COMMANDS.get(tool, "")
         if template:
             self.top_bar.command_input.setText(self._apply_command_template(template))
@@ -499,14 +506,28 @@ class ReconMainWindow(QMainWindow):
         if not cmd:
             return
 
-        # If this is a plain nmap invocation with no output-format flag of
-        # its own, tack on `-oX <file>` so Results Display can be populated
-        # with real structured data once the scan finishes. This happens
-        # BEFORE gate.request() so the confirmation preview shows the exact
-        # command that will run — nothing hidden from the "yes" prompt.
-        xml_paths = self._nmap_xml_capture_paths(cmd)
+        # If this is a plain nmap/masscan invocation with no output-format
+        # flag of its own, tack on `-oX <file>` so Results Display can be
+        # populated with real structured data once the scan finishes — both
+        # tools' -oX schema is close enough (host/address/ports/port) that
+        # the same generic parser reads either one. Same idea for a bare
+        # hydra/ncrack invocation, feeding their found-credentials output
+        # into Results Display's Credentials Found view instead. All of
+        # this happens BEFORE gate.request() so the confirmation preview
+        # shows the exact command that will run — nothing hidden from the
+        # "yes" prompt.
+        capture: Optional[Tuple[str, str, str]] = None
+        xml_paths = self._scan_xml_capture_paths(cmd)
         if xml_paths:
             cmd = f"{cmd} -oX {xml_paths[0]}"
+            capture = ("scan", xml_paths[0], xml_paths[1])
+        else:
+            cred_paths = self._cred_capture_paths(cmd)
+            if cred_paths:
+                tool, shell_path, host_path = cred_paths
+                flag = "-o" if tool == "hydra" else "-oN"
+                cmd = f"{cmd} {flag} {shell_path}"
+                capture = (tool, shell_path, host_path)
 
         gate = ConfirmationGate(channel="direct")
         # Direct Tool Mode targets are whatever the user typed into TARGET
@@ -527,17 +548,23 @@ class ReconMainWindow(QMainWindow):
             return
 
         gate.confirm("yes")
-        self._run_direct_command(gate, xml_paths)
+        self._run_direct_command(gate, capture)
 
-    def _nmap_xml_capture_paths(self, cmd: str) -> tuple[str, str] | None:
-        """If `cmd` is a bare `nmap ...` invocation with no `-oX`/`-oA`/`-oN`/
-        `-oG` of its own, return (shell_path, host_path) for a fresh scratch
-        XML file: `shell_path` is the path as seen inside the shell the
-        command actually runs in (WSL Ubuntu bash on Windows, native bash on
-        Linux), `host_path` is how this (Windows-native) Python process reads
-        that same file back afterward. Returns None for anything else —
-        masscan/hydra/ncrack/ncat/evil-winrm, or a command with its own -o*
-        flag, are left untouched."""
+    # Both tools' own output-format flags — if the user already asked for
+    # one of these, don't tack on a second -oX (nmap: -oX/-oA/-oN/-oG/-oS;
+    # masscan: -oX/-oJ/-oL/-oG/-oD/-oB).
+    _SCAN_OUTPUT_FLAGS = {"-oX", "-oA", "-oN", "-oG", "-oS", "-oJ", "-oL", "-oD", "-oB"}
+
+    def _scan_xml_capture_paths(self, cmd: str) -> tuple[str, str] | None:
+        """If `cmd` is a bare `nmap ...`/`masscan ...` invocation (optionally
+        `sudo`-prefixed) with no output-format flag of its own, return
+        (shell_path, host_path) for a fresh scratch XML file: `shell_path`
+        is the path as seen inside the shell the command actually runs in
+        (WSL Ubuntu bash on Windows, native bash on Linux), `host_path` is
+        how this (Windows-native) Python process reads that same file back
+        afterward. Returns None for anything else — hydra/ncrack/ncat/
+        evil-winrm, or a command with its own -o* flag, are left
+        untouched."""
         try:
             tokens = shlex.split(cmd)
         except ValueError:
@@ -546,9 +573,11 @@ class ReconMainWindow(QMainWindow):
             return None
         if os.path.basename(tokens[0]).lower() == "sudo":
             tokens = tokens[1:]
-        if not tokens or os.path.basename(tokens[0]).lower() not in ("nmap", "nmap.exe"):
+        if not tokens or os.path.basename(tokens[0]).lower() not in (
+            "nmap", "nmap.exe", "masscan", "masscan.exe",
+        ):
             return None
-        if any(tok in ("-oX", "-oA", "-oN", "-oG", "-oS") for tok in tokens[1:]):
+        if any(tok in self._SCAN_OUTPUT_FLAGS for tok in tokens[1:]):
             return None
 
         shell_path = f"/tmp/therecon_scan_{uuid.uuid4().hex[:8]}.xml"
@@ -558,8 +587,50 @@ class ReconMainWindow(QMainWindow):
             host_path = shell_path
         return shell_path, host_path
 
+    # Output flags that already give hydra/ncrack found-credentials output
+    # of their own — don't tack on a second one.
+    _CRED_OUTPUT_FLAGS = {
+        "hydra": {"-o", "-oJ"},
+        "ncrack": {"-oN", "-oX", "-oG", "-oA"},
+    }
+
+    def _cred_capture_paths(self, cmd: str) -> tuple[str, str, str] | None:
+        """If `cmd` is a bare `hydra ...`/`ncrack ...` invocation (optionally
+        `sudo`-prefixed) with no output flag of its own, return
+        (tool, shell_path, host_path) for a fresh scratch output file:
+        hydra's own `-o` (plain found-credentials text) or ncrack's `-oN`
+        (Normal format, also lists discovered credentials). Returns None
+        for anything else."""
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            return None
+        if not tokens:
+            return None
+        if os.path.basename(tokens[0]).lower() == "sudo":
+            tokens = tokens[1:]
+        if not tokens:
+            return None
+
+        program = os.path.basename(tokens[0]).lower()
+        tool = {
+            "hydra": "hydra", "hydra.exe": "hydra",
+            "ncrack": "ncrack", "ncrack.exe": "ncrack",
+        }.get(program)
+        if tool is None:
+            return None
+        if any(tok in self._CRED_OUTPUT_FLAGS[tool] for tok in tokens[1:]):
+            return None
+
+        shell_path = f"/tmp/therecon_{tool}_{uuid.uuid4().hex[:8]}.txt"
+        if os.name == "nt":
+            host_path = "\\\\wsl$\\Ubuntu" + shell_path.replace("/", "\\")
+        else:
+            host_path = shell_path
+        return tool, shell_path, host_path
+
     def _run_direct_command(self, gate: ConfirmationGate,
-                             xml_paths: tuple[str, str] | None = None) -> None:
+                             capture: tuple[str, str, str] | None = None) -> None:
         row = self.main_area.input_tab.add_entry(gate.command, status="Running")
 
         # Jump the view to Raw Output so the scan is visible immediately, and
@@ -570,7 +641,7 @@ class ReconMainWindow(QMainWindow):
 
         token = self.main_area.raw_output_tab.run_command(shlex.join(gate.argv))
         if token:
-            self._pending_direct_scans[token] = _PendingDirectScan(gate, row, xml_paths)
+            self._pending_direct_scans[token] = _PendingDirectScan(gate, row, capture)
         else:
             # Backend can't report completion (legacy fallback) — best effort.
             gate.mark_executed_result(0)
@@ -588,18 +659,25 @@ class ReconMainWindow(QMainWindow):
             return
         pending.gate.mark_executed_result(exit_code)
         self.main_area.input_tab.set_status(pending.row, "Done" if exit_code == 0 else "Error")
-        if exit_code == 0 and pending.xml_paths:
-            self._ingest_nmap_xml(pending.xml_paths[1], self._XML_READ_RETRIES)
+        if exit_code == 0 and pending.capture:
+            kind, _shell_path, host_path = pending.capture
+            if kind == "scan":
+                self._ingest_nmap_xml(host_path, self._XML_READ_RETRIES)
+            else:
+                self._ingest_credentials(kind, host_path, pending.gate.target, self._XML_READ_RETRIES)
 
     def _ingest_nmap_xml(self, host_path: str, retries_left: int) -> None:
-        """Parse the scratch `-oX` file a completed Direct Tool Mode nmap
-        scan wrote and feed it into Results Display. `parse_nmap_xml` comes
-        back empty both on a genuine parse failure AND on the file simply
-        not existing yet from this (Windows-native) process's point of view
-        — the two look identical, so on empty we retry a few times on a
-        timer instead of giving up on the first miss. A WSL distro named
-        something other than "Ubuntu" still degrades to "no update", same
-        as before."""
+        """Parse the scratch `-oX` file a completed Direct Tool Mode
+        nmap/masscan scan wrote and feed it into Results Display —
+        `parse_nmap_xml` doesn't actually check `scanner=`, it just walks
+        `<host>`/`<address>`/`<ports>`/`<port>` elements, and masscan's -oX
+        schema is a compatible subset of nmap's, so one parser covers both.
+        Comes back empty both on a genuine parse failure AND on the file
+        simply not existing yet from this (Windows-native) process's point
+        of view — the two look identical, so on empty we retry a few times
+        on a timer instead of giving up on the first miss. A WSL distro
+        named something other than "Ubuntu" still degrades to "no update",
+        same as before."""
         hosts = parse_nmap_xml(host_path)
         if hosts:
             # Every scan gets its own row, even a repeat of the same IP with
@@ -618,6 +696,32 @@ class ReconMainWindow(QMainWindow):
             QTimer.singleShot(
                 self._XML_READ_RETRY_MS,
                 lambda: self._ingest_nmap_xml(host_path, retries_left - 1),
+            )
+
+    def _ingest_credentials(self, tool: str, host_path: str, target: str,
+                             retries_left: int) -> None:
+        """Parse the scratch output file a completed hydra/ncrack run
+        wrote and feed it into Results Display's Credentials Found view.
+        Same empty-vs-not-yet-written ambiguity as _ingest_nmap_xml, same
+        retry-on-timer approach — also the same behavior if the tool
+        genuinely found zero credentials (retries exhaust, nothing shown),
+        which is indistinguishable from "not written yet" without deeper
+        inspection and is an accepted tradeoff already made for the nmap
+        path."""
+        parser = parse_hydra_output if tool == "hydra" else parse_ncrack_output
+        creds = parser(host_path)
+        if creds:
+            stamp = datetime.now().strftime("%H:%M:%S")
+            self.main_area.results_tab.add_credential_results(tool, target, creds, stamp)
+            try:
+                os.remove(host_path)
+            except OSError:
+                pass
+            return
+        if retries_left > 0:
+            QTimer.singleShot(
+                self._XML_READ_RETRY_MS,
+                lambda: self._ingest_credentials(tool, host_path, target, retries_left - 1),
             )
 
     def _on_queue_cancel(self, _row: int) -> None:
@@ -702,6 +806,16 @@ class ReconMainWindow(QMainWindow):
             return False
 
     def closeEvent(self, event):
+        reply = QMessageBox.question(
+            self, "Quit",
+            "Close TheRecon? This will stop all running terminals"
+            + (" and shut down WSL." if os.name == "nt" else "."),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            event.ignore()
+            return
+
         stop = getattr(self.main_area.wizard_tab, "stop_all", None)
         if callable(stop):
             stop()
@@ -709,4 +823,18 @@ class ReconMainWindow(QMainWindow):
             stop = getattr(term, "stop", None)
             if callable(stop):
                 stop()
+
+        if os.name == "nt":
+            import subprocess
+            try:
+                # --shutdown tears down the whole WSL2 VM (not tied to a
+                # distro name), so this works regardless of which distro
+                # the user has installed/set as default.
+                subprocess.run(
+                    ["wsl.exe", "--shutdown"],
+                    timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            except Exception:
+                pass
+
         super().closeEvent(event)
