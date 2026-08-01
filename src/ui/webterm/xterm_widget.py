@@ -239,11 +239,14 @@ class XtermTerminal(QWidget):
 
     _DONE_RE = re.compile(r"__TR_DONE_([0-9a-f]{8})_(-?\d+)__")
 
-    def __init__(self, argv: List[str], cols: int = 110, rows: int = 32, parent=None):
+    def __init__(self, argv: List[str], cols: int = 110, rows: int = 32,
+                 block_ctrl_z: bool = False, read_only: bool = False, parent=None):
         super().__init__(parent)
         self._argv = argv
         self._cols = cols
         self._rows = rows
+        self._block_ctrl_z = block_ctrl_z
+        self._read_only = read_only
         self._backend = None
         self._reader: Optional[_Reader] = None
         self._spawned = False
@@ -336,6 +339,25 @@ class XtermTerminal(QWidget):
         self.processFinished.emit()
 
     def _on_key(self, text: str) -> None:
+        if self._read_only:
+            # Display-only (Raw Output): drop every keystroke/paste from
+            # the page before it reaches the PTY. `write_text`/`run_command`
+            # (Direct Tool Mode's programmatic injection) write to
+            # `self._backend` directly and never go through here, so the
+            # gated-command display path is unaffected.
+            return
+        if self._block_ctrl_z and "\x1a" in text:
+            # OpenCode runs its TUI in raw terminal mode, so Ctrl+Z (0x1A)
+            # never becomes a real SIGTSTP at the kernel level -- it's
+            # delivered as a literal byte, and OpenCode's own handling of
+            # it (some TUI libs self-suspend by disabling raw mode then
+            # signaling themselves) leaves the pane blank with nothing
+            # left to redraw it, rather than a normal job-control suspend.
+            # Drop the byte before it ever reaches the shell/OpenCode so
+            # Ctrl+Z is a clean no-op instead.
+            text = text.replace("\x1a", "")
+            if not text:
+                return
         if self._backend:
             try:
                 self._backend.write(text)

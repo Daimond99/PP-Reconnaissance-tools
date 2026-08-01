@@ -12,7 +12,7 @@ from typing import Optional, Tuple
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QMessageBox, QMenu, QFileDialog, QSplitter,
+    QMessageBox, QMenu, QFileDialog, QSplitter, QInputDialog, QLineEdit,
 )
 from PySide6.QtCore import Qt, QRect, QEvent, QTimer
 from PySide6.QtGui import QAction, QKeySequence
@@ -23,6 +23,7 @@ from src.config import (
 )
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
+from src.core.llm_keys import set_llm_key, remove_llm_key
 from src.tools.nmap.parser import parse_nmap_xml
 from src.tools.hydra.parser import parse_hydra_output
 from src.tools.ncrack.parser import parse_ncrack_output
@@ -426,6 +427,9 @@ class ReconMainWindow(QMainWindow):
             ("Save Scan…", "Ctrl+S", self._on_save_scan),
             ("Save All Scans…", "Ctrl+Alt+S", self._on_save_all_scans),
             (None, None, None),
+            ("Set LLM API Key…", "", self._on_set_llm_key),
+            ("Remove LLM API Key…", "", self._on_remove_llm_key),
+            (None, None, None),
             ("Quit", "Ctrl+Q", self.close),
         ]
         for label, shortcut, handler in entries:
@@ -438,6 +442,50 @@ class ReconMainWindow(QMainWindow):
             action.triggered.connect(handler)
         btn = self.settings_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _on_set_llm_key(self):
+        """Settings ▸ Set LLM API Key… — stores a key via `llm keys set`
+        (src/core/llm_keys.py) for the LLM Mode page's llm-tools-nmap
+        plugin to pick up. Key is masked in the input field and never
+        logged/echoed anywhere in the GUI."""
+        provider, ok = QInputDialog.getText(
+            self, "Set LLM API Key", "Provider name (e.g. openai, gemini):",
+            text="openai",
+        )
+        if not ok or not provider.strip():
+            return
+        value, ok = QInputDialog.getText(
+            self, "Set LLM API Key", f"API key for '{provider.strip()}':",
+            QLineEdit.EchoMode.Password,
+        )
+        if not ok or not value.strip():
+            return
+        success, message = set_llm_key(provider.strip(), value.strip())
+        (QMessageBox.information if success else QMessageBox.warning)(
+            self, "LLM API Key", message,
+        )
+
+    def _on_remove_llm_key(self):
+        """Settings ▸ Remove LLM API Key… — deletes a provider's entry from
+        `llm`'s keys.json (no `llm keys remove` subcommand exists)."""
+        provider, ok = QInputDialog.getText(
+            self, "Remove LLM API Key", "Provider name to remove:",
+            text="openai",
+        )
+        if not ok or not provider.strip():
+            return
+        provider = provider.strip()
+        reply = QMessageBox.question(
+            self, "Remove LLM API Key",
+            f"Remove the stored API key for '{provider}'?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        success, message = remove_llm_key(provider)
+        (QMessageBox.information if success else QMessageBox.warning)(
+            self, "LLM API Key", message,
+        )
 
     # Sidebar index of the Wizard Console page (see Sidebar.NAV_ITEMS).
     WIZARD_CONSOLE_INDEX = 0
@@ -816,10 +864,11 @@ class ReconMainWindow(QMainWindow):
             event.ignore()
             return
 
-        stop = getattr(self.main_area.wizard_tab, "stop_all", None)
-        if callable(stop):
-            stop()
-        for term in (self.main_area.raw_output_tab.terminal, self.main_area.llm_tab):
+        for tabs_widget in (self.main_area.wizard_tab, self.main_area.llm_tab):
+            stop_all = getattr(tabs_widget, "stop_all", None)
+            if callable(stop_all):
+                stop_all()
+        for term in (self.main_area.raw_output_tab.terminal,):
             stop = getattr(term, "stop", None)
             if callable(stop):
                 stop()

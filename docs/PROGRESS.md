@@ -8,6 +8,182 @@ described UI files removed in earlier passes.)
 
 ---
 
+## 2026-08-01 — OpenCode exit-loop, Ctrl+Z, opencode-block, path confinement, Raw Output read-only
+
+Follow-up hardening pass on top of the LLM Mode entry below, driven by
+issues found testing the new OpenCode tab.
+
+**Bug: exiting OpenCode killed the tab.** `_opencode_launch`'s old
+`"$OC"; exec bash -l` fallback failed with `exec: bash: not found` —
+`$PATH` is scoped to `$SCOPE_BIN` (the 6 authorized tools + read-only
+utilities) by the time that line runs, and `bash` was never in that
+whitelist, so the bare-name lookup for it errored and killed the tab.
+Fixed by looping straight back into a fresh OpenCode session instead
+(`while :; do "$OC"; sleep 1; done`, `sleep 1` guarding against a tight
+crash-loop if `$OC` starts failing every run) — the tab never runs
+`exec bash` post-scope at all now, so that lookup never happens again.
+Consequence: the tab never reaches an interactive bash prompt any more,
+which made the original `set -m`/non-`exec`'d-job trick (kept a shell
+alive underneath OpenCode so Ctrl+Z could `fg` back into it) moot; removed.
+
+**Bug: Ctrl+Z blanked the pane.** Root cause turned out to be different
+from the initial fix attempt (`trap '' TSTP` in the wrapper shell — didn't
+work, and it's now understood why): OpenCode runs its own TUI in raw
+terminal mode, so Ctrl+Z never becomes a real `SIGTSTP` at the kernel
+level — it's delivered as a literal `0x1A` byte, and OpenCode's own
+handling of that byte (a self-suspend routine, not real job-control
+suspend) was what left the terminal blank with nothing to redraw it, made
+worse once the exit-loop fix above meant a *new* OpenCode instance would
+spawn on top of the still-running suspended one and hang on its own
+workspace lock. Fixed upstream instead of in the shell script: `XtermTerminal`
+(`src/ui/webterm/xterm_widget.py`) and `PtyTerminal`
+(`src/ui/pty_terminal.py`) both gained a `block_ctrl_z` constructor flag
+that drops `0x1A` before it ever reaches the PTY — set only for the
+`opencode` profile in `terminal_tabs.make_terminal()`.
+
+**`opencode` blocked from the plain Shell tab and Raw Output** (per user
+request — the agent should only be reachable through its own scoped tab,
+not launched ad hoc). A plain `trap ... DEBUG` can't actually cancel a
+command, only observe it; `shopt -s extdebug` changes that (a DEBUG trap
+returning non-zero skips the next command entirely — the same primitive
+shell debuggers use for single-stepping). Installed via `~/.bashrc`
+(guarded by `TR_BLOCK_OPENCODE`, only exported by the shell-profile launch
+path) rather than inline, because the trap has to live in the *actual*
+interactive shell the user types into — `exec bash -l` replaces the
+process image and traps set beforehand don't survive that, only exported
+env vars do. Matches "opencode" as a substring of the whole command line,
+so it catches a full/relative path to the binary and `bash -c "..."`
+wrapping too, not just a bare-name PATH lookup.
+
+**Every interactive tab confined to its own scope dir** (per user request
+— "don't let a tab `cd` its way out of its own path"). New
+`_confine_snippet()` in `terminal_tabs.py`, same `~/.bashrc`-install
+mechanism as the opencode-block trap: a `PROMPT_COMMAND` hook that snaps
+`$PWD` back to `$TR_SCOPE_DIR` after any command that leaves it (`cd`,
+`pushd`, a sourced script — checking after the fact catches all of these,
+not just a literal `cd ..`). Wired into `wizard` (chain_wizard/, once the
+CLI itself exits to its trailing bash), `shell` (repo root — wider than
+the other tabs since it's meant to be usable project-wide), and `llm-nmap`
+(tools/llm-tools-nmap/). Installed for consistency into `opencode` too,
+but it's inert there: `PROMPT_COMMAND` only fires at an interactive
+prompt, and that tab never reaches one after the exit-loop fix above —
+PATH-scoping remains the only real control OpenCode's tab has. Soft lock
+only either way: an absolute path still reaches the rest of the
+filesystem, same ceiling as the existing PATH-scoping.
+
+**Raw Output narrowed to display-only** (per user request, after
+initially misdirecting the same ask at Results Display — that tab turned
+out to have no typable surface at all already, just missing explicit
+`NoEditTriggers` on its `QListWidget`/`QTreeWidget`, fixed defensively
+anyway). `make_terminal()` gained `read_only: bool`; `XtermTerminal`/
+`PtyTerminal` drop every keystroke/paste from the page before it reaches
+the PTY when set, while `write_text`/`run_command` (Direct Tool Mode
+Execute's programmatic command injection) are untouched since they write
+to the backend directly rather than through the same path as page
+keystrokes. `RawOutputTab` now calls `make_terminal("shell",
+read_only=True)`. Known gap: the plain-pipe tier-3 fallback
+(`InteractiveTerminal`) doesn't support `read_only` — not expected to be
+hit on a machine with WebEngine/ConPTY available, which both dev and
+target machines have so far.
+
+Verified throughout: `py_compile` clean on every touched file; every
+generated bash launch script (`_shell_launch`/`_llm_launch`/
+`_opencode_launch`) round-tripped through `bash -n` for syntax validity
+after each change, including a real bug caught this way (the confine
+marker text originally contained an apostrophe, breaking out of the
+single-quoted `grep -qF '...'` around it — fixed by rewording the marker).
+Not yet done: manual GUI click-through of Ctrl+Z / exit-loop / opencode-block
+/ confinement in the running app (`python -m src.main`) — verified via
+`bash -n` + code-path reasoning, not by driving the live UI.
+
+Next: the tier-3 `read_only` gap above; extending real path confinement to
+`opencode` itself would need a different mechanism than `PROMPT_COMMAND`
+(it never reaches an interactive prompt) — e.g. wrapping how OpenCode's
+own shell tool invokes commands, out of scope for this pass.
+
+---
+
+## 2026-08-01 — LLM Mode: llm-tools-nmap + OpenCode agent, square-corner tab style
+
+Turned LLM Mode from a single plain shell into two fixed, square-cornered
+block tabs — **"LLM"** and **"OpenCode"** — both real AI-tool integrations,
+neither gated (same intentional trade-off as Raw Output). Full detail in
+`CURRENT_STATE.md`'s new "LLM Mode" section; summary here.
+
+**"LLM" tab — llm-tools-nmap:**
+- Cloned `gitlab.com/kalilinux/packages/llm-tools-nmap` into
+  `tools/llm-tools-nmap/` (gitignored); installed the `llm` CLI via `pipx`
+  in WSL. `llm-nmap` profile (`terminal_tabs._llm_launch`) auto-cd's there,
+  offers to `llm keys set openai` if no key stored yet, prints a
+  copy-pasteable usage banner.
+- New `src/core/llm_keys.py` + Settings ▸ **Set LLM API Key…** / **Remove
+  LLM API Key…** — free-text provider name, not hardcoded to openai/gemini.
+  Kept out of `src/ui/` per the GUI-never-builds-commands rule.
+- Installed `llm-gemini`, set default model to `gemini-2.5-flash` after
+  `gemini-1.5-flash-latest` turned out unsupported by this key's API
+  version and the account's free-tier quota turned out to be 0 for
+  `gemini-2.0-flash` (region/project-gated — separate quota pool from the
+  gemini.google.com web chat's own free usage, a mixup worth remembering).
+
+**"OpenCode" tab — scoped coding agent:**
+- Installed [OpenCode](https://opencode.ai) (official installer, inspected
+  the script first — GitHub-release download only, no `sudo`/`rm -rf`
+  before running it blind). `opencode` profile
+  (`terminal_tabs._opencode_launch`) cd's into `tools/opencode-workspace/`
+  (gitignored), drops an `AGENTS.md` scope note there once (user-editable
+  after), then rebuilds `~/.recon_agent_bin/` — symlinks to *only* the 6
+  authorized tools + a few read-only utilities — and restricts `$PATH` to
+  it before launching. Soft scope, not a sandbox: blocks bare-name lookups
+  (git/python/curl/apt/ssh unavailable by name), not absolute-path calls.
+- Bug found + fixed: first cut used `exec "$OC"`, which replaced the shell
+  entirely — Ctrl+Z suspended OpenCode with no shell left underneath to
+  `fg` back into (looked like the terminal just died). Fixed with `set -m;
+  "$OC"; exec bash -l` (explicit job control + no `exec`-replace).
+- Bug found + fixed: opening a second OpenCode tab hung (OpenCode locks its
+  workspace dir). Rather than chase that lock, `TerminalTabsWidget` gained
+  a `fixed=True` mode — opens exactly one tab per profile up front and
+  permanently hides `+`/`⌄`/close, so a second instance of any profile on
+  that page is structurally impossible, not just discouraged.
+- **Safety incident found + fixed**: the PATH-scope rebuild originally used
+  `rm -f "$SCOPE_BIN"/*`. `$HOME` was reproduced empty in one
+  non-interactive WSL invocation shape, which would silently collapse
+  `$SCOPE_BIN` to `""` and turn that glob into `rm -f /*` against the WSL
+  root filesystem — only survived by luck (permission errors, not safe
+  code). Fixed with an explicit `if [ -z "$HOME" ]` abort-first guard and
+  per-name `rm -f "$SCOPE_BIN/$tool"` deletes instead of any `dir/*` glob.
+
+**Root-cause bug, fixed once, mattered twice:** `wsl.exe bash -lc
+"<multi-statement script>"` **without `-e`** gets re-parsed through an
+extra shell layer that silently drops variable assignments across
+`;`-separated statements (reproduced: `OC=x; [ -z "$OC" ] && echo BUG`
+prints `BUG` without `-e`, correctly doesn't with it). This had already
+been fixed in `llm_keys.py`'s own `wsl.exe` calls; the same missing `-e`
+in `terminal_tabs.make_terminal()`'s `XtermTerminal`/`PtyTerminal` argv
+(tier-3 fallback had it, tiers 1–2 didn't) is why the OpenCode tab
+couldn't find its own installed binary in the real GUI until fixed.
+
+**Square-corner tab style (user request, applied everywhere):**
+`TerminalTabsWidget` generalized to accept `profiles=[(menu_label,
+profile_key, tab_name), ...]` instead of hardcoding Wizard/Shell naming,
+plus the new `fixed` mode above. QSS unified into one square-cornered
+style (`border-radius: 0`) for every terminal page's tabs, replacing the
+old rounded-pill look — Wizard Console kept its content-sized/
+closable/reorderable behavior, LLM Mode's two tabs additionally
+`setExpanding(True)` to fill the header 50/50 as big blocks.
+
+Verified throughout: `py_compile` clean on every touched file; headless
+`QApplication` + `ReconMainWindow()` smoke tests after each change (llm_tab
+backend type, tab counts/labels, hidden `+`/`⌄`, non-closable tabs, block
+vs pill style flags); the `$HOME`-empty guard and the `-e` fix both
+reproduced-then-verified via direct `wsl.exe` invocations before and after;
+real `set_llm_key`/`has_llm_key`/`remove_llm_key` round-trip against the
+actual `llm` keys store. Not yet done: manual GUI click-through of both new
+tabs in the running app (`python -m src.main`) — everything above was
+verified via headless construction + isolated WSL reproduction, not by
+clicking through the live UI.
+
+---
+
 ## 2026-08-01 — Sudo support, per-tool warheads, Results Display for masscan/hydra/ncrack, splash screen
 
 Big pass, several independently-requested pieces landed together.

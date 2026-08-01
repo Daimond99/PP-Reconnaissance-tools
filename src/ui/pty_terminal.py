@@ -106,11 +106,13 @@ class PtyTerminal(QWidget):
 
     processFinished = Signal()
 
-    def __init__(self, argv: List[str], cols: int = 110, rows: int = 32, parent=None):
+    def __init__(self, argv: List[str], cols: int = 110, rows: int = 32,
+                 read_only: bool = False, parent=None):
         super().__init__(parent)
         self._argv = argv
         self._cols = cols
         self._rows = rows
+        self._read_only = read_only
         self._proc: Optional["PtyProcess"] = None
         self._reader: Optional[_Reader] = None
         self._dirty = False
@@ -246,7 +248,12 @@ class PtyTerminal(QWidget):
     # --------------------------------------------------------------- input
     def eventFilter(self, obj, event):
         if obj is self.view and event.type() == event.Type.KeyPress:
-            self._send_key(event)
+            # Display-only mode (Raw Output): swallow the keystroke instead
+            # of forwarding it to the PTY. `write_text`/`run_command` (Direct
+            # Tool Mode's programmatic injection) call `self._proc` directly
+            # and never go through here, so they still work.
+            if not self._read_only:
+                self._send_key(event)
             return True
         return super().eventFilter(obj, event)
 

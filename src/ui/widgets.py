@@ -24,7 +24,6 @@ from src.config import (
 )
 
 from src.core.tool_manager import get_tool_manager
-from src.ui.terminal import InteractiveTerminal
 from src.ui.terminal_tabs import TerminalTabsWidget, make_terminal
 
 
@@ -228,9 +227,9 @@ class TopBar(QFrame):
 # ============================================================================
 
 class RawOutputTab(QWidget):
-    """Real shell terminal — same backend the Wizard Console uses
-    (XtermTerminal → PtyTerminal → InteractiveTerminal). Used interactively
-    as a plain shell, and as the display surface for Direct Tool Mode: the
+    """Display-only output surface — same backend the Wizard Console uses
+    (XtermTerminal → PtyTerminal → InteractiveTerminal), but with keyboard
+    input dropped (`read_only=True`) so it's never typed into directly. The
     top-bar Execute button sends its gated command here instead of a
     QMessageBox, so the scan runs with real color/output in a real terminal.
 
@@ -252,7 +251,7 @@ class RawOutputTab(QWidget):
 
         self.terminal = None
         self.console = None
-        self._placeholder = QLabel("Idle — starts a real shell on first use.")
+        self._placeholder = QLabel("Idle — display-only, waiting for a command to run here.")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet(f"color: {TEXT_MUTE};")
         self._layout.addWidget(self._placeholder, 1)
@@ -260,7 +259,7 @@ class RawOutputTab(QWidget):
     def _ensure_terminal(self) -> None:
         if self.terminal is not None:
             return
-        self.terminal = make_terminal("shell")
+        self.terminal = make_terminal("shell", read_only=True)
         self.console = self.terminal
         self._layout.removeWidget(self._placeholder)
         self._placeholder.deleteLater()
@@ -326,6 +325,8 @@ class ResultsDisplayTab(QWidget):
         self.host_list = QListWidget()
         self.host_list.setObjectName("ZmHostList")
         self.host_list.setFixedWidth(190)
+        # Display-only — no rename-on-double-click, no typing into rows.
+        self.host_list.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         # Rows carry a timestamp suffix now (see add_scan_results) — elide
         # instead of growing a horizontal scrollbar if one still overflows.
         self.host_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -341,6 +342,8 @@ class ResultsDisplayTab(QWidget):
         # section expand/collapse arrows should respond to a click.
         self.detail_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.detail_tree.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Display-only — no in-place editing of any detail row.
+        self.detail_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.detail_tree, 1)
 
         # Empty until a real nmap scan populates it via set_hosts().
@@ -720,9 +723,16 @@ class MainContentArea(QWidget):
         self.input_tab = InputManagementTab()
         self.raw_output_tab = RawOutputTab()
         self.results_tab = ResultsDisplayTab()
-        # LLM page is a plain real bash terminal — the user wires it to an AI
-        # API themselves (e.g. `llm`, `claude`, curl to an endpoint).
-        self.llm_tab = InteractiveTerminal()
+        # LLM page — same tabbed-terminal container as Wizard Console, two
+        # profiles instead: "llm-nmap" (auto-cd's into tools/llm-tools-nmap,
+        # offers to set an API key if none is stored yet) and "opencode"
+        # (the OpenCode agent CLI, PATH-restricted to TheRecon's 6
+        # authorized tools — see terminal_tabs._opencode_launch). Ungated by
+        # design, same as before.
+        self.llm_tab = TerminalTabsWidget(fixed=True, profiles=[
+            ("New LLM Nmap tab", "llm-nmap", "LLM"),
+            ("New OpenCode tab", "opencode", "OpenCode"),
+        ])
 
         # Order matches Sidebar.NAV_ITEMS / navigate(index) 0-4.
         self.stack.addWidget(wrap_in_terminal(self.wizard_tab))

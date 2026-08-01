@@ -6,9 +6,12 @@ Wizard Console embedding plan and remaining TODOs, read
 `CROSS_PLATFORM_TERMINAL_PLAN.md`. Update this file whenever the state below
 goes stale.
 
-Last verified: 2026-08-01, branch `main`, after the sudo/cred-capture/
-Results-Display-for-all-tools pass (see `PROGRESS.md`, "Sudo support,
-per-tool warheads, Results Display for masscan/hydra/ncrack, splash screen").
+Last verified: 2026-08-01, branch `main`, after the OpenCode/Shell/Raw
+Output hardening pass (see `PROGRESS.md`, "OpenCode exit-loop, Ctrl+Z,
+opencode-block, path confinement, Raw Output read-only") — itself on top
+of the LLM Mode llm-nmap/OpenCode pass ("LLM Mode: llm-tools-nmap +
+OpenCode agent, square-corner tab style"), which was on top of the earlier
+sudo/cred-capture/Results-Display-for-all-tools pass the same day.
 
 ## Entry point
 
@@ -29,9 +32,9 @@ Sidebar has 5 pages (`Sidebar.NAV_ITEMS`, index 0–4), 1:1 with
 |---|---|---|---|
 | 0 | `wizard_tab` | `TerminalTabsWidget` — VS Code-style tabbed terminal; each tab is `XtermTerminal` (xterm.js in QWebEngineView + real PTY) → `PtyTerminal` (pyte/ConPTY) → `InteractiveTerminal`, first available wins | Wizard Console — first tab runs `chain_wizard/` CLI; `+`/`⌄` open more Wizard or plain Shell tabs, see below |
 | 1 | `input_tab` | `InputManagementTab` | Zenmap-style scan queue (Status/Command). Direct Tool Mode Execute lands a row here; Append/Remove/Cancel Scan; double-click a row → command back to top-bar |
-| 2 | `raw_output_tab` | `RawOutputTab` (wraps `make_terminal("shell")` — same xterm.js backend as Wizard) | real shell; also the live display surface for Direct Tool Mode Execute |
+| 2 | `raw_output_tab` | `RawOutputTab` (wraps `make_terminal("shell", read_only=True)` — same xterm.js backend as Wizard) | **display-only** (2026-08-01) — every keystroke/paste from the page is dropped before it reaches the PTY (`XtermTerminal._on_key`/`PtyTerminal.eventFilter`, `read_only=True`); real output still streams in, and `write_text`/`run_command` (Direct Tool Mode Execute's programmatic injection) are unaffected since they write to the backend directly, not through the keystroke path |
 | 3 | `results_tab` | `ResultsDisplayTab` | Zenmap-style split view, starts empty. Two entry shapes now: nmap/masscan scan results (host/port table, unchanged) **and** hydra/ncrack found-credentials entries (`kind: "credentials"`, rendered as a Credentials Found table instead) |
-| 4 | `llm_tab` | `InteractiveTerminal` | plain real shell for wiring up your own AI CLI, ungated |
+| 4 | `llm_tab` | `TerminalTabsWidget(fixed=True, ...)` | **LLM Mode** — exactly 2 fixed square-cornered block tabs, no `+`/`⌄`, no closing: **"LLM"** (`llm-nmap` profile: auto-cd's into `tools/llm-tools-nmap`, offers to set an API key if none stored, prints a usage banner) and **"OpenCode"** (`opencode` profile: PATH-restricted to the 6 authorized tools + a few read-only utilities, own `AGENTS.md` scope note in `tools/opencode-workspace/`). Both ungated by design, same as before. See below. |
 
 The **Command Editor** page (old index 2, `CommandEditorTab`) was removed
 2026-07-31.
@@ -82,10 +85,10 @@ empty, so the `else TOOL_LIST` branch could never run) was deleted
   terminal. Falls back to plain `InteractiveTerminal` if `pywinpty`/`pyte`
   aren't importable.
 - `terminal.py` (`InteractiveTerminal`) — non-PTY real shell via `QProcess`
-  (stdin/stdout pipe, no TTY). Used for Raw Output, LLM Mode, and as the
-  Wizard Console fallback when ConPTY is unavailable. Single `QTextEdit` is
-  both scrollback and input line (no separate input row); Up/Down history
-  recall.
+  (stdin/stdout pipe, no TTY). Bottom-tier fallback across every terminal
+  page (Raw Output, Wizard Console, LLM Mode) when ConPTY/xterm.js aren't
+  available. Single `QTextEdit` is both scrollback and input line (no
+  separate input row); Up/Down history recall.
 
 Dead UI files from earlier passes (`wizard_terminal.py`, `wizard_console.py`,
 `src/wizard/engine.py`, `tool_selection.py`, `llm_mode.py`) have all been
@@ -100,6 +103,22 @@ once at cap. `_wsl_available()` (Windows only, cached after first check) —
 `docker-desktop`/`docker-desktop-data` pseudo-entries Docker Desktop
 registers) — shows a plain "install WSL" placeholder widget instead of a
 silently-blank terminal if neither holds.
+
+Generalized same day (later pass) to back **both** Wizard Console and LLM
+Mode, not just Wizard: `TerminalTabsWidget(profiles=[(menu_label,
+profile_key, tab_name), ...], fixed=False)`. `profiles` replaces the old
+hardcoded "Wizard tab: 'Wizard' / Shell tab: 'Shell'" naming —
+`make_terminal(profile)` now accepts `"wizard" | "shell" | "llm-nmap" |
+"opencode"`. `fixed=True` (LLM Mode only) opens exactly one tab per profile
+up front and permanently hides `+`/`⌄`/close — no way to ever open a second
+instance of a profile, because a second `opencode` tab against the same
+workspace dir just hangs (not investigated further; sidestepped instead).
+Tab-bar chrome is square-cornered everywhere now (`border-radius: 0`,
+`QTabBar#TermTabBar::tab`) — the old rounded-pill look is gone from every
+terminal page, not just LLM Mode. Fixed-mode tabs additionally
+`setExpanding(True)` to split the header 50/50 as two big blocks
+(`blockStyle` dynamic property drives the bigger/bolder font only —
+corner style itself is unconditional).
 
 ### Wizard / orchestration
 
@@ -129,6 +148,99 @@ wizard.main`) inside the terminal described above.
 
 Restricted to the 6 authorized tools: nmap, masscan, hydra, ncrack, ncat,
 evil-winrm.
+
+### LLM Mode (`llm-nmap` + `opencode`, added 2026-08-01)
+
+Two ungated square-block tabs (see `TerminalTabsWidget(fixed=True, ...)`
+above), both real WSL/Linux shells, neither routed through
+`ConfirmationGate` — same intentional trade-off as Raw Output.
+
+- **"LLM" tab (`llm-nmap` profile, `terminal_tabs._llm_launch`)** — auto-cd's
+  into **`tools/llm-tools-nmap/`** (cloned from
+  `gitlab.com/kalilinux/packages/llm-tools-nmap`, gitignored like the rest
+  of `tools/`), a plugin for the `llm` CLI (Simon Willison's,
+  `pipx install llm`, installed in WSL) exposing `nmap_scan` /
+  `nmap_quick_scan` / `nmap_service_detection` / `nmap_os_detection` /
+  `nmap_ping_scan` / `nmap_script_scan` / `get_local_network_info` as
+  function-calling tools (`@llm.hookimpl register_tools`). If `llm keys
+  list` shows no stored key yet, offers to `llm keys set openai` right
+  there; either way prints a usage banner with a copy-pasteable example
+  command. Default model set to `gemini-2.5-flash` this session
+  (`llm models default gemini-2.5-flash`) after `gemini-1.5-flash-latest`
+  turned out unsupported and free-tier quota on the Gemini API key used
+  turned out project/region-gated (separate from the gemini.google.com web
+  chat's own free quota — different product, different quota pool).
+- **"OpenCode" tab (`opencode` profile, `terminal_tabs._opencode_launch`)**
+  — launches the [OpenCode](https://opencode.ai) coding agent CLI (installed
+  via its official installer, binary lands at `~/.opencode/bin/opencode`,
+  **not** reliably on `$PATH` from a non-interactive `bash -lc` launch since
+  the installer only adds it to `~/.bashrc` — `_opencode_launch` falls back
+  to the known install path). Scoped, not sandboxed: cd's into
+  **`tools/opencode-workspace/`** (gitignored), drops an `AGENTS.md` there
+  once (user-editable after) describing the intended scope, then rebuilds
+  `~/.recon_agent_bin/` — symlinks to *only* the 6 authorized tools plus a
+  handful of read-only utilities (`ls cat grep find head tail wc file mkdir
+  touch`) — and `export PATH` to just that directory before running
+  OpenCode. This blocks OpenCode's shell tool from reaching for
+  git/python/curl/apt/ssh *by bare name*; an absolute path still reaches
+  anything on the real filesystem, so it is a soft control, not a hard
+  sandbox (no namespaces/containers involved).
+  **Exit behavior reworked 2026-08-01**: on exit, the launch script now
+  loops straight back into a fresh `"$OC"` (`while :; do "$OC"; sleep 1;
+  done`) instead of falling through to `exec bash -l` — that fallback used
+  to crash the tab (`exec: bash: not found`), because by the time it ran,
+  `$PATH` was already scoped to `$SCOPE_BIN`, which never includes `bash`
+  itself. The tab therefore never reaches an interactive bash prompt at
+  all now; the original pass's `set -m`/non-`exec`'d-job trick (meant to
+  keep a shell alive underneath OpenCode for `fg`) is moot as a result and
+  was removed.
+  **Ctrl+Z fixed differently than first thought**: it isn't dropped via a
+  bash-level `trap` — OpenCode runs its TUI in raw terminal mode, so
+  Ctrl+Z never becomes a real `SIGTSTP` at the kernel level in the first
+  place; it's delivered as a literal `0x1A` byte, and OpenCode's own
+  handling of that byte (self-suspend, not proper job-control suspend) was
+  what left the pane blank. Fixed upstream instead, in the Qt terminal
+  widget itself: `XtermTerminal`/`PtyTerminal` gained a `block_ctrl_z`
+  flag (set only for the `opencode` profile) that drops the `0x1A` byte
+  before it ever reaches the PTY.
+  **`opencode` also blocked from the plain Shell tab and Raw Output** (see
+  `_shell_launch`/`_OPENCODE_BLOCK_BODY`) — a `~/.bashrc`-installed
+  `shopt -s extdebug` + `trap ... DEBUG` that skips (not just observes) any
+  command line containing the substring `opencode`, so it isn't reachable
+  ad hoc outside its own scoped tab.
+  **Every interactive tab confined to its own scope dir** (`wizard`,
+  `shell`, `llm-nmap`; inert for `opencode` since that tab never reaches an
+  interactive prompt — see `_confine_snippet`'s docstring) — a
+  `~/.bashrc`-installed `PROMPT_COMMAND` hook snaps `$PWD` back into
+  `$TR_SCOPE_DIR` after any command that moves it outside — `cd`, `pushd`,
+  a sourced script, not just a literal `cd ..`. Soft lock only: an
+  absolute path still reaches the rest of the filesystem, same ceiling as
+  the PATH-scoping above.
+- **`src/core/llm_keys.py`** — Settings ▸ **Set LLM API Key…** / **Remove
+  LLM API Key…** (`main_window.py`, next to Save Scan/Quit). Free-text
+  provider name (not limited to openai/gemini — anything with an installed
+  `llm` plugin). `set_llm_key`/`remove_llm_key`/`has_llm_key` shell out to
+  `llm keys set/list` and edit `keys.json` directly for removal (`llm keys`
+  has no remove subcommand). Kept out of `src/ui/` per the
+  GUI-never-builds-commands rule. **Must invoke `wsl.exe` with `-e`
+  (`--exec`)** — without it, `wsl.exe bash -lc "multi-statement script"`
+  gets re-parsed through an extra shell layer that silently drops variable
+  assignments across `;`-separated statements (confirmed by reproduction:
+  `OC=x; [ -z "$OC" ] && echo BUG` prints `BUG` without `-e`, correctly
+  doesn't with it). The exact same bug was found and fixed the same session
+  in `terminal_tabs.make_terminal()`'s `XtermTerminal`/`PtyTerminal` argv
+  construction (tier-3 fallback already had `-e`; tiers 1–2 didn't) — it's
+  why the OpenCode tab silently failed to find its own binary until fixed.
+- **Safety incident found and fixed during this pass**: an early version of
+  `_opencode_launch`'s PATH-scope rebuild used `rm -f "$SCOPE_BIN"/*` to
+  clear old symlinks. `$HOME` was observed empty in one non-interactive WSL
+  invocation shape tested, which would silently collapse `$SCOPE_BIN` to
+  `""` and turn that into `rm -f /*` — a real-if-narrow root-filesystem-wipe
+  risk (only survived because of permission errors, not because the code
+  was safe). Fixed with an explicit `if [ -z "$HOME" ]` guard that aborts
+  before touching the filesystem at all, and by replacing the wildcard glob
+  with per-name `rm -f "$SCOPE_BIN/$tool"` deletes that can never expand
+  past the intended directory.
 
 ### Validation (`src/validation/common.py`)
 
@@ -259,12 +371,16 @@ reads it back (it is the compliance record). The old
 
 ## Known live safety gaps (not yet fixed)
 
-1. **`RawOutputTab` and LLM Mode are plain terminals, zero gate involvement**
-   — by explicit user request, not an oversight. The only GUI path behind
+1. **LLM Mode is a plain terminal, zero gate involvement** — by explicit
+   user request, not an oversight. The only GUI path behind
    `ConfirmationGate` is the top-bar Direct Tool Mode Execute button (which
-   then displays its output in Raw Output). The Wizard Console
-   (`chain_wizard/`) has its own per-step "yes" confirmation built into the
-   CLI, a separate, self-contained safety check.
+   then displays its output in Raw Output — now display-only, see below).
+   The Wizard Console (`chain_wizard/`) has its own per-step "yes"
+   confirmation built into the CLI, a separate, self-contained safety
+   check. **`RawOutputTab` narrowed 2026-08-01**: it's `read_only=True`
+   now — nothing typed into it ever reaches the shell, only Direct Tool
+   Mode's already-gated output does — so it's no longer a free-typing
+   ungated terminal the way LLM Mode still is.
 2. **Resource-driven migration is narrower now, not closed** — `tool_commands.json`,
    `warheads/*.json`, and `flag_impacts.json` (all 6 tools) moved out of
    `config.py` 2026-08-01. Still hardcoded there: `STYLESHEET`,
@@ -283,7 +399,10 @@ this app at a real target outside the demo.
 Cloned source under `tools/` (repo root, gitignored, reference-only — nmap,
 thc-hydra, evil-winrm-py, ncrack, ncat-w32) is unrelated to what actually
 runs; see `CROSS_PLATFORM_TERMINAL_PLAN.md`'s platform-routing table for the
-real execution path.
+real execution path. Two more live under `tools/` since 2026-08-01, also
+gitignored, but these two *are* actually wired into the GUI (LLM Mode page,
+above): `tools/llm-tools-nmap/` (the `llm` CLI function-calling plugin) and
+`tools/opencode-workspace/` (OpenCode's cd-target + its `AGENTS.md`).
 
 ### WSL2 Ubuntu (Windows) — current tool-runner
 
