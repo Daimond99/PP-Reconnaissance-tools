@@ -8,6 +8,26 @@ described UI files removed in earlier passes.)
 
 ---
 
+## 2026-08-01 — WSL `/mnt/c` clone failure documented + guarded
+
+A user cloning per README's manual steps hit `chmod on
+.git/config.lock failed: Operation not permitted` / `fatal: could not set
+'core.filemode' to 'false'` on a fresh WSL machine. Cause: they were
+sitting in `/mnt/c/Users/<name>` (WSL's view of the Windows filesystem,
+DrvFs) when running `git clone` — DrvFs doesn't fully support the file
+permissions git needs there. Not a bug in this repo's code; `install.sh`
+was already unaffected (`$HOME/TheRecon` default is a native Linux path,
+never `/mnt/...`), only the README's manual clone instructions were
+exposed to it.
+
+Fixed: README's manual clone step now says `cd ~` first and explains why,
+with the exact error text so it's greppable; `install.sh` gained a guard
+that warns (doesn't block — an explicit `$THERECON_DIR` override is
+respected) if `$THERECON_DIR` is pointed at `/mnt/...` while running under
+WSL.
+
+---
+
 ## 2026-08-01 — README: per-platform install steps + LLM Mode setup gap documented
 
 Follow-up to the installer pass below: `install.sh`/`install.ps1` only

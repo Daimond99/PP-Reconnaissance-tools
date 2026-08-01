@@ -32,6 +32,18 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/CLAUDE.md" ] && [ -f "$SCRIPT_DIR/r
     log "running from existing checkout: $REPO_DIR"
 else
     REPO_DIR="${THERECON_DIR:-$HOME/TheRecon}"
+    # On WSL, cloning onto the Windows filesystem (/mnt/c/...) can fail
+    # with "chmod on .git/config.lock failed: Operation not permitted" --
+    # DrvFs doesn't fully support the permissions git needs. $HOME/TheRecon
+    # (the default) is already a native Linux path, so this only fires if
+    # $THERECON_DIR was explicitly pointed at /mnt/...
+    case "$REPO_DIR" in
+        /mnt/*)
+            if grep -qi microsoft /proc/version 2>/dev/null; then
+                log "WARNING: \$THERECON_DIR ($REPO_DIR) is on the Windows filesystem (/mnt/...) -- 'git clone' there often fails on WSL (DrvFs permissions). Prefer a native Linux path, e.g. \$HOME/TheRecon."
+            fi
+            ;;
+    esac
     if [ -d "$REPO_DIR/.git" ]; then
         log "repo already at $REPO_DIR, pulling latest"
         git -C "$REPO_DIR" pull --ff-only

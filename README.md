@@ -58,7 +58,16 @@ sudo gem install evil-winrm
 
 ### 3. Clone the repo and install Python deps
 
+> **WSL users:** clone into your Linux home (`cd ~` first), **not**
+> `/mnt/c/...`. Cloning onto the Windows filesystem from inside WSL can
+> fail with `chmod on .git/config.lock failed: Operation not permitted` —
+> Windows' DrvFs mount doesn't fully support the file permissions git
+> needs. Native Linux paths (`/home/<user>/...`) don't have this problem.
+> The app itself still runs fine on Windows either way — this is only
+> about *where the repo folder lives*.
+
 ```bash
+cd ~
 git clone https://github.com/Daimond99/TheRecon.git
 cd TheRecon
 
