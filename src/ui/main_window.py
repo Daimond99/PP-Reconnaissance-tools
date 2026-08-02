@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QMessageBox, QMenu, QFileDialog, QSplitter, QInputDialog, QLineEdit,
 )
-from PySide6.QtCore import Qt, QRect, QEvent, QTimer
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 
 from src.config import (
@@ -51,16 +51,9 @@ class ReconMainWindow(QMainWindow):
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
         
-        # Resize handling
-        self.resize_margin = 10  # ขอบสำหรับ resize
-        self.is_resizing = False
-        self.resize_direction = None
-        self.drag_start_pos = None
-        self.drag_start_geometry = None
-        
-        # Drag handling
-        self.dragPos = None
-        
+        # Resize edge hit-test margin, in px -- see _get_resize_direction.
+        self.resize_margin = 10
+
         self._build_menu()
         self._build_ui()
         self._connect_signals()
@@ -210,11 +203,36 @@ class ReconMainWindow(QMainWindow):
         status_bar.hide()
         root.addWidget(status_bar)
 
+    # Direction string (from _get_resize_direction) -> Qt.Edge flags, for
+    # QWindow.startSystemResize().
+    _RESIZE_EDGES = {
+        "top": Qt.Edge.TopEdge,
+        "bottom": Qt.Edge.BottomEdge,
+        "left": Qt.Edge.LeftEdge,
+        "right": Qt.Edge.RightEdge,
+        "top-left": Qt.Edge.TopEdge | Qt.Edge.LeftEdge,
+        "top-right": Qt.Edge.TopEdge | Qt.Edge.RightEdge,
+        "bottom-left": Qt.Edge.BottomEdge | Qt.Edge.LeftEdge,
+        "bottom-right": Qt.Edge.BottomEdge | Qt.Edge.RightEdge,
+    }
+
     def eventFilter(self, watched, event):
-        """Make the frameless window drag and resize like a native window."""
+        """Make the frameless window drag and resize like a native window.
+
+        Delegates the actual move/resize to the platform via
+        QWindow.startSystemMove()/startSystemResize() instead of tracking
+        mouse deltas and calling self.move()/setGeometry() by hand. Wayland
+        (WSLg's default compositor) has no protocol for a client to place
+        itself at an absolute position or resize itself outside of one of
+        these interactive, compositor-driven grabs -- the old hand-rolled
+        version worked under X11/native Windows but silently did nothing
+        under WSLg, since Wayland clients simply aren't allowed to move or
+        resize themselves that way. startSystemMove/startSystemResize are
+        the portable API for this and work under X11, Windows, and Wayland
+        alike.
+        """
         if event.type() not in (
             QEvent.MouseButtonPress, QEvent.MouseButtonDblClick,
-            QEvent.MouseMove, QEvent.MouseButtonRelease,
         ):
             return super().eventFilter(watched, event)
 
@@ -223,36 +241,24 @@ class ReconMainWindow(QMainWindow):
             self._toggle_maximize()
             return True
         if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            window = self.windowHandle()
+            if window is None:
+                return super().eventFilter(watched, event)
             direction = self._get_resize_direction(pos)
             if direction and not self.isMaximized():
-                self.is_resizing = True
-                self.resize_direction = direction
-                self.drag_start_pos = event.globalPosition().toPoint()
-                self.drag_start_geometry = QRect(self.geometry())
+                window.startSystemResize(self._RESIZE_EDGES[direction])
                 return True
             if watched in self._drag_widgets:
-                self.dragPos = event.globalPosition().toPoint()
+                window.startSystemMove()
                 return True
-
-        if event.type() == QEvent.MouseMove:
-            self._update_cursor(pos)
-            if event.buttons() & Qt.LeftButton:
-                if self.is_resizing:
-                    self._handle_resize(event.globalPosition().toPoint())
-                    return True
-                if self.dragPos is not None:
-                    current = event.globalPosition().toPoint()
-                    self.move(self.pos() + current - self.dragPos)
-                    self.dragPos = current
-                    return True
-
-        if event.type() == QEvent.MouseButtonRelease:
-            self.is_resizing = False
-            self.resize_direction = None
-            self.dragPos = None
-            self.drag_start_pos = None
-            self.drag_start_geometry = None
         return super().eventFilter(watched, event)
+
+    def mouseMoveEvent(self, event) -> None:
+        """Cursor-only now -- the actual resize grab is handled by the
+        platform once startSystemResize() is invoked from eventFilter."""
+        if not self.isMaximized():
+            self._update_cursor(event.position().toPoint())
+        super().mouseMoveEvent(event)
 
     def _toggle_maximize(self):
         if self.isMaximized():
@@ -321,49 +327,6 @@ class ReconMainWindow(QMainWindow):
         """Reset cursor when mouse leaves window"""
         self.setCursor(Qt.ArrowCursor)
         super().leaveEvent(event)
-
-    def _handle_resize(self, global_pos):
-        """จัดการการปรับขนาดหน้าต่าง"""
-        if not self.drag_start_pos or not self.drag_start_geometry:
-            return
-            
-        delta = global_pos - self.drag_start_pos
-        geometry = QRect(self.drag_start_geometry)
-        min_width = self.minimumWidth()
-        min_height = self.minimumHeight()
-        
-        direction = self.resize_direction
-        
-        # ปรับขนาดตามทิศทาง
-        if "left" in direction:
-            new_left = geometry.left() + delta.x()
-            if geometry.right() - new_left >= min_width:
-                geometry.setLeft(new_left)
-            else:
-                geometry.setLeft(geometry.right() - min_width)
-        
-        if "right" in direction:
-            new_right = geometry.right() + delta.x()
-            if new_right - geometry.left() >= min_width:
-                geometry.setRight(new_right)
-            else:
-                geometry.setRight(geometry.left() + min_width)
-        
-        if "top" in direction:
-            new_top = geometry.top() + delta.y()
-            if geometry.bottom() - new_top >= min_height:
-                geometry.setTop(new_top)
-            else:
-                geometry.setTop(geometry.bottom() - min_height)
-        
-        if "bottom" in direction:
-            new_bottom = geometry.bottom() + delta.y()
-            if new_bottom - geometry.top() >= min_height:
-                geometry.setBottom(new_bottom)
-            else:
-                geometry.setBottom(geometry.top() + min_height)
-        
-        self.setGeometry(geometry)
 
     def _connect_signals(self):
         self.sidebar.navigate.connect(self._on_sidebar_navigation)

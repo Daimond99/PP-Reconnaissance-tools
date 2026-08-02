@@ -253,6 +253,13 @@ class XtermTerminal(QWidget):
         self._pending: Optional[str] = None
         self._out_buffer = ""
         self._first_output_seen = False
+        # Read-only tabs (Raw Output) still need to let the user answer an
+        # interactive prompt from an already-gated command (e.g. `sudo`'s
+        # password prompt) -- typing is unlocked only while a run_command()
+        # invocation is in flight, and re-locked the moment it reports done,
+        # so the open window can feed keystrokes to that one running command
+        # and never to a fresh shell prompt.
+        self._command_running = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -333,18 +340,25 @@ class XtermTerminal(QWidget):
         m = self._DONE_RE.search(self._out_buffer)
         if m:
             self._out_buffer = ""
+            self._command_running = False
             self.commandDone.emit(m.group(1), int(m.group(2)))
 
     def _on_closed(self) -> None:
+        self._command_running = False
         self.processFinished.emit()
 
     def _on_key(self, text: str) -> None:
-        if self._read_only:
+        if self._read_only and not self._command_running:
             # Display-only (Raw Output): drop every keystroke/paste from
-            # the page before it reaches the PTY. `write_text`/`run_command`
-            # (Direct Tool Mode's programmatic injection) write to
-            # `self._backend` directly and never go through here, so the
-            # gated-command display path is unaffected.
+            # the page before it reaches the PTY, except while a
+            # run_command()-launched command is still running -- that
+            # narrow window lets the user answer an interactive prompt
+            # (e.g. `sudo`'s password) the already-gated command itself
+            # raised, without ever exposing a free-typing shell prompt.
+            # `write_text`/`run_command` (Direct Tool Mode's programmatic
+            # injection) write to `self._backend` directly and never go
+            # through here, so the gated-command dispatch path is unaffected
+            # either way.
             return
         if self._block_ctrl_z and "\x1a" in text:
             # OpenCode runs its TUI in raw terminal mode, so Ctrl+Z (0x1A)
@@ -388,6 +402,7 @@ class XtermTerminal(QWidget):
         it finishes. Returns the token."""
         token = uuid.uuid4().hex[:8]
         wrapped = f"{cmd}; printf '__TR_DONE_%s_%d__\\n' {token} $?"
+        self._command_running = True
         self.write_text(wrapped)
         return token
 
@@ -401,12 +416,37 @@ class XtermTerminal(QWidget):
     def focus(self) -> None:
         """Give the terminal real keyboard focus — Qt widget focus alone
         doesn't focus xterm.js's own hidden textarea, so Ctrl+C typed right
-        after switching tabs would otherwise go nowhere."""
+        after switching tabs would otherwise go nowhere. Also re-fits the
+        grid: a tab that was created while hidden (e.g. a fixed LLM Mode
+        tab never resized after its first, possibly zero-size layout pass)
+        never gets a browser `resize` event once it's actually shown at
+        full size, so its cursor-cell math can stay permanently off until
+        something re-fits it — switching to the tab is that trigger. The
+        `typeof term` guard avoids a `ReferenceError` if focus() is called
+        before term.html's own script has finished running.
+        """
         self.view.setFocus()
-        self.view.page().runJavaScript("term.focus();")
+        self.view.page().runJavaScript(
+            "if (typeof term !== 'undefined') { "
+            "if (typeof trRefit === 'function') { try { trRefit(); } catch (e) {} } "
+            "term.focus(); "
+            "}"
+        )
 
     # -- teardown ----------------------------------------------------------
     def stop(self) -> None:
+        """Kill the child process, then block until `_reader` (a QThread
+        parked in a blocking `os.read()`/ConPTY read on the PTY fd) has
+        actually exited before returning. `_reader.stop()` alone only flips
+        a flag the blocked read can't see; closing the backend's fd out
+        from under that still-blocked read is what unblocks it (Linux
+        raises EBADF, ConPTY's read call errors out). Callers (tab-close)
+        call `deleteLater()` right after `stop()` returns — Qt considers
+        destroying a QThread while `isRunning()` is still true undefined
+        behavior, which is exactly what a real crash here traced back to
+        ('QThread: Destroyed while thread is still running'), so this must
+        not return until the thread has actually finished, not just been
+        asked to."""
         if self._reader:
             self._reader.stop()
         if self._backend:
@@ -415,6 +455,8 @@ class XtermTerminal(QWidget):
                     self._backend.terminate()
             except Exception:
                 pass
+        if self._reader:
+            self._reader.wait(2000)
 
     def closeEvent(self, event):
         self.stop()
