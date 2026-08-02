@@ -8,7 +8,8 @@ PySide6>=6.6.0
 # in a QWebEngineView, driven by a real PTY (ConPTY via pywinpty on Windows,
 # stdlib `pty` on Linux). Gives reflow-on-resize, mouse select, copy/paste, and
 # full curses apps (vim/htop/python). Vendored JS lives in src/ui/webterm/vendor.
-PySide6-QtWebEngine>=6.6.0
+# QtWebEngine ships as part of the PySide6-Addons wheel, pulled in automatically
+# by the PySide6>=6.6.0 dependency above — no separate package to pin here.
 
 # Legacy Wizard Console fallback — pyte VT emulator (cross-platform) + pywinpty
 # ConPTY (Windows-only). Used only if QtWebEngine is unavailable.
