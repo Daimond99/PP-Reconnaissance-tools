@@ -11,8 +11,8 @@ from datetime import datetime
 from typing import Optional, Tuple
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QMessageBox, QMenu, QFileDialog, QSplitter, QInputDialog, QLineEdit,
+    QApplication, QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
+    QPushButton, QMessageBox, QMenu, QFileDialog, QSplitter, QInputDialog, QLineEdit,
 )
 from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtGui import QAction, QKeySequence
@@ -83,7 +83,6 @@ class ReconMainWindow(QMainWindow):
         central = QWidget()
         central.setObjectName("CentralWidget")
         self.setCentralWidget(central)
-        central.installEventFilter(self)
 
         # Main Layout
         root = QVBoxLayout(central)
@@ -148,8 +147,17 @@ class ReconMainWindow(QMainWindow):
         title_layout.addWidget(drag_spacer, 1)
         title_layout.addLayout(controls_layout)
         self._drag_widgets = (self.title_bar, drag_spacer)
-        for widget in self._drag_widgets:
-            widget.installEventFilter(self)
+        # App-wide, not per-widget: the resize-edge hit test needs to catch
+        # a press anywhere near the window border, but the border is only
+        # a few px of `central`'s own background peeking out around the
+        # child widgets that otherwise cover the whole window -- an
+        # eventFilter installed on a single widget only ever sees events
+        # addressed to that exact widget, so a per-widget filter missed
+        # presses that landed on a neighboring child instead of that sliver.
+        # A QApplication-level filter sees every press before it's
+        # delivered anywhere, so the edge check works regardless of which
+        # child widget happens to be directly under the cursor.
+        QApplication.instance().installEventFilter(self)
 
         root.addWidget(self.title_bar)
 
@@ -234,6 +242,12 @@ class ReconMainWindow(QMainWindow):
         if event.type() not in (
             QEvent.MouseButtonPress, QEvent.MouseButtonDblClick,
         ):
+            return super().eventFilter(watched, event)
+        # App-wide filter: ignore anything that isn't a widget of this
+        # window (other top-level windows, QMenu/QMessageBox popups, etc.)
+        # before touching mapTo(), which requires `watched` to actually be
+        # a descendant of `self`.
+        if not isinstance(watched, QWidget) or watched.window() is not self:
             return super().eventFilter(watched, event)
 
         pos = watched.mapTo(self, event.position().toPoint())
