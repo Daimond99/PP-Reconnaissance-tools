@@ -146,11 +146,19 @@ class DropdownButton(QPushButton):
         # constant x regardless of the current label's length. Both labels
         # are click-through (WA_TransparentForMouseEvents) so the press
         # still reaches this QPushButton underneath.
+        # Margins mirror the #MissionCombo stylesheet padding (8px vert,
+        # 10px horiz) so the label text starts at the same left inset as the
+        # sibling QLineEdit (TARGET). A layout on a QPushButton overrides the
+        # stylesheet padding for child positioning, so with the old (0,0,0,0)
+        # the label sat flush against the left border while the QLineEdit's
+        # text kept its 10px pad -- that mismatch is what made the row look
+        # unaligned even though every box is the same height.
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(15, 8, 10, 8)
         layout.setSpacing(4)
         self._label = QLabel()
         self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self._label.setStyleSheet(f"background: transparent; border: none; color: {TEXT};")
         self._arrow = QLabel("▾")
         self._arrow.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
