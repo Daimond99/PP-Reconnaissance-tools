@@ -1,7 +1,7 @@
 {
-  "-p": "ระบุช่วง port ที่จะสแกน ยิ่งช่วงกว้าง (เช่น 1-65535) ยิ่งใช้เวลาและสร้าง traffic มาก",
-  "--rate": "กำหนดอัตราส่ง packet ต่อวินาที ค่ายิ่งสูงยิ่งเร็วแต่มีโอกาสถูกตรวจจับ/ทำให้เครือข่ายเป้าหมายสะดุดสูงมาก",
-  "--wait": "หน่วงเวลารอผลลัพธ์หลังส่ง packet ครบ ค่าสูงช่วยลด packet loss แต่ทำให้สแกนช้าลง",
-  "--banners": "เชื่อมต่อไปยัง port ที่เปิดเพื่อดึง banner จริง เพิ่ม traffic/footprint เมื่อเทียบกับสแกนเปล่า ๆ",
-  "--shard": "แบ่งงานสแกนออกเป็นหลายส่วนรันขนาน เป้าหมายเห็น traffic มาจากหลาย session พร้อมกัน"
+  "-p": "Sets the port range to scan — wider ranges (e.g. 1-65535) take longer and generate much more traffic",
+  "--rate": "Sets packets-per-second — higher is faster but more likely to be detected / disrupt the target network",
+  "--wait": "Delay after all packets are sent before collecting results — higher reduces packet loss but slows the scan",
+  "--banners": "Connects to open ports to grab real banners — more traffic/footprint than a bare scan",
+  "--shard": "Splits the scan into parallel shards — the target sees traffic from multiple sessions at once"
 }

@@ -199,7 +199,7 @@ def _bashrc_once(marker: str, body: str) -> str:
 
 _CONFINE_MARKER = "# TheRecon: confine cd to this tab scope dir (auto-added)"
 _CONFINE_BODY = (
-    'if [ -n "$TR_SCOPE_DIR" ]; then\n'
+    'if [ -n "$TR_SCOPE_DIR" ] && [ -d "$TR_SCOPE_DIR" ]; then\n'
     "  _tr_confine() {\n"
     '    case "$PWD" in\n'
     '      "$TR_SCOPE_DIR"|"$TR_SCOPE_DIR"/*) ;;\n'
@@ -301,17 +301,32 @@ def _llm_launch(llm_dir: str) -> str:
     prints the literal string "No keys found" when empty."""
     return (
         _confine_snippet(llm_dir) +
+        # Banner width is hardcoded, not read from `tput cols`/$COLUMNS --
+        # querying real terminal size this early (before the pane's first
+        # PTY-resize round-trip lands, see term.html's retry-fit loop) is
+        # exactly the stale-size trap that caused the cursor/reflow bug this
+        # banner was rewritten to avoid; every line here is kept comfortably
+        # under 56 cols (chain_wizard/core/display.py's own _MAX_WIDTH) so
+        # it can never wrap regardless of the pane's real width.
+        "_bar='" + "=" * 54 + "'; "
+        "printf '\\n\\033[36m%s\\033[0m\\n' \"$_bar\"; "
+        "printf '  \\033[1mLLM Nmap\\033[0m\\n'; "
+        "printf '  AI-assisted nmap scanning via the llm CLI\\n'; "
+        "printf '\\033[36m%s\\033[0m\\n\\n' \"$_bar\"; "
+        "printf '  \\033[34m[*]\\033[0m Example:\\n'; "
+        "printf '  \\033[34m[*]\\033[0m llm --functions llm-tools-nmap.py "
+        "\"scan TARGET\"\\n'; "
+        "printf '  \\033[34m[*]\\033[0m -m <model>  ->  override the default "
+        "model\\n'; "
+        "printf '  \\033[34m[*]\\033[0m llm models -q gemini  ->  list gemini "
+        "options\\n\\n'; "
         'if [ "$(llm keys list 2>/dev/null)" = "No keys found" ]; then '
-        "echo '[!] No LLM API key set yet.'; "
-        "echo 'Providers: llm keys set openai | llm install llm-gemini && llm keys set gemini'; "
+        "printf '  \\033[33m[!]\\033[0m No LLM API key set yet.\\n'; "
+        "printf '  \\033[33m[!]\\033[0m llm keys set openai  |  llm install "
+        "llm-gemini && llm keys set gemini\\n'; "
         'printf "Set an OpenAI key now? [y/N] "; read ans; '
         'case "$ans" in y|Y|yes|Yes) llm keys set openai ;; esac; '
         "fi; "
-        "echo '--- LLM Nmap ---'; "
-        "echo 'Example:'; "
-        "echo '  llm --functions llm-tools-nmap.py \"scan 192.168.1.1 for common ports\"'; "
-        "echo '(add -m <model> to override the default model; llm models -q gemini lists gemini options)'; "
-        "echo '----------------'; "
         "exec bash -l"
     )
 

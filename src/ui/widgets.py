@@ -225,12 +225,18 @@ class TopBar(QFrame):
         row1 = QHBoxLayout()
         row1.setSpacing(16)
 
+        # All four controls share one fixed height so the QLineEdit and the
+        # QPushButton-based DropdownButtons (whose native sizeHints don't
+        # agree even with identical stylesheet padding) line up exactly.
+        _FIELD_HEIGHT = 38
+
         target_col = QVBoxLayout()
         target_col.setSpacing(5)
         target_col.addWidget(self._field_label("TARGET"))
         self.target_input = QLineEdit()
         self.target_input.setObjectName("MissionCombo")
         self.target_input.setFixedWidth(150)
+        self.target_input.setFixedHeight(_FIELD_HEIGHT)
         self.target_input.setText("192.168.1.0/24")
         target_col.addWidget(self.target_input)
         row1.addLayout(target_col)
@@ -245,6 +251,7 @@ class TopBar(QFrame):
         # explicitly picked (see main_window._on_opmode_change).
         self.opmode_combo.addItems(OPERATION_MODES)
         self.opmode_combo.setFixedWidth(150)
+        self.opmode_combo.setFixedHeight(_FIELD_HEIGHT)
         mode_col.addWidget(self.opmode_combo)
         row1.addLayout(mode_col)
 
@@ -257,6 +264,7 @@ class TopBar(QFrame):
         self.tool_combo.setObjectName("MissionCombo")
         self.tool_combo.addItems(tool_names)
         self.tool_combo.setFixedWidth(130)
+        self.tool_combo.setFixedHeight(_FIELD_HEIGHT)
         tool_col.addWidget(self.tool_combo)
         row1.addLayout(tool_col)
 
@@ -267,6 +275,7 @@ class TopBar(QFrame):
         self.warhead_combo.setObjectName("MissionCombo")
         self.warhead_combo.addItems(WARHEAD_BY_TOOL.get(tool_names[0] if tool_names else "", {}).keys())
         self.warhead_combo.setFixedWidth(220)
+        self.warhead_combo.setFixedHeight(_FIELD_HEIGHT)
         profile_col.addWidget(self.warhead_combo)
         row1.addLayout(profile_col)
 

@@ -71,12 +71,19 @@ cd ~
 git clone https://github.com/Daimond99/TheRecon.git
 cd TheRecon
 
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# Linux/macOS: source .venv/bin/activate
+# Windows:        python -m venv .venv   &&  .venv\Scripts\activate
+# Linux/WSL/macOS: python3 -m venv .venv  &&  source .venv/bin/activate
+# (Debian/Kali/Ubuntu only ship `python3`, not a bare `python` — using
+# the wrong one here is what "Command 'python' not found" means)
 
 pip install -r requirements.txt
 ```
+
+> **Debian/Kali/Ubuntu note:** if you skip the venv step (or it silently
+> failed) and run `pip install` against the system Python directly, you'll
+> hit `error: externally-managed-environment` (PEP 668) — recent Debian-based
+> distros refuse system-wide `pip install` on purpose. The venv above is the
+> fix, not `--break-system-packages`.
 
 `PySide6-QtWebEngine` (the Wizard Console's terminal renderer) and `pywinpty` (Windows-only ConPTY fallback) install automatically via `requirements.txt`.
 

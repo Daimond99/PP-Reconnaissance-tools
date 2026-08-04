@@ -1,11 +1,11 @@
 {
-  "-i": "ระบุ IP/hostname เป้าหมายที่จะเชื่อมต่อ WinRM",
-  "-u": "ระบุ username ที่ใช้ล็อกอิน",
-  "-p": "ระบุ password ที่ใช้ล็อกอิน — เห็นเป็น plaintext ในคำสั่ง ระวังหลุดผ่าน log/shell history",
-  "-s": "ระบุโฟลเดอร์ script ฝั่งเครื่อง attacker ที่อัปโหลด/รันบนเป้าหมายได้ — เปิดช่องทาง execute code จริงบนเป้าหมาย",
-  "-e": "ระบุโฟลเดอร์ executable ฝั่งเครื่อง attacker ที่พร้อมอัปโหลดไปรันบนเป้าหมาย — ความเสี่ยงสูง เทียบเท่าส่ง payload เข้าเครื่อง",
-  "-S": "ใช้ SSL/TLS เชื่อมต่อ WinRM (มักคู่กับ port 5986)",
-  "-P": "ระบุ port ที่จะเชื่อมต่อ (default 5985 หรือ 5986 สำหรับ SSL)",
-  "-l": "เปิด logging การเชื่อมต่อ/คำสั่งที่รันในเซสชัน",
-  "--no-colors": "ปิดสีใน output ของเซสชัน"
+  "-i": "Sets the target IP/hostname to connect WinRM to",
+  "-u": "Sets the login username",
+  "-p": "Sets the login password — appears as plaintext in the command, watch for it leaking via logs/shell history",
+  "-s": "Sets an attacker-side script folder that can be uploaded/run on the target — opens a real code-execution path on the target",
+  "-e": "Sets an attacker-side executable folder ready to upload and run on the target — high risk, equivalent to delivering a payload onto the machine",
+  "-S": "Uses SSL/TLS for the WinRM connection (usually paired with port 5986)",
+  "-P": "Sets the port to connect to (default 5985, or 5986 for SSL)",
+  "-l": "Enables logging of the session's connections/commands",
+  "--no-colors": "Disables color in the session output"
 }

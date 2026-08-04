@@ -116,7 +116,7 @@ class ConfirmationGate:
         flags = [tok for tok in argv[tool_idx + 1:] if tok != target]
         impact = generate_impact_description(flags, target, tool)
         if sudo_prefixed:
-            impact = f"{impact}\n              [!] รันด้วยสิทธิ์ root (sudo) — คำสั่งนี้มีสิทธิ์เข้าถึงระบบเต็มรูปแบบ"
+            impact = f"{impact}\n              [!] Running as root (sudo) — this command has full system access"
         if extra_impact:
             impact = f"{impact}\n              {extra_impact}"
         preview = format_confirmation_box(command, target, impact)

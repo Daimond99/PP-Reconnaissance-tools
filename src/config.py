@@ -499,6 +499,7 @@ QPushButton {{
 }}
 QPushButton:hover {{ background-color: #44475a; border-color: #6272a4; }}
 QPushButton:pressed {{ background-color: #252633; border-color: #bd93f9; }}
+#MissionCombo {{ text-align: left; padding: 8px 10px; }}
 #ExecuteButton, #ActionButton {{
     background-color: #6272a4;
     color: #f8f8f2;

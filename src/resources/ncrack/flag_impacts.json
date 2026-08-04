@@ -1,7 +1,7 @@
 {
-  "-u": "ระบุ username เดียวที่จะทดลอง",
-  "-U": "ระบุไฟล์รายชื่อ username หลายรายการ",
-  "-p": "ระบุ password เดียวที่จะทดลอง",
-  "-P": "ระบุไฟล์ wordlist password — ยิ่งไฟล์ใหญ่ยิ่งใช้เวลานานและเสี่ยง account lockout/ถูกตรวจจับสูง",
-  "-T": "Timing template (0-5) ค่ายิ่งสูงยิ่งเร็วแต่เสี่ยง lockout/ถูกตรวจจับสูงตามไปด้วย"
+  "-u": "Sets a single username to try",
+  "-U": "Sets a wordlist file of usernames",
+  "-p": "Sets a single password to try",
+  "-P": "Sets a password wordlist file — larger files take longer and raise the risk of account lockout/detection",
+  "-T": "Timing template (0-5) — higher is faster but raises the risk of lockout/detection accordingly"
 }

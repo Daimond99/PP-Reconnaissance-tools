@@ -833,8 +833,7 @@ class ReconMainWindow(QMainWindow):
     def closeEvent(self, event):
         reply = QMessageBox.question(
             self, "Quit",
-            "Close TheRecon? This will stop all running terminals"
-            + (" and shut down WSL." if os.name == "nt" else "."),
+            "Close TheRecon? This will stop all running terminals.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
@@ -849,18 +848,5 @@ class ReconMainWindow(QMainWindow):
             stop = getattr(term, "stop", None)
             if callable(stop):
                 stop()
-
-        if os.name == "nt":
-            import subprocess
-            try:
-                # --shutdown tears down the whole WSL2 VM (not tied to a
-                # distro name), so this works regardless of which distro
-                # the user has installed/set as default.
-                subprocess.run(
-                    ["wsl.exe", "--shutdown"],
-                    timeout=5, creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-            except Exception:
-                pass
 
         super().closeEvent(event)

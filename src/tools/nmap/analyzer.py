@@ -61,9 +61,9 @@ def generate_impact_description(flags: List[str], target: str, tool: str = "nmap
 
     host_count = _estimate_host_count(target)
     if host_count and host_count > 1:
-        notes.append(f"จะทำการสแกนเป้าหมายทั้งหมดประมาณ {host_count} host ในช่วง {target}")
+        notes.append(f"Will scan approximately {host_count} hosts across {target}")
     else:
-        notes.append(f"จะทำการสแกนเป้าหมายเดียว: {target}")
+        notes.append(f"Will scan a single target: {target}")
 
     idx = 0
     seen_flags: List[str] = []
@@ -79,10 +79,10 @@ def generate_impact_description(flags: List[str], target: str, tool: str = "nmap
         idx += 1
 
     if "-A" in seen_flags or "-O" in seen_flags:
-        notes.append("[!] คำสั่งนี้จัดว่า intrusive — มีโอกาสถูกตรวจจับโดย IDS/IPS สูงกว่าปกติ")
+        notes.append("[!] This command is intrusive — higher chance of IDS/IPS detection than usual")
 
     notes.append(
-        "มีการส่ง packet ออกไปยังเครื่องปลายทางจริง อาจถูกตรวจจับหรือบันทึกโดยระบบเฝ้าระวังของเป้าหมาย"
+        "Sends real packets to the target host(s) — may be detected or logged by the target's monitoring"
     )
     return "\n              ".join(notes)
 
@@ -95,9 +95,9 @@ def format_confirmation_box(command: str, target: str, impact: str) -> str:
         f" Command : {command}\n"
         f" Target  : {target}\n"
         f" Impact  : {impact}\n"
-        " Scope Check : ยืนยันว่า target อยู่ในขอบเขตที่ได้รับอนุญาต (sandbox/lab) แล้ว?\n"
+        " Scope Check : confirmed that the target is within the authorized scope (sandbox/lab)?\n"
         "─────────────────────────────────────────\n"
-        ' พิมพ์ "yes" เพื่อยืนยันและรันคำสั่ง หรือ "no" เพื่อยกเลิกและกลับไปแก้ไข'
+        ' Type "yes" to confirm and run the command, or "no" to cancel and go back'
     )
 
 
@@ -110,23 +110,23 @@ def is_target_in_scope(target: str, scope: str) -> Tuple[bool, str]:
     """
     target = (target or "").strip()
     if not target:
-        return False, "Target ว่างเปล่า"
+        return False, "Target is empty"
 
     try:
         scope_net = ipaddress.ip_network(scope, strict=False)
     except ValueError:
-        return False, f"Scope ที่ตั้งค่าไว้ไม่ถูกต้อง: {scope}"
+        return False, f"Configured scope is invalid: {scope}"
 
     try:
         if "/" in target:
             target_net = ipaddress.ip_network(target, strict=False)
             if target_net.subnet_of(scope_net):
                 return True, ""
-            return False, f"{target} อยู่นอกขอบเขตที่ได้รับอนุญาต ({scope})"
+            return False, f"{target} is outside the authorized scope ({scope})"
         if target.count(".") == 3 and "-" not in target.rsplit(".", 1)[-1]:
             if ipaddress.ip_address(target) in scope_net:
                 return True, ""
-            return False, f"{target} อยู่นอกขอบเขตที่ได้รับอนุญาต ({scope})"
+            return False, f"{target} is outside the authorized scope ({scope})"
     except ValueError:
         pass  # hostname or IP-range expression — allow through to the human gate
 

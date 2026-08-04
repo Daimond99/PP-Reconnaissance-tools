@@ -1,9 +1,9 @@
 {
-  "-l": "ระบุ username เดียวที่จะทดลอง",
-  "-L": "ระบุไฟล์รายชื่อ username หลายรายการ — เพิ่มจำนวนการทดลองล็อกอินตามจำนวนบรรทัดในไฟล์",
-  "-p": "ระบุ password เดียวที่จะทดลอง",
-  "-P": "ระบุไฟล์ wordlist password — ยิ่งไฟล์ใหญ่ยิ่งใช้เวลานานและมีโอกาสถูกล็อกบัญชี/ตรวจจับโดย IDS/fail2ban สูง",
-  "-t": "จำนวน thread ที่รันพร้อมกัน ค่าสูงเร่งความเร็วแต่เพิ่มโอกาส account lockout/ถูกตรวจจับ",
-  "-w": "เวลารอ (วินาที) ระหว่างการทดลองแต่ละครั้ง ค่าสูงช่วยหลบเลี่ยง lockout/IDS แต่ทำให้ช้าลง",
-  "-M": "ระบุไฟล์รายชื่อเป้าหมายหลายเครื่อง — โจมตีพร้อมกันหลาย host ในคำสั่งเดียว"
+  "-l": "Sets a single username to try",
+  "-L": "Sets a wordlist file of usernames — login attempts scale with the number of lines in the file",
+  "-p": "Sets a single password to try",
+  "-P": "Sets a password wordlist file — larger files take longer and raise the risk of account lockout / IDS-fail2ban detection",
+  "-t": "Number of parallel threads — higher speeds things up but raises the risk of account lockout/detection",
+  "-w": "Wait time (seconds) between attempts — higher helps evade lockout/IDS but slows things down",
+  "-M": "Sets a file listing multiple targets — attacks several hosts at once in a single command"
 }

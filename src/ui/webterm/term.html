@@ -19,7 +19,7 @@
 <script>
   // ---- xterm.js setup -------------------------------------------------------
   var term = new Terminal({
-    fontFamily: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+    fontFamily: "Consolas, 'Cascadia Mono', 'Ubuntu Mono', 'DejaVu Sans Mono', 'Courier New', monospace",
     fontSize: 14,
     cursorBlink: true,
     allowProposedApi: true,
@@ -104,6 +104,10 @@
     }
     term.onResize(function (size) { bridge.resizePty(size.cols, size.rows); });
     window.addEventListener("resize", pushSize);
+    // exposed so Python (xterm_widget.py's focus()) can force a re-fit +
+    // PTY winsize sync when a tab becomes visible without its own resize
+    // event (e.g. a fixed-tab layout that never changes pixel size)
+    window.trRefit = pushSize;
 
     // initial fit, then tell Python we're ready to spawn the shell
     fitAddon.fit();
@@ -111,10 +115,18 @@
     term.focus();
   });
 
-  // keep fitting as the pane settles (fonts/layout can arrive a frame late)
+  // keep fitting as the pane settles (fonts/layout can arrive a frame late).
+  // Must go through pushSize()/trRefit (fit + bridge.resizePty), not a bare
+  // fitAddon.fit() -- fit() alone only corrects the browser-side character
+  // grid; the PTY keeps believing whatever cols/rows bridge.ready() sent at
+  // the very first (possibly pre-layout, wrong) fit until something pushes
+  // a corrected size to it. Without this, typing before the pane's first
+  // real resize/focus event lands at cursor positions computed against a
+  // stale PTY window size.
   var _fits = 0;
   var _iv = setInterval(function () {
-    try { fitAddon.fit(); } catch (e) {}
+    if (typeof trRefit === "function") { try { trRefit(); } catch (e) {} }
+    else { try { fitAddon.fit(); } catch (e) {} }
     if (++_fits > 10) clearInterval(_iv);
   }, 100);
 </script>

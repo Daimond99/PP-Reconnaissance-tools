@@ -1,8 +1,8 @@
 {
-  "-v": "เพิ่มระดับ verbose แสดงรายละเอียดการเชื่อมต่อ",
-  "-l": "เปิดโหมด listen — เปิด port รอรับการเชื่อมต่อเข้ามาที่เครื่องนี้ เสี่ยงเปิดช่องทางเข้าถึงเครื่องจากภายนอก",
-  "-e": "เชื่อม stdin/stdout ของโปรแกรมที่ระบุเข้ากับ socket โดยตรง — มักใช้ทำ shell (bind/reverse) เสี่ยงสูงมาก ให้สิทธิ์ execute จริงบนเครื่อง",
-  "--ssl": "เข้ารหัสการเชื่อมต่อด้วย SSL/TLS",
-  "-w": "กำหนด timeout ของการเชื่อมต่อ/การอ่านข้อมูล",
-  "-z": "โหมด zero-I/O ใช้สแกน port อย่างเดียว ไม่ส่งข้อมูลจริง"
+  "-v": "Raises verbosity — shows connection detail",
+  "-l": "Listen mode — opens a port on this machine waiting for inbound connections; risks exposing an entry point from outside",
+  "-e": "Wires the given program's stdin/stdout directly to the socket — commonly used for bind/reverse shells, very high risk, grants real execute access on the machine",
+  "--ssl": "Encrypts the connection with SSL/TLS",
+  "-w": "Sets the connection/read timeout",
+  "-z": "Zero-I/O mode — port-scan only, sends no real data"
 }
