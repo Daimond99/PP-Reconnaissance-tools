@@ -88,5 +88,12 @@ log "installing Python deps"
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
+# Final gate: the dependency doctor re-checks the 6 tools + python from the
+# app's own point of view and prints an exact fix for anything still
+# missing. Non-fatal (|| true) so a partial install still reaches the run
+# instructions below.
+log "running preflight doctor"
+.venv/bin/python -m src.preflight || true
+
 log "done. run the app with:"
 printf "\n  cd '%s'\n  source .venv/bin/activate\n  python -m src.main\n\n" "$REPO_DIR"

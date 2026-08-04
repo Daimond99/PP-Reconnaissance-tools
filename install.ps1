@@ -92,6 +92,13 @@ Log "installing Python deps"
 & ".venv\Scripts\pip.exe" install --upgrade pip
 & ".venv\Scripts\pip.exe" install -r requirements.txt
 
+# Final gate: the dependency doctor re-checks WSL + all 6 tools + both
+# Python runtimes from the app's own point of view and prints an exact fix
+# for anything still missing, so a half-finished install is caught here
+# rather than mid-scan. Non-fatal — a fresh box may still need a WSL reboot.
+Log "running preflight doctor"
+& ".venv\Scripts\python.exe" -m src.preflight
+
 Log "done. run the app with:"
 Write-Host ""
 Write-Host "  cd '$RepoDir'"

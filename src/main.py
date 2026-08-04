@@ -1,9 +1,10 @@
 import faulthandler
 import sys
 from pathlib import Path
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPixmap
-from PySide6.QtWidgets import QApplication, QSplashScreen
+from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
+from src import preflight
 from src.config import STYLESHEET, WINDOW_TITLE, BG, TEXT
 from src.ui.main_window import ReconMainWindow
 
@@ -20,6 +21,37 @@ faulthandler.enable(file=_crash_log_file, all_threads=True)
 # Safety cap so the splash can't hang forever if WSL boot stalls or the
 # readiness signal never fires for some other reason.
 _SPLASH_MAX_WAIT_MS = 20_000
+
+
+class _PreflightWorker(QThread):
+    """Runs the dependency doctor off the GUI thread — its WSL probes can
+    block for seconds on a cold VM, which must never freeze the window. The
+    report is delivered back to the main thread via `done` for the dialog."""
+
+    done = Signal(object)  # preflight.Report
+
+    def run(self) -> None:
+        try:
+            self.done.emit(preflight.run_checks())
+        except Exception:  # noqa: BLE001 — a doctor crash must not sink startup
+            pass
+
+
+def _show_preflight_warning(window, report) -> None:
+    """Non-blocking: if anything's missing, tell the user what and how to
+    fix it, but let them keep using whatever does work. No dialog at all
+    when every check passed."""
+    body = preflight.format_problems_html(report)
+    if not body:
+        return
+    box = QMessageBox(window)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("TheRecon — setup incomplete")
+    box.setTextFormat(Qt.TextFormat.RichText)
+    box.setText(body)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    box.setModal(False)
+    box.show()
 
 
 def _make_splash() -> QSplashScreen:
@@ -60,6 +92,16 @@ def main():
 
     window.main_area.wizard_tab.firstTabReady.connect(_close_splash)
     QTimer.singleShot(_SPLASH_MAX_WAIT_MS, _close_splash)
+
+    # Dependency doctor: check WSL + the 6 tools + both Python runtimes in
+    # the background and, only if something's missing, pop a non-blocking
+    # warning with the exact fix. Kept as an attribute so the QThread isn't
+    # garbage-collected mid-run. Started a beat after show() so it doesn't
+    # contend with the terminal's own first WSL boot for the splash window.
+    worker = _PreflightWorker()
+    worker.done.connect(lambda rep: _show_preflight_warning(window, rep))
+    window._preflight_worker = worker
+    QTimer.singleShot(2500, worker.start)
 
     sys.exit(app.exec())
 
