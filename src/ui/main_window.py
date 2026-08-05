@@ -173,7 +173,17 @@ class ReconMainWindow(QMainWindow):
         # (ANGLE/D3D, different focus routing) is unaffected, so keep the
         # broader app-wide filter there.
         if sys.platform.startswith("linux"):
-            self.installEventFilter(self)
+            # A window-level filter alone can't see presses that land on a
+            # child which consumes its own mouse events (e.g. the title bar),
+            # so window move/resize broke. Install on the specific chrome
+            # widgets that actually drive move/resize instead: `central`'s
+            # outer background sliver is the resize edge, and the title bar /
+            # drag spacer are the move handles. All three are plain QWidgets,
+            # so — unlike the QApplication-wide filter — none of them ever
+            # makes PySide wrap QtWebEngine's off-screen QQuickWindow, which
+            # is what segfaulted.
+            for w in (central, self.title_bar, drag_spacer):
+                w.installEventFilter(self)
         else:
             QApplication.instance().installEventFilter(self)
 
