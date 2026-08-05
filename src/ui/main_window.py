@@ -5,6 +5,7 @@ Recon Tool - Main Window Module
 
 import os
 import shlex
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -157,7 +158,24 @@ class ReconMainWindow(QMainWindow):
         # A QApplication-level filter sees every press before it's
         # delivered anywhere, so the edge check works regardless of which
         # child widget happens to be directly under the cursor.
-        QApplication.instance().installEventFilter(self)
+        #
+        # BUT NOT ON LINUX: an app-wide filter forces PySide/shiboken to build
+        # a Python wrapper for *every* QObject that receives an event, and that
+        # includes QtWebEngine's internal off-screen QQuickWindow. On Linux,
+        # wrapping that foreign window on a focus event segfaults inside
+        # `PySide::getWrapperForQObject` (reproduced on both Python 3.12 and
+        # 3.14 with PySide6 6.11 — not a Python-version bug, an app-wide-filter
+        # ⨯ QWebEngine interaction). The Wizard Console's xterm.js terminal is a
+        # QWebEngineView, so the app crashed the instant it took focus. A filter
+        # installed on the window itself never sees those foreign QQuickWindows,
+        # so it dodges the crash; the resize-edge sliver is part of `central`'s
+        # own background, which the window-level filter still catches. Windows
+        # (ANGLE/D3D, different focus routing) is unaffected, so keep the
+        # broader app-wide filter there.
+        if sys.platform.startswith("linux"):
+            self.installEventFilter(self)
+        else:
+            QApplication.instance().installEventFilter(self)
 
         root.addWidget(self.title_bar)
 

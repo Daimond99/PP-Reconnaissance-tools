@@ -1,6 +1,23 @@
 import faulthandler
+import os
 import sys
 from pathlib import Path
+
+# QtWebEngine's Chromium GPU process can segfault on WSLg, headless Linux, or
+# systems without a usable EGL/GL driver (Mesa/ZINK is a common failure mode).
+# These must be configured before importing PySide6/QtWebEngine or creating the
+# QApplication, otherwise Chromium may already have selected its GPU backend.
+if sys.platform.startswith("linux"):
+    os.environ.setdefault(
+        "QTWEBENGINE_CHROMIUM_FLAGS",
+        "--disable-gpu --disable-gpu-compositing --no-sandbox --disable-software-rasterizer",
+    )
+    os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+    # Keep Qt's own compositor out of EGL too; Chromium flags only govern
+    # QtWebEngine's child processes, while the view's host is a Qt surface.
+    os.environ.setdefault("QT_OPENGL", "software")
+    os.environ.setdefault("QT_QUICK_BACKEND", "software")
+
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox, QSplashScreen
@@ -66,6 +83,7 @@ def _make_splash() -> QSplashScreen:
 
 
 def main():
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLESHEET)
 
