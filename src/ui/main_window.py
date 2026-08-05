@@ -302,6 +302,23 @@ class ReconMainWindow(QMainWindow):
             self._update_cursor(event.position().toPoint())
         super().mouseMoveEvent(event)
 
+    def resizeEvent(self, event) -> None:
+        """Enforce the minimum window size ourselves.
+
+        `setMinimumSize()` is only a hint under Wayland (WSLg's compositor),
+        and the interactive `startSystemResize()` grab ignores it there — so
+        the frameless window could be dragged down to a few pixels and vanish
+        off-screen. Clamp back up to the minimum whenever a resize lands below
+        it; harmless on Windows/X11 (where the constraint already holds, so
+        this never fires)."""
+        super().resizeEvent(event)
+        if self.isMaximized() or self.isFullScreen():
+            return
+        min_w, min_h = WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT
+        w, h = self.width(), self.height()
+        if w < min_w or h < min_h:
+            self.resize(max(w, min_w), max(h, min_h))
+
     def _toggle_maximize(self):
         if self.isMaximized():
             self.showNormal()
