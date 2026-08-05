@@ -8,6 +8,32 @@ Running log of what's done, what's in flight, what's next.
 
 ---
 
+## 2026-08-06 — Linux/WSLg launch fixed (QWebEngine × app-wide event filter)
+
+**Problem:** App segfaulted (SIGSEGV, exit 139) on launch under Linux/WSLg the instant the Wizard Console's xterm.js terminal took focus. Never surfaced on Windows.
+
+**Root cause (isolated with minimal repros):** the frameless-window resize/move handler was installed as a **QApplication-wide** event filter. An app-wide filter forces PySide/shiboken to build a Python wrapper for *every* QObject that gets an event — including QtWebEngine's internal off-screen `QQuickWindow`. On Linux, wrapping that foreign window on a focus event segfaults in `PySide::getWrapperForQObject`.
+
+| Test | Result |
+|------|--------|
+| `QWebEngineView` alone (no filter) | runs clean (exit 0) |
+| `QWebEngineView` + app-wide `installEventFilter` | crash 139 |
+| same, on Python 3.12 **and** 3.14 (PySide6 6.11) | crash 139 |
+
+→ It's the **app-wide-filter × QWebEngine** interaction, **not** GPU and **not** a Python-version bug. (GPU was the first hypothesis; disproven — WebEngine alone runs fine even with WSLg's Mesa/ZINK EGL warnings.)
+
+**Fixes (branch `feat/wizard-control-panel`):**
+1. `88fa0d1` — `main.py`: Linux-only QtWebEngine software-render env flags + `AA_ShareOpenGLContexts` (hygiene for headless/WSLg, quiets EGL noise; **not** the crash fix). *Codex's first pass — kept, but insufficient alone.*
+2. `88fa0d1` — `main_window.py`: on Linux, install the resize/move filter on the **specific chrome widgets** (`central` = resize-edge sliver, title bar + drag spacer = move handles) instead of the QApplication. All plain QWidgets → none makes PySide wrap the QtWebEngine `QQuickWindow`. Windows keeps the app-wide filter unchanged (`sys.platform` guard).
+3. `accaeab` — first Linux cut installed on the window itself, which killed drag-to-move / edge-resize (a window filter can't see presses a child like the title bar consumes). Reworked to the curated-widget set above — restores move/resize *and* stays crash-free.
+4. `7eb4bcc` — `resizeEvent` clamps the window back up to `WINDOW_MIN_WIDTH/HEIGHT` (860×580). `setMinimumSize()` is only a hint under Wayland and `startSystemResize()` ignores it, so the frameless window could be dragged down to a few px and vanish off-screen. No-op on Windows/X11.
+
+**Verified on WSL Ubuntu (WSLg), Python 3.14 + PySide6 6.11:** app launches, stays stable, window move/resize works, min-size holds, all 6 tools present (nmap/masscan/hydra/ncrack/ncat/evil-winrm). Windows path untouched (Linux-guarded).
+
+**Known leftover (harmless):** hard-killing the process mid-run (SIGTERM) trips `QThread: Destroyed while thread is still running` → SIGABRT during teardown (the PTY `[_Reader]` thread). Does **not** fire on a normal close (the window's close button → `closeEvent` shuts down cleanly). Only an issue for `kill`/`timeout`-style termination.
+
+---
+
 ## 2026-08-05 — Beginner-Friendly Wizard Control Panel (inline, not popup)
 
 **Problem:** New users faced the chain CLI's raw text prompts (`Select mode [1/2]:`, `Target:`, wordlist menu) on the Wizard Console's first tab — confusing for beginners.

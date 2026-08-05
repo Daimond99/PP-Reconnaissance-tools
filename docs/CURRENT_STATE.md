@@ -1,10 +1,10 @@
-# TheRecon — Current Code State (2026-08-05)
+# TheRecon — Current Code State (2026-08-06)
 
 **Snapshot of actual implementation** (not a design spec). For architecture rules → `CLAUDE.md`. For activity log → `PROGRESS.md`.
 
-**Last verified:** 2026-08-05  
-**Branch:** main  
-**Recent changes:** preflight doctor startup check, mission-bar UI polish, WSL shutdown on close, terminal robustness
+**Last verified:** 2026-08-06  
+**Branch:** feat/wizard-control-panel  
+**Recent changes:** Linux/WSLg launch crash fixed (QWebEngine × app-wide event filter), window move/resize restored + min-size clamp on Wayland, wizard control panel, preflight doctor startup check
 
 ---
 
@@ -473,3 +473,11 @@ count. Runnable standalone: `python -m src.preflight`.
 **Routing:** Same as Windows, but no WSL wrapping
 
 **See also:** `README.md` for install commands
+
+**Launch status (verified 2026-08-06, WSL Ubuntu/WSLg, Python 3.14 + PySide6 6.11):**
+- App launches, runs stable, window move/resize works, all 6 tools present.
+- **Linux-specific handling in `src/ui/main_window.py`** (guarded by `sys.platform.startswith("linux")`):
+  - Resize/move event filter is installed on the **specific chrome widgets** (`central`, title bar, drag spacer), **not** app-wide. An app-wide `installEventFilter` makes PySide wrap QtWebEngine's off-screen `QQuickWindow` on focus → SIGSEGV in `getWrapperForQObject`. Windows keeps the app-wide filter.
+  - `resizeEvent` clamps back to `WINDOW_MIN_WIDTH/HEIGHT` — Wayland/WSLg ignores `setMinimumSize()` during `startSystemResize()`, so without this the frameless window could shrink off-screen.
+- **`src/main.py`** sets Linux-only QtWebEngine software-render env flags + `AA_ShareOpenGLContexts` (hygiene for headless/WSLg; quiets EGL/ZINK noise — not a crash fix).
+- **Leftover (harmless):** hard-kill mid-run (SIGTERM/`timeout`) trips `QThread: Destroyed while thread is still running` → SIGABRT during teardown (PTY `[_Reader]` thread). Does **not** fire on normal window close (`closeEvent` is clean). See `PROGRESS.md` 2026-08-06.
