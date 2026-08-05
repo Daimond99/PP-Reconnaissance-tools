@@ -1,10 +1,70 @@
-# Progress Log
+# Progress Log — TheRecon
 
-Running log of what's done, what's in flight, what's next. Newest entry on
-top. For deep current-state detail see `CURRENT_STATE.md`; for the current
-GUI/wizard embedding plan see `CROSS_PLATFORM_TERMINAL_PLAN.md`.
-(`GUI_MISSION_CONTROL.md` was deleted 2026-07-31 — fully superseded, it
-described UI files removed in earlier passes.)
+Running log of what's done, what's in flight, what's next.
+
+**Newest entries on top.** For current code state → `CURRENT_STATE.md`. For architecture rules → `CLAUDE.md`.
+
+**Deleted docs:** `GUI_MISSION_CONTROL.md`, `CROSS_PLATFORM_TERMINAL_PLAN.md` (both superseded; implementation now in `CURRENT_STATE.md`)
+
+---
+
+## 2026-08-05 — Beginner-Friendly Wizard Control Panel (inline, not popup)
+
+**Problem:** New users faced the chain CLI's raw text prompts (`Select mode [1/2]:`, `Target:`, wordlist menu) on the Wizard Console's first tab — confusing for beginners.
+
+**Fix:** An always-visible form panel on the left of the Wizard Console. Fill target / mode / wordlists, press Start scan → a fresh Wizard tab in the terminal beside it runs straight from those choices, no raw prompts, no modal popup.
+
+*(First cut used a modal `WizardStartDialog` popup; reworked to an inline split panel — controls stay visible, re-scan is just edit-and-Start, terminal isn't interrupted. Dialog file removed.)*
+
+### New: `src/ui/wizard_panel.py`
+- `WizardControlPanel(QWidget)` — fixed 268px left panel: Target, Mode combo (AUTO/SEMI), User + Pass wordlist (with Browse…), Start scan
+- Emits `scanRequested(dict)`; collects only — never builds/runs a command
+- Empty target → inline hint, no emit; Dracula-styled
+
+### `src/ui/widgets.py`
+- `_wizard_console_page(panel, tabs)` — QHBoxLayout: panel (left) + `wrap_in_terminal(tabs)` (right); wires `panel.scanRequested → tabs.start_wizard_scan`
+- `self.wizard_tab` stays the `TerminalTabsWidget` so `main.py`'s firstTabReady splash-wait and `closeEvent`'s stop_all keep working unchanged
+
+### `src/ui/terminal_tabs.py`
+- `make_terminal(..., wizard_args=None)`: POSIX-quotes flags (`_wizard_arg_str`, shlex) into the launch command
+- `TerminalTabsWidget(form_driven=True)`: no pre-opened tab — a placeholder hint fills the pane until the first Start scan; `firstTabReady` fires immediately so the splash doesn't hang (`_show_placeholder` toggles hint vs. stack)
+- `start_wizard_scan(data)`: panel dict → CLI flags (`_panel_to_wizard_args`) → opens first Wizard tab, hides placeholder (capped at 4)
+- Manual "+"/"⌄ New Wizard tab" still opens the interactive CLI (advanced escape hatch)
+
+### `chain_wizard/wizard/main.py`
+- Added argparse: `--target`, `--mode {auto,semi}`, `--user-wordlist`, `--pass-wordlist`
+- `_Preset` dataclass + `_parse_args()`: when `--target` given → skip prompts, print summary, run scan
+- Only the **first** run honors the preset; subsequent loop runs stay interactive (parity preserved)
+
+**Design:** Form sits entirely *ahead* of the CLI's per-step "yes" gate — no safety path bypassed. Target injection-safe (single-quoted argv).
+
+**Verified:** syntax + argparse (`--target` preset, no-target→interactive), shlex quoting (malicious target quoted), headless: panel emits correct dict, empty-target blocked, form_driven first tab = Shell, Start scan opens a Wizard tab — all pass. Not yet run end-to-end in the full GUI on a real scan.
+
+---
+
+## 2026-08-05 — Preflight Doctor, UI Polish, Terminal Robustness
+
+**Commits:** a2c4492, c2a1320, ca90bc6, f128d0d, 2d4c704
+
+### Preflight Dependency Doctor (a2c4492)
+- **New:** `src/preflight.py` (284 lines, pure stdlib)
+- **Checks:** Windows Python (PySide6/QtWebEngine/pywinpty), WSL distro (not Docker Desktop stubs), 6 tools installed, WSL python3 ≥3.10, not Microsoft Store stub
+- **Behavior:** Runs in QThread ~2.5s after window shows; silent if OK; non-modal warning if issues (lists exact fixes)
+- **Runnable:** `python -m src.preflight` (exit code = problem count, used by installers)
+
+### Mission Bar Polish (c2a1320, ca90bc6)
+- TARGET field alignment fixed
+- Dropdown menus styled (Tools dropdown arrow)
+- Confirmation prompts translated to English (were Thai-only)
+
+### WSL Shutdown on Close (ca90bc6)
+- Windows: `wsl.exe --shutdown` runs when app closes (prevents lingering WSL2 VM)
+- Only on close, not per-termination (avoids dev restarts)
+
+### Terminal Robustness (f128d0d, 2d4c704)
+- Resize-edge event filter installed app-wide (prevents resize-drag crash loops)
+- Sudo password entry: no longer blocked by terminal widget event loop
+- Ctrl+Z handling + WSL window management polished
 
 ---
 

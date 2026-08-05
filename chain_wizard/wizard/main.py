@@ -1,10 +1,18 @@
 """
 Entry point — command-line interface for the chain wizard.
+
+Runs interactively by default (prompts for mode / target / wordlists). The
+GUI's Wizard Console passes those same choices up front as CLI flags
+(`--target ... --mode auto ...`) so a beginner fills a form instead of
+typing at raw prompts; that first run skips straight to the scan, then the
+pane falls back to the normal interactive loop for any follow-up run.
 """
 
 import os
 import sys
 import glob
+import argparse
+from dataclasses import dataclass
 from core.display import banner, section, info, ok, warn, fail, bold, cyan, green, yellow
 from wizard.chain import run_chain
 
@@ -78,6 +86,34 @@ def _resolve_wordlist(prompt: str, default: str, choices: list[str]) -> str:
     return path
 
 
+@dataclass
+class _Preset:
+    """Choices supplied up front (by the GUI dialog) instead of prompted."""
+    target: str
+    mode: str  # "auto" | "semi"
+    user_wl: str
+    pass_wl: str
+
+
+def _parse_args(argv: list[str] | None = None) -> _Preset | None:
+    """Parse the GUI's up-front flags. Returns a `_Preset` when `--target`
+    is given, else `None` (→ fully interactive, unchanged behavior)."""
+    p = argparse.ArgumentParser(prog="wizard", add_help=True)
+    p.add_argument("--target", help="IP / domain / CIDR to scan")
+    p.add_argument("--mode", choices=("auto", "semi"), default="auto")
+    p.add_argument("--user-wordlist", dest="user_wl", default="")
+    p.add_argument("--pass-wordlist", dest="pass_wl", default="")
+    a = p.parse_args(argv)
+
+    if not a.target:
+        return None
+
+    default_wl = "/usr/share/wordlists/rockyou.txt"
+    user_wl = a.user_wl or default_wl
+    pass_wl = a.pass_wl or user_wl
+    return _Preset(target=a.target, mode=a.mode, user_wl=user_wl, pass_wl=pass_wl)
+
+
 def main() -> None:
     # Ensure box-drawing / ANSI output works on Windows consoles too
     # (WSL/Kali is already UTF-8). Safe no-op where unsupported.
@@ -87,14 +123,20 @@ def main() -> None:
         except (AttributeError, ValueError):
             pass
 
+    # Only the first pass honors the GUI-supplied preset; every run after
+    # (the pane loops so it's always "the wizard") is fully interactive.
+    preset = _parse_args()
+
     # Run the wizard in a loop so the pane is always "the wizard":
     #   Ctrl-C  → cancel the current step, restart at the mode menu.
     #   finish  → offer a fresh run (re-print the banner).
     #   Ctrl-D  → exit for real (the launcher drops to a shell as an escape).
     while True:
         try:
-            _interactive()
+            _interactive(preset)
+            preset = None  # subsequent runs prompt normally
         except KeyboardInterrupt:
+            preset = None
             print(f"\n  {yellow('Cancelled — restarting the wizard.')}\n")
             continue
         except EOFError:
@@ -102,13 +144,23 @@ def main() -> None:
             return
 
 
-def _interactive() -> None:
+def _interactive(preset: "_Preset | None" = None) -> None:
     banner(
         title="PENTEST CHAIN WIZARD",
         subtitle="auto / semi · nmap masscan hydra ncrack ncat evil-winrm",
     )
 
     print(f"  {yellow('You are authorized — no further permission required.')}\n")
+
+    # ─── Preset path (GUI dialog) — skip prompts, summarize, run ─
+    if preset is not None:
+        ok(f"Mode: {preset.mode.upper()}")
+        ok(f"Target: {preset.target}")
+        ok(f"User wordlist: {preset.user_wl}")
+        ok(f"Pass wordlist: {preset.pass_wl}")
+        print()
+        run_chain(preset.target, preset.user_wl, preset.pass_wl, preset.mode)
+        return
 
     # ─── Mode selection ─────────────────────────────────────────
     print("  Select mode:")

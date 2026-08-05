@@ -19,6 +19,7 @@ InteractiveTerminal, first available wins.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -401,7 +402,19 @@ def _opencode_launch(workspace_dir: str) -> str:
     )
 
 
-def make_terminal(profile: str, read_only: bool = False) -> QWidget:
+def _wizard_arg_str(wizard_args: "list[str] | None") -> str:
+    """POSIX-quote GUI-supplied wizard flags into a launch-command suffix.
+
+    Returns e.g. ` --mode auto --target '192.168.1.1'` (leading space), or
+    "" when no args — both WSL bash and native Linux bash are POSIX, so
+    `shlex.quote` is the right escaper for either target."""
+    if not wizard_args:
+        return ""
+    return " " + " ".join(shlex.quote(a) for a in wizard_args)
+
+
+def make_terminal(profile: str, read_only: bool = False,
+                  wizard_args: "list[str] | None" = None) -> QWidget:
     """Build a terminal widget for `profile` ("wizard" | "shell" |
     "llm-nmap" | "opencode").
 
@@ -410,6 +423,11 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
     the llm-tools-nmap plugin dir and offers to set an API key if none is
     stored yet. "opencode" launches the OpenCode agent CLI with its PATH
     restricted to TheRecon's 6 authorized tools (see `_opencode_launch`).
+
+    `wizard_args` (wizard profile only) are up-front flags from the GUI's
+    New-scan dialog (`--target ... --mode auto ...`); when present the CLI
+    skips its interactive prompts and runs that scan first. Empty/None →
+    the plain interactive wizard, unchanged.
 
     `read_only=True` (Raw Output) drops every keystroke/paste from the page
     before it reaches the PTY -- display-only, real output still streams
@@ -430,8 +448,9 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
         # needs to run unconfined (it's the trusted, gated path), this only
         # locks the plain `bash -l` the script drops to once the CLI exits.
         wsl_dir = _wsl_dir()
-        wsl_launch = f"cd '{wsl_dir}' && python3 -m wizard.main; {_shell_launch(wsl_dir)}"
-        lin_launch = f"cd '{local_dir}' && python3 -m wizard.main; {_shell_launch(local_dir)}"
+        wa = _wizard_arg_str(wizard_args)
+        wsl_launch = f"cd '{wsl_dir}' && python3 -m wizard.main{wa}; {_shell_launch(wsl_dir)}"
+        lin_launch = f"cd '{local_dir}' && python3 -m wizard.main{wa}; {_shell_launch(local_dir)}"
     elif profile == "llm-nmap":
         wsl_launch = _llm_launch(_wsl_llm_dir())
         lin_launch = _llm_launch(_repo_local_llm_dir())
@@ -465,12 +484,13 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
         return PtyTerminal(["wsl.exe", "-e", "bash", "-lc", wsl_launch], read_only=read_only)
 
     # 3. plain-pipe fallback — no TTY.
+    _wa = _wizard_arg_str(wizard_args)
     if os.name == "nt":
         inner = wsl_launch if profile in _SIMPLE_PROFILES else \
-            f"cd '{_wsl_dir()}' && python3 -m wizard.main"
+            f"cd '{_wsl_dir()}' && python3 -m wizard.main{_wa}"
         return InteractiveTerminal("wsl.exe", ["-e", "bash", "-lc", inner])
     inner = lin_launch if profile in _SIMPLE_PROFILES else \
-        f"cd '{local_dir}' && python3 -m wizard.main"
+        f"cd '{local_dir}' && python3 -m wizard.main{_wa}"
     return InteractiveTerminal("bash", ["-lc", inner])
 
 
@@ -496,17 +516,25 @@ class TerminalTabsWidget(QWidget):
         ("New Shell tab", "shell", "Shell"),
     ]
 
-    def __init__(self, parent=None, profiles=None, fixed=False):
+    def __init__(self, parent=None, profiles=None, fixed=False,
+                 form_driven=False):
         """`fixed=True` opens exactly one tab per entry in `profiles`, up
         front, and permanently disables `+`/`⌄` — no more tabs, ever, of any
         profile. Used for pages where a second instance of a profile can't
         run safely (OpenCode locks its workspace dir; a second tab just
-        hangs) instead of relying on the shared `_MAX_TABS` cap."""
+        hangs) instead of relying on the shared `_MAX_TABS` cap.
+
+        `form_driven=True` (Wizard Console) means an external control panel
+        (`WizardControlPanel`) drives scans: the first tab opens as a plain
+        Shell (so the pane is usable and shows no raw wizard prompts), and
+        each `start_wizard_scan(args)` opens a fresh Wizard tab that runs
+        straight from the panel's target/mode/wordlist choices."""
         super().__init__(parent)
         self._profiles = profiles or self._DEFAULT_PROFILES
         self._profile_names = {key: name for _, key, name in self._profiles}
         self._tab_counts: dict = {}
         self._fixed = fixed
+        self._form_driven = form_driven
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -580,8 +608,19 @@ class TerminalTabsWidget(QWidget):
         self.stack = QStackedWidget()
         self.stack.setObjectName("TermTabStack")
 
+        # Empty-state hint shown (form_driven only) before the first scan —
+        # instead of pre-opening a stray Shell tab. Toggled against the stack:
+        # visible only while no terminal tab exists.
+        self._placeholder = QLabel(
+            "Fill in the panel on the left and press\nStart scan to run the wizard here.")
+        self._placeholder.setObjectName("TermPlaceholder")
+        self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._placeholder.setWordWrap(True)
+        self._placeholder.setVisible(False)
+
         root.addWidget(header)
         root.addWidget(self.stack, 1)
+        root.addWidget(self._placeholder, 1)
 
         self.setStyleSheet(self._qss())
 
@@ -593,20 +632,46 @@ class TerminalTabsWidget(QWidget):
             # to make a second instance impossible rather than recoverable.
             for _label, profile_key, _name in self._profiles:
                 self.new_tab(profile_key)
+        elif self._form_driven:
+            # No pre-opened tab: the right pane shows the placeholder hint
+            # until the panel's first Start scan opens a Wizard tab. Fire the
+            # readiness signal now so the startup splash doesn't wait on a
+            # tab that isn't coming until the user acts.
+            self._show_placeholder(True)
+            QTimer.singleShot(0, self.firstTabReady.emit)
         else:
             # first tab always uses the first profile (Wizard by default;
             # whatever the caller passed first for other pages)
             self.new_tab(self._profiles[0][1])
 
+    # -- panel-driven scans ------------------------------------------------
+    @staticmethod
+    def _panel_to_wizard_args(data: dict) -> list[str]:
+        """Turn the control panel's dict into `wizard.main` CLI flags."""
+        args = ["--mode", data.get("mode", "auto"), "--target", data["target"]]
+        if data.get("user_wordlist"):
+            args += ["--user-wordlist", data["user_wordlist"]]
+        if data.get("pass_wordlist"):
+            args += ["--pass-wordlist", data["pass_wordlist"]]
+        return args
+
+    def start_wizard_scan(self, data: dict) -> None:
+        """Open a fresh Wizard tab that runs straight from the control
+        panel's choices (target / mode / wordlists). No-op past the tab cap;
+        `_update_add_controls` already reflects that to the user."""
+        if not data.get("target"):
+            return
+        self.new_tab("wizard", wizard_args=self._panel_to_wizard_args(data))
+
     # -- tab management ----------------------------------------------------
-    def new_tab(self, profile: str) -> None:
+    def new_tab(self, profile: str, wizard_args: "list[str] | None" = None) -> None:
         if self.tabbar.count() >= _MAX_TABS:
             # Refuse before make_terminal() ever runs — that's what actually
             # spawns the Chromium process + PTY, so the cap has to gate here,
             # not just disable the buttons (belt-and-suspenders against any
             # other caller reaching new_tab directly).
             return
-        term = make_terminal(profile)
+        term = make_terminal(profile, wizard_args=wizard_args)
         base_name = self._profile_names.get(profile, profile)
         count = self._tab_counts.get(profile, 0) + 1
         self._tab_counts[profile] = count
@@ -628,7 +693,13 @@ class TerminalTabsWidget(QWidget):
         idx = self.tabbar.addTab(name)
         self.tabbar.setCurrentIndex(idx)
         self.stack.setCurrentIndex(idx)
+        self._show_placeholder(False)       # a real tab exists now
         self._update_add_controls()
+
+    def _show_placeholder(self, show: bool) -> None:
+        """Swap the empty-state hint for the terminal stack (form_driven)."""
+        self._placeholder.setVisible(show)
+        self.stack.setVisible(not show)
 
     def _update_add_controls(self) -> None:
         at_cap = self.tabbar.count() >= _MAX_TABS
@@ -692,6 +763,12 @@ class TerminalTabsWidget(QWidget):
             border-bottom: 1px solid {BORDER_SOFT};
         }}
         #TermTabStack {{ background: {CONSOLE_BG}; }}
+        #TermPlaceholder {{
+            background: {CONSOLE_BG};
+            color: {TERM_MUTE};
+            font-size: 13px;
+            line-height: 20px;
+        }}
         #TermTabTitle {{
             color: {TERM_MUTE};
             font-size: 12px;

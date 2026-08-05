@@ -25,6 +25,22 @@ from src.config import (
 
 from src.core.tool_manager import get_tool_manager
 from src.ui.terminal_tabs import TerminalTabsWidget, make_terminal
+from src.ui.wizard_panel import WizardControlPanel
+
+
+def _wizard_console_page(panel: WizardControlPanel,
+                         tabs: TerminalTabsWidget) -> QWidget:
+    """Wizard Console page: control panel (left) + terminal tabs (right).
+    Panel's scanRequested drives a fresh Wizard tab in the terminal beside
+    it — no popup, controls stay visible for re-scans."""
+    page = QWidget()
+    row = QHBoxLayout(page)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(0)
+    row.addWidget(panel)
+    row.addWidget(wrap_in_terminal(tabs), 1)
+    panel.scanRequested.connect(tabs.start_wizard_scan)
+    return page
 
 
 def svg_icon(path: str, color: str = "#edf0f5", size: int = 16) -> QIcon:
@@ -822,7 +838,12 @@ class MainContentArea(QWidget):
         # PtyTerminal → InteractiveTerminal). The older native wizard pages
         # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py) were
         # removed — this is the only wizard path now.
-        self.wizard_tab = TerminalTabsWidget()
+        # Wizard Console = control panel (left) + terminal tabs (right).
+        # `self.wizard_tab` stays the TerminalTabsWidget so main.py's
+        # firstTabReady splash wait and closeEvent's stop_all keep working;
+        # the panel drives it via scanRequested → start_wizard_scan.
+        self.wizard_tab = TerminalTabsWidget(form_driven=True)
+        self.wizard_panel = WizardControlPanel()
         self.input_tab = InputManagementTab()
         self.raw_output_tab = RawOutputTab()
         self.results_tab = ResultsDisplayTab()
@@ -838,7 +859,7 @@ class MainContentArea(QWidget):
         ])
 
         # Order matches Sidebar.NAV_ITEMS / navigate(index) 0-4.
-        self.stack.addWidget(wrap_in_terminal(self.wizard_tab))
+        self.stack.addWidget(_wizard_console_page(self.wizard_panel, self.wizard_tab))
         self.stack.addWidget(self.input_tab)
         self.stack.addWidget(self.raw_output_tab)
         self.stack.addWidget(self.results_tab)
