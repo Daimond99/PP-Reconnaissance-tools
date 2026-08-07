@@ -14,9 +14,15 @@ python -m src.main
 
 # Install deps
 pip install -r requirements.txt
+
+# Startup dependency doctor (WSL + 6 tools + Python runtimes), runnable standalone
+python -m src.preflight
+
+# Tests — validators + confirmation gate (no external target needed)
+python -m pytest tests/ -q
 ```
 
-There is no configured lint/test/build tooling in this repo (no pytest config, no linter config found) — do not invent commands for these.
+Tests live in `tests/` (pytest, added 2026-08-07) and cover the safety-critical paths: the 6-tool whitelist, quote-aware injection guard, exact-`yes` rule, Windows→WSL path rewrite, scope enforcement, single-use gate, secret masking. There is no linter/build tooling configured (no linter config) — do not invent commands for those.
 
 ## Required reading before structural changes
 
@@ -30,10 +36,10 @@ There is no configured lint/test/build tooling in this repo (no pytest config, n
 Fixed layer pipeline, no layer may skip another:
 
 ```
-GUI (src/ui/) → Wizard/AI (src/wizard/, src/ui/llm_mode.py) → Validation (src/validation/)
+GUI (src/ui/) → Wizard panel / Direct Tool Mode → Validation (src/validation/)
   → Confirmation Gate (src/core/confirmation_gate.py)
-  → Execution (QProcess) → Parser (src/tools/<tool>/parser.py) → Analysis (src/tools/<tool>/analyzer.py)
-  → Report (src/report/)
+  → Execution (terminal PTY / subprocess) → Parser (src/tools/<tool>/parser.py) → Analysis (src/tools/<tool>/analyzer.py)
+  → Results Display (src/ui/widgets.py)
 ```
 
 Hard rules that hold across the codebase:

@@ -8,6 +8,54 @@ Running log of what's done, what's in flight, what's next.
 
 ---
 
+## 2026-08-07 — Cleanup pass, safety tests, doc refresh
+
+Review-and-tidy session (no new features). Goal: get the tree clean and the
+docs to reflect exactly what's here, before any real-target work.
+
+**Code fixes:**
+- **`confirmation_gate.py` — single-use hardening.** `confirm()` left
+  `_pending = True` after a successful `"yes"`, so a repeat `confirm("yes")`
+  would re-log and re-execute the same argv. The current caller builds a fresh
+  gate per Execute click so it wasn't triggered live, but it contradicts the
+  class's one-gate-per-command contract. Now spent on both success and failure.
+- **Dead code removed** (verified via pyflakes + grep + full test run, no
+  behavior change): `llm_keys.has_llm_key()` (uncalled anywhere), an unused
+  `QComboBox` import in `widgets.py`, the `ACCENT_YELLOW`/`ACCENT_CYAN` color
+  constants (only ever defined), and `gobuster`/`dirb` from
+  `validation.common.ALLOWED_PROGRAMS` — they were whitelisted but never wired
+  (no tool_commands / warhead / attack_map / tool_manager entry), i.e. dead
+  surface that let a non-installed, non-generatable program through validation.
+  The whitelist is now exactly the 6 wired tools.
+
+**Tests (new `tests/`, pytest):**
+- `test_validation.py` + `test_confirmation_gate.py` — 52 tests covering the
+  6-tool whitelist, 6 shell-injection shapes, sudo handling, the quote-aware
+  metachar scanner, exact-`yes`, Windows→WSL path rewrite, scope enforce/bypass,
+  the single-use fix above, and secret masking.
+- `conftest.py` puts the repo root on `sys.path` and stubs the audit logger so
+  tests never touch `logs/audit_log.jsonl`. All 52 pass in <0.2s.
+
+**Docs rewritten:**
+- `README.md` — fresh: what it is, what it can do today (and explicitly what it
+  is *not* — no web-app scanning), install, tests, safety note.
+- `docs/CURRENT_STATE.md` — rewritten as a file-by-file map for a fresh reader
+  (human or AI): pipeline, 5 pages, 3-tier terminal, safety layer, parsers,
+  wizard CLI, resources, tests, gaps, and a "deleted / don't re-add" list.
+- `CLAUDE.md` — Commands section now lists `preflight` + `pytest`; the stale
+  pipeline line (`src/wizard/`, `src/ui/llm_mode.py`, `QProcess`) corrected.
+
+**Verified:** `py_compile` + `pyflakes` clean across `src/` and `chain_wizard/`;
+`python -m src.main` launches and runs stable; `pytest tests/` 52/52.
+
+**Scope note (context for this session):** the user raised real MSU targets
+(reg.msu.ac.th etc.) for a research engagement. Declined to run tools against
+them — "can request permission" is not written authorization, and the AI must
+not execute scans against third-party production systems regardless. Offered
+own-lab (DVWA/Juice Shop) testing and scope-guard/dry-run alternatives instead.
+
+---
+
 ## 2026-08-06 — Linux/WSLg launch fixed (QWebEngine × app-wide event filter)
 
 **Problem:** App segfaulted (SIGSEGV, exit 139) on launch under Linux/WSLg the instant the Wizard Console's xterm.js terminal took focus. Never surfaced on Windows.
@@ -43,7 +91,7 @@ Running log of what's done, what's in flight, what's next.
 *(First cut used a modal `WizardStartDialog` popup; reworked to an inline split panel — controls stay visible, re-scan is just edit-and-Start, terminal isn't interrupted. Dialog file removed.)*
 
 ### New: `src/ui/wizard_panel.py`
-- `WizardControlPanel(QWidget)` — fixed 268px left panel: Target, Mode combo (AUTO/SEMI), User + Pass wordlist (with Browse…), Start scan
+- `WizardControlPanel(QWidget)` — fixed 280px left panel: Target, Mode combo (AUTO/SEMI), User + Pass wordlist (with Browse…), Start scan
 - Emits `scanRequested(dict)`; collects only — never builds/runs a command
 - Empty target → inline hint, no emit; Dracula-styled
 

@@ -1,483 +1,325 @@
-# TheRecon — Current Code State (2026-08-06)
+# TheRecon — Current Code State
 
-**Snapshot of actual implementation** (not a design spec). For architecture rules → `CLAUDE.md`. For activity log → `PROGRESS.md`.
+**A snapshot of what's actually implemented and what every file does.** Written
+for a fresh reader (human or AI) to understand the program without re-deriving
+it from the source. For the *rules* to follow when changing it → `CLAUDE.md`.
+For the *history* of how it got here → `PROGRESS.md`.
 
-**Last verified:** 2026-08-06  
-**Branch:** feat/wizard-control-panel  
-**Recent changes:** Linux/WSLg launch crash fixed (QWebEngine × app-wide event filter), window move/resize restored + min-size clamp on Wayland, wizard control panel, preflight doctor startup check
-
----
-
-## Quick Reference (AI scanning)
-
-| Aspect | Status | Details |
-|--------|--------|---------|
-| **Entry** | src/main.py | → splash → ReconMainWindow → preflight health check |
-| **Gating** | ConfirmationGate | Direct Tool Mode Execute only (top bar) |
-| **Wizard** | chain_wizard/ | Subprocess CLI (6-tool restricted) |
-| **Terminals** | XtermTerminal (primary) | xterm.js + real PTY; fallback: PtyTerminal → InteractiveTerminal |
-| **LLM Mode** | Ungated (intentional) | Two fixed tabs: llm-nmap + opencode |
-| **Safety** | Passed/Gated | Raw Output read-only; LLM Mode is trade-off |
+**Last verified:** 2026-08-07
+**Branch:** feat/wizard-control-panel
 
 ---
 
-## Entry Point
+## 1. What this program is
 
-**Startup sequence:**
-1. `src/main.py` — applies theme from `src/config.py`
-2. Show splash screen (stays visible until Wizard Console ready, max 20s)
-3. Launch `ReconMainWindow` (`src/ui/main_window.py`)
-4. Wizard Console first tab: wait for real PTY output (`TerminalTabsWidget.firstTabReady`)
-5. Hide splash once terminal is live
+A **PySide6 desktop GUI + safety layer** wrapping six command-line security
+tools: **nmap, masscan, hydra, ncrack, ncat, evil-winrm**. It does not
+reimplement the tools — it builds commands, shows their impact, forces a human
+confirmation, runs them in a real terminal, and parses the results.
 
-**Startup health check** (`src/preflight.py`, added 2026-08-05)
-- Runs in QThread ~2.5s after window shows
-- **Verifies (cross-platform):** Windows Python (PySide6/QtWebEngine/pywinpty), WSL installed + real distro, 6 tools in distro, WSL python3 ≥3.10
-- **Detects:** missing/old WSL, tools not installed, python3 < 3.10, Microsoft Store stub
-- **Behavior:** Silent if OK; non-modal warning if issues found (lists exact fixes)
-- **Exit code:** number of problems (used by installers)
-- **Standalone:** `python -m src.preflight` (pure stdlib, no exceptions)
+- On **Windows**, the tools run inside **WSL2 (Ubuntu)**; the GUI runs on the
+  Windows Python. On **Linux** the tools run natively.
+- The whole thing is **restricted to those 6 tools** end-to-end: the validator
+  whitelist, the installed-tool detector, the warhead profiles, and the wizard's
+  attack map all agree on the same 6. Adding a 7th means wiring all of them.
 
----
+### The pipeline (no layer skips another)
 
-## Sidebar Pages (5 total)
+```
+GUI (src/ui/)
+  → Wizard panel / Direct Tool Mode
+  → Validation (src/validation/common.py)
+  → Confirmation Gate (src/core/confirmation_gate.py)   ← the single "yes" gate
+  → Execution (terminal PTY / subprocess)
+  → Parser (src/tools/<tool>/parser.py)
+  → Results Display (src/ui/widgets.py)
+```
 
-### Page 0: Wizard Console
-- **Layout:** split — control panel (left, 268px) + terminal tabs (right), assembled by `widgets._wizard_console_page()`
-- **Control panel:** `WizardControlPanel` (`wizard_panel.py`) — Target / Mode (AUTO·SEMI) / User+Pass wordlist / Start scan; emits `scanRequested(dict)`
-- **Terminal:** `TerminalTabsWidget(form_driven=True)` (VS Code-style tabs)
-  - **Backend:** `XtermTerminal` (xterm.js + real PTY) → `PtyTerminal` (pyte/ConPTY) → `InteractiveTerminal` (fallback)
-  - **Before first scan:** no tab — a placeholder hint ("Fill in the panel… press Start scan") fills the pane; `firstTabReady` fires immediately so the startup splash doesn't wait on a tab that isn't coming yet
-  - **Start scan:** panel dict → CLI flags (`start_wizard_scan` / `_panel_to_wizard_args`) → opens the first Wizard tab, hides the placeholder, runs `chain_wizard/` with `--target/--mode/--wordlist` (skips CLI prompts)
-  - **Tabs:** `+`/`⌄` open more Wizard (interactive) or Shell tabs (max 4)
-
-### Page 1: Input Management
-- **Class:** `InputManagementTab`
-- **View:** Zenmap-style scan queue (Status / Command columns)
-- **Wired from:** Direct Tool Mode Execute; double-click → command back to top bar
-- **Actions:** Append/Remove/Cancel Scan
-
-### Page 2: Raw Output
-- **Class:** `RawOutputTab` (xterm.js backend, read-only since 2026-08-01)
-- **Display:** Direct Tool Mode Execute output only
-- **Keystroke handling:** ALL user input dropped before PTY (read_only=True); only programmatic injection (`write_text`/`run_command`) works
-- **Purpose:** Audit trail for gated commands
-
-### Page 3: Results Display
-- **Class:** `ResultsDisplayTab`
-- **View:** Zenmap-style split pane
-- **Data:** Nmap/Masscan results (host/port table) + Hydra/Ncrack credentials (separate table, `kind: "credentials"`)
-
-### Page 4: LLM Mode
-- **Class:** `TerminalTabsWidget(fixed=True, ...)`
-- **Tabs:** 2 fixed square-block tabs (no `+`/`⌄`, no close)
-  - **"LLM" tab:** llm-tools-nmap (cd `tools/llm-tools-nmap`, sets API key if needed)
-  - **"OpenCode" tab:** scoped coding agent (PATH restricted to 6 tools + read-only utils)
-- **Gating:** NONE (intentional, see "Known safety gaps")
-
-**Removed:** Command Editor page (deleted 2026-07-31)
-
-### Title Bar Controls
-
-**Sidebar toggle** (left corner)
-- Hides sidebar + divider (Claude Code style)
-
-**Settings dropdown** (right menu)
-- New Scan / Stop Scan
-- Open Scan… / Save Scan… / Save All Scans…
-- Quit
-- Set LLM API Key… / Remove LLM API Key…
-
-**File I/O**
-- Save: exports selected Input Management row as minimal nmap XML (`<nmaprun args="…">`)
-- Open: parses XML back into command box + TARGET field + adds Input Management row
-
-**Close behavior** (added 2026-08-05)
-- Prompts Yes/No confirmation
-- On Windows: runs `wsl.exe --shutdown` (prevents lingering WSL2 VM in background)
-
-### Top Bar (Command Area)
-
-**TOOLS combo**
-- Lists installed tools (from `ToolManager.get_tool_manager()`)
-- Selecting tool → repopulates WARHEAD PROFILE from `WARHEAD_BY_TOOL[tool]`
-- One base command per tool (from `tool_commands.json`)
-
-**WARHEAD PROFILE combo**
-- Per-tool profiles (2 stealth / 2 critical / 2 quality per tool)
-- Previously: one shared nmap-based list; now: per-tool
-- Populated dynamically when TOOLS changes
-
-**TARGET field** (text input)
-- User's lab IP for Direct Tool Mode Execute
-- `skip_scope=True` (no cross-check against AUTHORIZED_SCOPE)
-
-**Execute button** (gated)
-- Only GUI path through `ConfirmationGate`
-- Output shown in Raw Output tab + Input Management row marked Done/Error
-
-### Terminal Backend (Fallback Chain)
-
-**Tier 1: XtermTerminal (primary)**
-- **Tech:** xterm.js (VS Code's terminal emulator) in QWebEngineView + QWebChannel bridge
-- **PTY:** ConPTY (`pywinpty`) on Windows | stdlib `pty` fork on Linux
-- **Launch:** `wsl.exe bash` (Windows, no `-d` → uses WSL default distro) | native bash (Linux)
-- **UX:** Full IDE-grade terminal (reflow-on-resize, mouse select, copy/paste, curses apps vim/htop)
-- **Assets:** Vendored JS under `webterm/vendor/` (xterm.js, addon-fit, qwebchannel.js) — no CDN
-- **Readiness signals:** `backendReady` (PTY spawned, fast) | `firstOutput` (first bytes, means usable)
-- **Guard:** `XTERM_AVAILABLE` (degrades if QtWebEngine/PTY missing)
-
-**Tier 2: PtyTerminal (fallback)**
-- **Tech:** ConPTY (`pywinpty`) + pyte VT emulator → HTML in QTextEdit
-- **Launch:** `wsl.exe -e bash -lc "cd <wsl-repo> && python3 -m wizard.main"` (Windows)
-- **UX:** Color, sudo, TAB completion; BUT no reflow on resize (truncates, not wraps)
-- **Path handling:** `<wsl-repo>` derived at runtime from `terminal_tabs._wsl_root_dir()` (not hardcoded to `D:\TheRecon`)
-- **Guard:** Falls back to InteractiveTerminal if `pywinpty`/`pyte` missing
-
-**Tier 3: InteractiveTerminal (fallback)**
-- **Tech:** `QProcess` (pipe, no TTY/PTY)
-- **UX:** Plain text, no color/sudo/TTY features; Up/Down history
-- **Fallback for:** All pages (Wizard, Raw Output, LLM Mode) when PTY unavailable
-
-### TerminalTabsWidget (`terminal_tabs.py`)
-
-**Structure** (added 2026-08-01)
-- Generalized to support Wizard Console AND LLM Mode
-- `profiles` parameter: `[(menu_label, profile_key, tab_name), ...]`
-- Profiles: `"wizard"` | `"shell"` | `"llm-nmap"` | `"opencode"`
-- Tab limit: `_MAX_TABS = 4` (real cost: each tab = QWebEngineView + PTY process)
-
-**Fixed mode** (LLM Mode only)
-- `fixed=True` → exactly 2 tabs pre-opened, no `+`/`⌄`/close (prevents OpenCode tab hang)
-- Square-corner styling (`border-radius: 0`)
-
-**WSL check** (Windows only)
-- `_wsl_available()`: cached after first check
-- Requires: `wsl.exe` on PATH + ≥1 real distro (excludes Docker Desktop pseudo-entries)
-- Shows "install WSL" placeholder if check fails (never blank terminal)
-
-**Paths** (Windows)
-- `_wsl_root_dir()` → derived at runtime from repo location
-- `_win_to_wsl_path()` → converts `C:\...` → `/mnt/c/...`
-- NOT hardcoded to dev machine paths (fixed 2026-08-01 for cross-machine portability)
-
-### Main Window & Top-Bar Execute
-
-**`main_window.py`**
-- Assembles window, title bar, Settings menu
-- Wires Sidebar.navigate → MainContentArea.stack
-- Top-bar Execute (`_on_execute_clicked` / `_run_gated_command`): **only** GUI path through ConfirmationGate
-- Result: shown via QMessageBox dialogs (not mirrored to terminal)
+**Hard rule:** the GUI never builds commands or holds security logic; validation
+always runs before a command is built; execution always runs behind the gate.
 
 ---
 
-### Deleted UI Files
-- `wizard_terminal.py`, `wizard_console.py` (old wizard embedding)
-- `src/wizard/engine.py` (old wizard logic)
-- `tool_selection.py`, `llm_mode.py` (old modes)
-- `CommandEditorTab` (old page index 2)
+## 2. Quick reference
+
+| Aspect | Where | Notes |
+|--------|-------|-------|
+| Entry point | `src/main.py` | splash → `ReconMainWindow` → preflight doctor |
+| The safety gate | `src/core/confirmation_gate.py` | Direct Tool Mode Execute only |
+| Guided wizard | `chain_wizard/` (repo root) | subprocess CLI, 6-tool restricted, self-confirming |
+| Primary terminal | `src/ui/webterm/xterm_widget.py` | xterm.js + real PTY |
+| Terminal fallback | `pty_terminal.py` → `terminal.py` | ConPTY+pyte → plain pipe |
+| Command validation | `src/validation/common.py` | whitelist + injection guard |
+| Resources | `src/resources/*.json` | menus/warheads/impacts — never hardcoded |
+| Audit trail | `logs/audit_log.jsonl` | append-only, size-rotated |
+| Tests | `tests/` | validators + gate (`python -m pytest tests/`) |
 
 ---
 
-## Wizard CLI (`chain_wizard/`)
+## 3. Startup sequence (`src/main.py`)
 
-Self-contained Python package, subprocess-launched from Wizard Console.
-Not under `src/` — no imports from GUI code.
+1. On Linux, set QtWebEngine software-render env flags (WSLg/headless hygiene).
+2. Enable `faulthandler` → `logs/crash.log` (catches native SIGSEGV/SIGABRT).
+3. Apply the theme from `src/config.py`, show a splash screen.
+4. Build `ReconMainWindow`; keep the splash up until the Wizard Console's first
+   terminal reports real PTY output (`firstTabReady`), max 20s.
+5. ~2.5s after show, run the **preflight doctor** in a `QThread`; if anything's
+   missing, pop a non-blocking warning. Silent when everything's fine.
 
-**Flow:** target prompt → mode (AUTO/SEMI) → scan (nmap/masscan) → impact-ranked plan → per-step confirm → execute → harvest creds → post-exploit options
+---
 
-**Modules:**
+## 4. The GUI — Sidebar pages (5)
+
+Assembled by `src/ui/main_window.py` + `src/ui/widgets.py`.
+
+### Page 0 — Wizard Console
+Split layout: **control panel (left, 280px)** + **terminal tabs (right)**.
+- **`WizardControlPanel`** (`src/ui/wizard_panel.py`) — a form: Target / Mode
+  (AUTO·SEMI) / User + Pass wordlist (with Browse…) / Start scan. It only
+  *collects* choices and emits `scanRequested(dict)`; it never builds or runs a
+  command.
+- **`TerminalTabsWidget(form_driven=True)`** (`src/ui/terminal_tabs.py`) —
+  VS Code-style tabs. Before the first scan, a placeholder hint fills the pane.
+  Start scan → the panel dict becomes CLI flags (`_panel_to_wizard_args`) →
+  opens a Wizard tab running `chain_wizard/` with `--target/--mode/--wordlist`
+  (skips the CLI's own prompts). `+`/`⌄` open more Wizard or Shell tabs (cap 4).
+
+### Page 1 — Input Management (`InputManagementTab`)
+Zenmap-style scan queue (Status / Command). Every Direct Tool Mode Execute lands
+a row (Running → Done/Error). Double-click a row → its command goes back to the
+top bar. Append opens a saved `-oX` XML; Remove / Cancel Scan act on rows.
+
+### Page 2 — Raw Output (`RawOutputTab`)
+Display-only terminal (xterm.js backend, `read_only=True`). Shows Direct Tool
+Mode output. Every user keystroke is dropped before the PTY; only programmatic
+injection (`write_text`/`run_command`) writes to it. This is the audit surface.
+
+### Page 3 — Results Display (`ResultsDisplayTab`)
+Zenmap-style split pane. Two data shapes:
+- **Nmap/Masscan** → host/port table (from `-oX` XML).
+- **Hydra/Ncrack** → separate credentials table (`kind: "credentials"`).
+
+### Page 4 — LLM Mode (`TerminalTabsWidget(fixed=True)`)
+Two fixed, square-block tabs, **ungated by design** (same trade-off as Raw
+Output):
+- **"LLM"** — `llm` CLI + `llm-tools-nmap` plugin (nmap function-calling).
+- **"OpenCode"** — a coding agent, PATH-scoped to the 6 tools + read-only utils
+  (soft confinement, not a sandbox).
+
+### Title bar
+- **Sidebar toggle** (left) — hides the sidebar + divider.
+- **Settings dropdown** (right) — New/Stop Scan · Open/Save/Save-All Scan (XML) ·
+  Set/Remove LLM API Key · Quit.
+- **Close** — asks Yes/No; on Windows also runs `wsl.exe --shutdown` so the WSL2
+  VM doesn't linger.
+
+### Top bar (Direct Tool Mode)
+- **TOOLS combo** — installed tools from `tool_manager`; selecting one
+  repopulates the warhead list and fills the command box from `tool_commands.json`.
+- **WARHEAD PROFILE combo** — per-tool profiles (2 stealth / 2 critical /
+  2 quality) from `warheads/<tool>.json`.
+- **TARGET field** — the user's own lab IP (`skip_scope=True`).
+- **Execute** — the only GUI path through `ConfirmationGate`.
+
+---
+
+## 5. The terminal backend (3-tier fallback)
+
+`terminal_tabs.make_terminal(profile, ...)` picks the first available:
+
+1. **`XtermTerminal`** (`src/ui/webterm/xterm_widget.py`) — **primary**. xterm.js
+   (VS Code's emulator) in a `QWebEngineView` + `QWebChannel` bridge, over a real
+   PTY (ConPTY/`pywinpty` on Windows, stdlib `pty.fork` on Linux). Full IDE-grade
+   terminal: reflow-on-resize, mouse select, copy/paste, curses apps. Vendored
+   JS under `webterm/vendor/` (no CDN). Signals: `backendReady` (PTY spawned),
+   `firstOutput` (first bytes — the "usable" signal the splash waits on).
+2. **`PtyTerminal`** (`src/ui/pty_terminal.py`) — fallback. ConPTY + pyte → HTML
+   in a `QTextEdit`. Color/sudo/TAB, but no reflow on resize.
+3. **`InteractiveTerminal`** (`src/ui/terminal.py`) — last resort. Plain
+   `QProcess` pipe, no TTY features.
+
+**Windows launch:** `wsl.exe -e bash …` with **no `-d`** flag → uses the user's
+default distro. WSL-side paths are derived at runtime from the repo location
+(`_wsl_root_dir`, `_win_to_wsl_path`), never hardcoded to a dev machine.
+`_wsl_available()` shows an "install WSL" placeholder if no real distro exists.
+
+---
+
+## 6. The safety layer
+
+### `src/validation/common.py`
+Tool-agnostic validators — they validate, never build or run.
+- `parse_command_line()` — splits a command, enforces the **6-tool whitelist**
+  (`ALLOWED_PROGRAMS`), allows a **bare `sudo` prefix** (no sudo flags) since
+  masscan/nmap raw-socket flags need root in WSL.
+- `_has_unquoted_shell_metachar()` — quote-aware injection guard. `;|&`$()<>\`
+  are rejected only **outside** `'...'`/`"..."`, so hydra's quoted
+  `http-post-form "…&pass=…"` payload passes while `foo; rm -rf /` doesn't.
+- `convert_windows_paths_to_wsl()` — rewrites `C:\...` → `/mnt/c/...` (Windows
+  only) before validation, since the command runs in WSL bash.
+- `validate_exact_confirmation()` — only the literal string `"yes"` confirms.
+
+### `src/core/confirmation_gate.py`
+The single human-in-the-loop gate. **One instance per pending command**
+(single-use). Two phases:
+1. `request()` — validates, rewrites Windows paths, builds an impact preview via
+   `nmap.analyzer`. **Never executes.** Supports `argv_override` to run the real
+   argv while previewing/logging a **masked** command string (passwords hidden),
+   and `skip_scope=True` for local targets. Appends a root-privilege warning when
+   it detects a `sudo` prefix.
+2. `confirm(reply)` — returns True only for exact `"yes"`; audit-logs the
+   decision; marks the gate spent so a repeat `confirm("yes")` can't re-fire.
+
+Only the top-bar **Direct Tool Mode Execute** path uses this gate
+(`main_window._on_execute_clicked` → `_run_gated_command`). The Wizard Console
+has its **own** per-step confirmation inside the `chain_wizard` CLI.
+
+### `src/tools/nmap/analyzer.py`
+Impact/risk text for the gate — `generate_impact_description(flags, target,
+tool)` reads `src/resources/<tool>/flag_impacts.json` (all 6 tools have one),
+`format_confirmation_box()`, `is_target_in_scope()`.
+
+### `src/report/audit_log.py`
+`audit_log_llm()` appends one line per gated decision to `logs/audit_log.jsonl`
+(channel, command, target, response, executed, provider — **never secrets**).
+Size-rotated (5 MB × 3 backups). Append-only compliance record; nothing reads it
+back.
+
+### `src/preflight.py`
+Pure-stdlib dependency doctor. Verifies Windows Python has
+PySide6/QtWebEngine/pywinpty, WSL has a real distro (not just Docker Desktop
+stubs), the 6 tools are installed, and WSL's python3 is ≥3.10. Runs at startup
+in a thread; runnable standalone (`python -m src.preflight`, exit code = problem
+count).
+
+---
+
+## 7. Result parsers (`src/tools/`)
+
+A `src/tools/<tool>/` package exists **only where something parses that tool's
+output** — never scaffolded to preserve a layout.
+
+- **`nmap/`** — `parser.py` (`parse_nmap_xml()`, also handles masscan's
+  compatible `-oX` subset) + `analyzer.py` (above). Wired from
+  `main_window._ingest_nmap_xml()`.
+- **`hydra/`, `ncrack/`** — `parser.py` only. Regex-parse found credentials from
+  `hydra -o` / `ncrack -oN` output into the credentials table.
+- **`masscan`, `ncat`, `evil-winrm`** — no package (nothing parses their output;
+  ncat/evil-winrm are interactive sessions).
+
+**Auto-capture:** `main_window._scan_xml_capture_paths()` /
+`_cred_capture_paths()` append the right output flag (`-oX` / `-o` / `-oN`) to a
+bare invocation before confirmation, so results flow to Results Display without
+the user remembering the flag.
+
+---
+
+## 8. The wizard CLI (`chain_wizard/`, repo root)
+
+Self-contained Python package, **not** under `src/`, launched as a subprocess by
+the Wizard Console. No imports from GUI code. Runs all 6 tools directly via
+`subprocess` — it does **not** go through `src/tools/` or `ConfirmationGate`; it
+carries its own per-step confirmation.
+
+**Flow:** target → mode (AUTO/SEMI) → scan (nmap/masscan) → impact-ranked plan →
+per-step confirm → execute → harvest credentials → in-scope post-exploit.
+
 | Module | Purpose |
 |--------|---------|
-| `wizard/main.py` | Entry, prompts (target/mode/wordlist), loop control (Ctrl-C restart, Ctrl-D exit) |
-| `wizard/chain.py` | Orchestration: scan → plan → confirm → run → parse creds → offer post-exploit |
+| `wizard/main.py` | Entry; prompts, or the GUI's `--target/--mode/--*-wordlist` preset; loop control |
+| `wizard/chain.py` | Orchestration: scan → plan → confirm → run → parse creds → post-exploit |
 | `wizard/pipeline.py` | `build_plan()` (AUTO/SEMI), `step_priority()` (impact ranking) |
-| `library/scanner.py` | Nmap quick/full/stealth (tunable `-T`) + masscan |
-| `library/attack_map.py` + `.json` | Port → attack (credentials/exploitation) mapping |
-| `library/post_exploit.py` + `.json` | Service → post-exploit action (ncat/nmap-NSE/evil-winrm) |
-| `library/parser.py` | gnmap parsing → `ScanResult` dataclass |
-| `core/executor.py` | `subprocess.run(shell=True)` — routing by launcher context (WSL vs native), not per-tool prefix |
-| `core/color.py` | ANSI color (auto-disabled off-TTY) |
-| `core/display.py` | Banner/sections, width adaptive (`shutil.get_terminal_size()`) |
-| `core/models.py` | Dataclasses: `Step`, `ScanResult`, `AttackPlan` |
-
-**Tools:** Restricted to 6 authorized tools (nmap, masscan, hydra, ncrack, ncat, evil-winrm)
+| `library/scanner.py` | nmap quick/full/stealth + masscan |
+| `library/attack_map.py` + `.json` | port → attack (which tool + command template) |
+| `library/post_exploit.py` + `.json` | service → post-exploit action |
+| `library/parser.py` | gnmap → `ScanResult` |
+| `core/executor.py` | `subprocess.run(shell=True)`, routed by launcher context |
+| `core/color.py`, `core/display.py` | ANSI color (off-TTY safe), adaptive banners |
+| `core/models.py` | `Step`, `ScanResult`, `AttackPlan` dataclasses |
 
 ---
 
-## LLM Mode (Added 2026-08-01)
+## 9. Resources (`src/resources/` + `src/utils/resource_loader.py`)
 
-Two ungated real shells in fixed square-block tabs. **Intentional trade-off:** no ConfirmationGate (same as Raw Output).
+**Rule:** menus, warnings, profiles, impact text → JSON, never hardcoded.
+`resource_loader.load_json()` is the *only* thing allowed to `open()` a resource
+file; it caches and degrades to `{}` on missing/malformed files.
 
-### "LLM" Tab (`llm-nmap` profile)
+| File | Purpose |
+|------|---------|
+| `tool_commands.json` | One base command per tool (fills the command box) |
+| `warheads/<tool>.json` (6) | 6 profiles per tool (2 stealth / 2 critical / 2 quality) |
+| `<tool>/flag_impacts.json` (6) | Per-flag impact text for the confirmation box |
 
-- **Tool:** Simon Willison's `llm` CLI + `llm-tools-nmap` plugin
-- **Location:** Auto-cd into `tools/llm-tools-nmap/` (cloned from GitLab, gitignored)
-- **Functions:** nmap_scan, nmap_quick_scan, nmap_service_detection, nmap_os_detection, nmap_ping_scan, nmap_script_scan, get_local_network_info
-- **API key setup:** Offers to run `llm keys set openai` if none stored; prints usage banner
-- **Current model:** gemini-2.5-flash (free tier quota gated by project/region)
-
-### "OpenCode" Tab (`opencode` profile)
-
-- **Tool:** OpenCode coding agent CLI (official installer → `~/.opencode/bin/opencode`)
-- **Scope:** Path-restricted to 6 tools + read-only utils (ls, cat, grep, find, head, tail, wc, file, mkdir, touch)
-- **Workspace:** `tools/opencode-workspace/` (gitignored), contains auto-generated `AGENTS.md` (user-editable)
-- **Controls (soft, not sandboxed):**
-  - PATH rebuilt → `~/.recon_agent_bin/` symlinks only (absolute paths still reach filesystem)
-  - `opencode` blocked from Shell/Raw Output via bash `DEBUG` trap (avoids ad-hoc invocation)
-  - Tab dirs confined via PROMPT_COMMAND hook (soft lock)
-
-**Fixes (2026-08-01):**
-- **Exit loop:** Respawns OpenCode instead of falling through to bash (avoids `bash: not found`)
-- **Ctrl+Z handling:** Dropped at Qt terminal level (`block_ctrl_z` flag) before reaching PTY (OpenCode TUI doesn't handle it properly)
-- **WSL `-e` flag:** Explicit `--exec` added to all `wsl.exe bash` invocations (prevents silent variable loss)
-- **Safety:** Added `$HOME` guard in PATH-scope rebuild (prevents catastrophic `rm -f /*` if $HOME empty)
-
-### LLM API Key Manager (`src/core/llm_keys.py`)
-
-- **GUI:** Settings ▸ Set LLM API Key… / Remove LLM API Key…
-- **Scope:** Free-text provider (openai, gemini, custom plugins)
-- **Implementation:** Shells to `llm keys set/list`, edits `keys.json` for removal
-- **Constraint:** Must use `wsl.exe -e` (--exec) on Windows to preserve variable assignments
-
-### Validation (`src/validation/common.py`)
-
-Shared validation: command-line parsing, exact-confirmation check (`"yes"`
-literal match), `convert_windows_paths_to_wsl()`. Used by `ConfirmationGate`.
-
-Changed 2026-08-01:
-- **Quote-aware dangerous-metacharacter check** — the old
-  `DANGEROUS_SHELL_CHARS.search(command)` blocked `;|&`$()<>\` anywhere in
-  the raw string, which rejected legitimate quoted data (e.g. hydra's
-  `http-post-form "/login:user=^USER^&pass=^PASS^:F=X"` — the `&` there is
-  literal, inside `"..."`). Replaced with `_has_unquoted_shell_metachar()`,
-  a small char-by-char scanner that tracks `'...'`/`"..."` regions and only
-  flags one of those characters when it's **outside** a quoted region.
-  Security posture unchanged for the actual attack shapes (`foo; rm -rf /`,
-  `foo | bar`, `foo & bg`, `` `cmd` ``, `$(cmd)` are still rejected) — this
-  only stopped over-blocking safely-quoted data.
-- **Bare `sudo` prefix allowed** — `parse_command_line()` now accepts
-  `sudo <one of the 6 tools> ...` (masscan always needs raw sockets in WSL;
-  nmap's `-sS`/`-O`/privileged ping probes do too, and `setcap` isn't
-  always set up). Only the bare form is accepted — `sudo -u root nmap ...`
-  or any other sudo flag is still rejected — so the elevated program is
-  still exactly one of the 6 authorized tools, never sudo doing something
-  else. `ConfirmationGate` appends an explicit "[!] running as root" line
-  to the impact preview whenever this fires, so it's never silent.
-- **`convert_windows_paths_to_wsl(command)`** — rewrites any `C:\...`-style
-  path (quoted or bare) to its WSL mount-point form (`/mnt/c/...`). Called
-  from `ConfirmationGate.request()` on Windows, before validation, so a
-  wordlist/script path pasted from Windows Explorer doesn't trip the
-  backslash-is-dangerous check and doesn't need manual translation.
+The wizard CLI has its own separate resources (`chain_wizard/library/*.json`),
+not routed through `resource_loader`.
 
 ---
 
-## Validation & Parsing (`src/tools/`, `src/validation/`)
+## 10. Other modules
 
-### Nmap Analyzer (`src/tools/nmap/`)
-
-**Files:** parser.py, analyzer.py, __init__.py
-
-**Exports (used by ConfirmationGate):**
-- `format_confirmation_box()` — formats impact warning dialog
-- `generate_impact_description(flags, target, tool)` — impact text per-tool (reads `src/resources/<tool>/flag_impacts.json` — ALL 6 tools have entries now)
-- `is_target_in_scope()` — scope check for gated execute
-
-**Parser:** `parse_nmap_xml()` for Results Display
-- Parses `-oX` output from nmap **or masscan** (masscan's schema is nmap-compatible subset)
-- Never checks `scanner=` attribute — works for both tools
-- Wired from `main_window._ingest_nmap_xml()`
-
-### Credential Parsers (`src/tools/hydra/`, `src/tools/ncrack/`)
-
-**Files:** parser.py + __init__.py (no builder/validator/analyzer — nothing calls those yet)
-
-**Function:**
-- Regex-parse hydra `-o <file>` / ncrack `-oN <file>` output
-- Output: `[{host, port, service, login, password}, ...]`
-- Fed to `ResultsDisplayTab.add_credential_results()`
-
-**Auto-capture:** `main_window._cred_capture_paths()`
-- Bare invocation (with optional `sudo`) + no output flag → auto-append `-o` / `-oN <scratch file>` before confirmation
-- Mirrors `_scan_xml_capture_paths` for nmap/masscan
-
-### Unused Tool Packages
-
-`masscan`, `ncat`, `evil-winrm` have no `src/tools/` package (nothing needs to parse their output yet).
-All 6 tools run directly via `chain_wizard/core/executor.py` (`subprocess.run(shell=True)`) — tool-specific modules only exist where GUI needs them.
-
-### Validation (`src/validation/common.py`)
-
-**Shared checks:**
-- Command-line parsing (6-tool whitelist)
-- Bare `sudo` prefix allowed (no other flags)
-- Quote-aware metacharacter detection (`;|&`$()<>\` only flagged outside `'...'`/`"..."`)
-- `convert_windows_paths_to_wsl()` — `C:\...` → `/mnt/c/...` (Windows only)
-- Exact-confirmation check (`"yes"` literal match)
-
-### Confirmation Gate (`src/core/confirmation_gate.py`)
-
-**The single human-in-the-loop safety checkpoint.**
-
-**Entry point:** Top-bar Execute button only
-- `main_window._on_execute_clicked()` → `_run_gated_command()`
-- Passes `skip_scope=True` (user's own lab IP in TARGET field)
-
-**Two-phase design:**
-1. `request()` — validates + builds impact preview (no execution)
-2. `confirm("yes")` — requires exact literal `"yes"` reply to proceed
-
-**Features:**
-- Secret masking (via `argv_override`) — passwords hidden in preview/audit-log
-- Audit logging → `logs/audit_log.jsonl` (JSONL format, size-rotated)
-- Windows path translation (before validation)
-- Sudo detection → appends root-privilege warning to impact text
-- Tool name derivation (skips past `sudo` prefix for impact lookup)
-
-**Output routing:**
-- Result streamed to Raw Output tab
-- Input Management row marked Done/Error on completion
-- Result shown via QMessageBox dialogs (not mirrored to terminal)
-
-**Note:** Wizard Console has its own per-step confirmation built into chain_wizard CLI — does NOT call ConfirmationGate
-
-### Other core (`src/core/`, `src/preflight.py`)
-
-- `tool_manager.py` — installed-tool detection (`get_tool_manager()`), used
-  by the TopBar tool combo.
-- `llm_keys.py` — Settings ▸ **Set LLM API Key…** / **Remove LLM API Key…**.
-- `auto_chain.py` and `api_key_manager.py` were **deleted 2026-07-31** — dead
-  code, nothing imported them (LLM Mode is a plain terminal now, no API-key
-  UI; no auto-chain caller).
-
-**`src/preflight.py`** (added 2026-08-05) — pure-stdlib dependency doctor,
-verifies the app's cross-platform prerequisites. Checks: Windows Python has
-PySide6/QtWebEngine/pywinpty, WSL has a real distro (not just Docker Desktop
-pseudo-entries), the 6 tools are installed in the distro, WSL's python3 is ≥3.10
-(for chain_wizard's PEP 604 unions), not the Microsoft Store stub. Runs at GUI
-startup in a QThread (~2.5s after show) — fully set-up machines see nothing;
-any gap pops a non-modal warning with install commands. Exit code = problem
-count. Runnable standalone: `python -m src.preflight`.
+- `src/config.py` — theme/color palette, window constants, `STYLESHEET`,
+  `AUTHORIZED_SCOPE` (`192.168.1.0/24`), and the `TOOL_COMMANDS`/`WARHEAD_*`
+  accessors that load the JSON above. *(Large; still holds hardcoded UI strings —
+  see gaps.)*
+- `src/core/tool_manager.py` — installed-tool detection for the TOOLS combo.
+- `src/core/llm_keys.py` — `set_llm_key` / `remove_llm_key` for the LLM Mode
+  page (shells to the `llm` CLI). Kept out of `src/ui/` per the no-logic-in-GUI
+  rule.
 
 ---
 
-## Resources (`src/resources/`, `src/utils/resource_loader.py`)
+## 11. Tests (`tests/`)
 
-**Design rule:** All menus, help text, warnings, profiles, impact descriptions → JSON, never hardcoded strings.
-
-**`resource_loader.py`**
-- Only component allowed to `open()` resource JSONs
-- `load_json()` caches + degrades to `{}` on missing/malformed files
-- Safe (no exceptions at startup)
-
-**Live resources (2026-08-01 onward):**
-
-| File | Purpose | Scope |
-|------|---------|-------|
-| `<tool>/flag_impacts.json` (6 files) | Per-flag impact descriptions for confirm dialog | nmap, masscan, ncat, hydra, ncrack, evil-winrm |
-| `tool_commands.json` | Base command template per tool (fills command box) | All 6 tools |
-| `warheads/<tool>.json` (6 files) | Profile sets: 2 stealth / 2 critical / 2 quality per tool | All 6 tools |
-
-**Wizard CLI resources (separate from GUI):**
-- `chain_wizard/library/attack_map.json` — port → attack mapping
-- `chain_wizard/library/post_exploit.json` — service → post-exploit action
-- Not routed through `src/utils/resource_loader.py` (separate CLI resource system)
-
-**Deleted (2026-07-31):**
-- `wizard/menu.json`, `wizard/messages.json` (old wizard mode)
-- `nmap/scan_profiles.json`, `nmap/service_tools.json` (old nmap mode)
-- `common/warnings.json`
+`python -m pytest tests/` — 52 tests, no external target needed.
+- **`test_validation.py`** — whitelist, 6 injection shapes, sudo handling,
+  quote-aware scanner, exact-`yes`, Windows→WSL path rewrite.
+- **`test_confirmation_gate.py`** — request/reject, scope enforce/bypass, exact
+  `"yes"`, **single-use replay protection**, secret masking, cancel logging.
+- **`conftest.py`** — puts the repo root on `sys.path`; stubs the audit logger
+  so tests never write to `logs/`.
 
 ---
 
-## Audit Logging (`src/report/audit_log.py`)
+## 12. Known gaps & status
 
-**File:** `logs/audit_log.jsonl` (JSONL, size-rotated)
+**Gated (safe):**
+- ✓ Direct Tool Mode Execute — `ConfirmationGate` + exact `"yes"`.
+- ✓ Raw Output — read-only, no keystroke reaches a shell.
+- ✓ Wizard Console — per-step CLI confirmation.
 
-**Format (each line):** channel, command, target, response, executed, provider (no secrets)
+**Ungated (intentional trade-offs, documented, not oversights):**
+1. **LLM Mode** — two real shells, no gate. Review the threat model before real
+   targets. OpenCode has soft PATH/dir confinement only.
+2. **Direct Tool Mode uses `skip_scope=True`** — `AUTHORIZED_SCOPE` is not
+   enforced on the main GUI path (targets are assumed to be the user's own lab).
+   The gate is still the enforcement.
 
-**Trigger:** ConfirmationGate path only (Direct Tool Mode Execute)
+**Polish / open work (not safety):**
+- Hardcoded UI strings remain in `config.py` / `main_window.py` (STYLESHEET,
+  QMessageBox text) — partial resource migration.
+- The wizard control panel has **not been run end-to-end in the full GUI on a
+  real scan** yet (verified headless/argparse only).
+- No web-application scanning capability (no dir-brute / web-vuln / SQLi tools) —
+  the 6-tool set reaches the network/service layer only.
 
-**Rotation:** 5 MB per file, 3 backups kept (.1/.2/.3), oldest dropped
-
-**Compliance:** Append-only compliance record; nothing reads it back
-
----
-
-## Known Safety Status
-
-**Gated paths:**
-- ✓ Direct Tool Mode Execute (top bar) — through ConfirmationGate + "yes" confirmation
-- ✓ Raw Output tab — read-only since 2026-08-01 (no user keystroke reaches PTY)
-- ✓ Wizard Console — per-step CLI confirmation (self-contained)
-
-**Ungated paths (intentional trade-offs):**
-1. **LLM Mode** — 2 real shells, no gate involvement
-   - By design, not oversight
-   - User can run arbitrary commands in llm-nmap + opencode tabs
-   - Opencode has soft PATH/dir confinement (not sandboxed)
-   - **Decision point:** before using on real targets, review threat model
-
-2. **Hardcoded UI strings** — still in `config.py` + `main_window.py`
-   - STYLESHEET, WINDOW_TITLE, color palette
-   - QMessageBox text (Execute confirm dialog, close prompt)
-   - Partial resource migration: `tool_commands.json`, `warheads/*.json`, `flag_impacts.json` moved (2026-08-01)
-   - Not a safety gap (UI-only), just incomplete resource-driven architecture
-
-**Closed gaps:**
-- ✓ `llm-tools-nmap.py` script (deleted 2026-07-31) — was an orphaned direct-execution path
-
-**Platform notes:** Neither remaining gap is Windows-Demo specific
+**Harmless leftover:** hard-killing the process mid-run on Linux (SIGTERM/
+`timeout`) trips `QThread: Destroyed while thread is still running` → SIGABRT
+during teardown (the PTY reader thread). A normal window close (`closeEvent`) is
+clean — this only fires on `kill`-style termination.
 
 ---
 
-## Tool Execution Environment
+## 13. Deleted / never-scaffolded (so nobody re-adds them)
 
-### Source Clones vs. Actual Tools
-
-**Under `tools/` (repo root, gitignored, reference-only):**
-- nmap, thc-hydra, evil-winrm-py, ncrack, ncat-w32 source
-- NOT what runs (these are for reference/historical context)
-
-**Actually wired into GUI (`tools/` but functional):**
-- `tools/llm-tools-nmap/` — llm CLI plugin (LLM Mode tab)
-- `tools/opencode-workspace/` — OpenCode's workspace (OpenCode tab + `AGENTS.md`)
-
-### Windows (WSL2 Ubuntu)
-
-**Platform routing:** Tools run **inside WSL2 Ubuntu**, GUI runs **on Windows Python**
-
-**Installation (inside WSL):**
-
-| Tool | Command | Version |
-|------|---------|---------|
-| nmap | `sudo apt-get install -y nmap` | v7.98 |
-| masscan | `sudo apt-get install -y masscan` | v1.3.2 |
-| hydra | `sudo apt-get install -y hydra` | v9.6 |
-| ncrack | `sudo apt-get install -y ncrack` | v0.7 |
-| ncat | `sudo apt-get install -y ncat` (separate pkg) | v7.98 |
-| evil-winrm | `sudo gem install evil-winrm` (needs ruby/ruby-dev) | v3.9 |
-
-**Invocation:** `wsl.exe bash -lc "cd <repo> && command"` (tools native in WSL context)
-
-**Routing:** No per-tool `wsl.exe` prefix — where the CLI runs determines everything
-
-### Linux (Native)
-
-**Platform routing:** Tools run **natively**, no WSL layer
-
-**Installation:** Same apt/gem commands, run directly in shell
-
-**Invocation:** Just call tool by name (on PATH)
-
-**Routing:** Same as Windows, but no WSL wrapping
-
-**See also:** `README.md` for install commands
-
-**Launch status (verified 2026-08-06, WSL Ubuntu/WSLg, Python 3.14 + PySide6 6.11):**
-- App launches, runs stable, window move/resize works, all 6 tools present.
-- **Linux-specific handling in `src/ui/main_window.py`** (guarded by `sys.platform.startswith("linux")`):
-  - Resize/move event filter is installed on the **specific chrome widgets** (`central`, title bar, drag spacer), **not** app-wide. An app-wide `installEventFilter` makes PySide wrap QtWebEngine's off-screen `QQuickWindow` on focus → SIGSEGV in `getWrapperForQObject`. Windows keeps the app-wide filter.
-  - `resizeEvent` clamps back to `WINDOW_MIN_WIDTH/HEIGHT` — Wayland/WSLg ignores `setMinimumSize()` during `startSystemResize()`, so without this the frameless window could shrink off-screen.
-- **`src/main.py`** sets Linux-only QtWebEngine software-render env flags + `AA_ShareOpenGLContexts` (hygiene for headless/WSLg; quiets EGL/ZINK noise — not a crash fix).
-- **Leftover (harmless):** hard-kill mid-run (SIGTERM/`timeout`) trips `QThread: Destroyed while thread is still running` → SIGABRT during teardown (PTY `[_Reader]` thread). Does **not** fire on normal window close (`closeEvent` is clean). See `PROGRESS.md` 2026-08-06.
+- Old UI: `wizard_terminal.py`, `wizard_console.py`, `tool_selection.py`,
+  `llm_mode.py`, `CommandEditorTab`, `src/wizard/engine.py`.
+- Dead core: `auto_chain.py`, `api_key_manager.py`, the
+  `llm-tools-nmap.py` direct-exec script.
+- `nmap/builder.py` + `validator.py` (never wired).
+- Cleaned 2026-08-07: `llm_keys.has_llm_key` (uncalled), an unused `QComboBox`
+  import, `ACCENT_YELLOW`/`ACCENT_CYAN` constants, and `gobuster`/`dirb` from
+  the validator whitelist (never wired anywhere).
+- **Do not** scaffold `builder.py`/`validator.py`/`parser.py`/`analyzer.py`
+  placeholders "to preserve the layout" — add a module only when something real
+  will call it.
