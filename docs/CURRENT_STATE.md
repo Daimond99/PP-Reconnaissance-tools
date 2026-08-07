@@ -32,7 +32,7 @@ GUI (src/ui/)
   → Confirmation Gate (src/core/confirmation_gate.py)   ← the single "yes" gate
   → Execution (terminal PTY / subprocess)
   → Parser (src/tools/<tool>/parser.py)
-  → Results Display (src/ui/widgets.py)
+  → Results Display (src/ui/widgets/)
 ```
 
 **Hard rule:** the GUI never builds commands or holds security logic; validation
@@ -70,7 +70,11 @@ always runs before a command is built; execution always runs behind the gate.
 
 ## 4. The GUI — Sidebar pages (5)
 
-Assembled by `src/ui/main_window.py` + `src/ui/widgets.py`.
+Assembled by `src/ui/main_window.py` + the `src/ui/widgets/` package (split
+2026-08-07 from a single `widgets.py`, one class per module: `sidebar.py`,
+`topbar.py`, `dropdown.py`, `raw_output.py`, `results_display.py`,
+`input_management.py`, `main_content.py`, `helpers.py`; the package `__init__`
+re-exports every public name so `from src.ui.widgets import …` is unchanged).
 
 ### Page 0 — Wizard Console
 Split layout: **control panel (left, 280px)** + **terminal tabs (right)**.
