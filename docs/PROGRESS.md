@@ -8,6 +8,39 @@ Running log of what's done, what's in flight, what's next.
 
 ---
 
+## 2026-08-07 — Structural refactor: split god-modules, add GUI + launch tests
+
+Follow-up to the cleanup below. Three low-risk structural refactors, each its
+own commit, each verified end-to-end (pyflakes + tests + `python -m src.main`
+launch), and each byte-identical / behavior-identical to before.
+
+- **A — `widgets.py` → `src/ui/widgets/` package.** 866-line module holding many
+  unrelated widget classes split one-class-per-module (helpers, dropdown,
+  sidebar, topbar, raw_output, results_display, input_management, main_content).
+  The package `__init__` re-exports every public name, so external imports are
+  unchanged. Added `tests/test_gui_smoke.py` — a headless (offscreen Qt) test
+  that builds the real window and drives navigation / warhead repopulation /
+  dropdown / results rendering / input queue (7 tests).
+- **B — launch-script builders → `src/ui/terminal_launch.py`.** The bash launch
+  scripts (shell/llm/opencode) + Windows→WSL path derivation were pure string
+  logic buried in `terminal_tabs.py` with no test coverage. Moved verbatim to a
+  Qt-free module (output proven byte-identical to the pre-split version), added
+  `tests/test_terminal_launch.py` (12 tests) covering arg quoting, path mapping,
+  and each script's security-relevant shape (HOME guard, opencode block, PATH
+  scope, no `dir/*` glob, 6-tool scope set).
+- **C — `config.py` → `src/theme.py` + `config.py`.** 799-line god-module: the
+  visual layer (window constants, palette, 690-line STYLESHEET, fonts) moved to
+  `theme.py`; `config.py` re-exports it (`__all__`) and keeps only the
+  resource-driven command/warhead data + `AUTHORIZED_SCOPE`. Every re-exported
+  value verified identical (STYLESHEET included, 17071 chars).
+
+**Test count:** 52 → 71 (added GUI smoke + launch-builder suites).
+**Not done (higher risk, deferred):** unifying the two safety models
+(`ConfirmationGate` vs chain_wizard's own confirm) — a behavior change, not a
+refactor.
+
+---
+
 ## 2026-08-07 — Cleanup pass, safety tests, doc refresh
 
 Review-and-tidy session (no new features). Goal: get the tree clean and the
