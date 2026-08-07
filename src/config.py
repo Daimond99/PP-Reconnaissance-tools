@@ -40,12 +40,10 @@ TERM_BG      = "#0c0c0e"
 TERM_BAR     = "#151318"
 TERM_MUTE    = "#7a7a85"
 
-# Terminal accent colors (Dracula-consistent) — used to colorize LLM Mode
-# console output by message type (success/warning/error/info).
+# Terminal accent colors (Dracula-consistent) — used to colorize console
+# output / status text by message type (success, error).
 ACCENT_GREEN  = "#50fa7b"
 ACCENT_RED    = "#ff5555"
-ACCENT_YELLOW = "#f1fa8c"
-ACCENT_CYAN   = "#8be9fd"
 
 # ============================================================================
 # STYLESHEET - สไตล์หลักของแอป (แปลงจาก Design Reference)

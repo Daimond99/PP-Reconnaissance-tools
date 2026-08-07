@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QWidget, QFrame, QLabel, QPushButton, QLineEdit, QComboBox, QMenu,
+    QWidget, QFrame, QLabel, QPushButton, QLineEdit, QMenu,
     QStackedWidget, QHBoxLayout, QVBoxLayout,
     QSizePolicy, QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,

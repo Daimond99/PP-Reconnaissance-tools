@@ -44,10 +44,12 @@ def _has_unquoted_shell_metachar(command: str) -> str | None:
         i += 1
     return None
 
-# Programs any generated/AI-suggested command line is allowed to invoke.
+# The 6 authorized tools any generated/AI-suggested command line may invoke.
+# This whitelist is the hard boundary — kept in lockstep with the tools the
+# rest of the app actually wires (tool_manager, warheads, attack_map). Adding
+# a program here without wiring it end-to-end is dead surface, so don't.
 ALLOWED_PROGRAMS = {
-    "nmap", "masscan", "hydra", "ncrack", "ncat",
-    "evil-winrm", "gobuster", "dirb",
+    "nmap", "masscan", "hydra", "ncrack", "ncat", "evil-winrm",
 }
 
 # Matches a Windows drive-letter path (e.g. a wordlist typed/pasted from

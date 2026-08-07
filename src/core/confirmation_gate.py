@@ -140,8 +140,10 @@ class ConfirmationGate:
             executed=confirmed,
             provider=self.provider,
         )
-        if not confirmed:
-            self._pending = False
+        # Single-use gate: whether confirmed or not, this request is now
+        # spent. Leaving it pending on success would let a repeat
+        # confirm("yes") re-log and re-execute the same argv.
+        self._pending = False
         return confirmed
 
     def cancel(self, reason: str = "user_cancelled") -> None:

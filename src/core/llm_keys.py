@@ -39,16 +39,6 @@ def _run(argv: list) -> subprocess.CompletedProcess:
     )
 
 
-def has_llm_key(provider: str) -> bool:
-    """True if `llm keys list` already shows an entry for `provider`."""
-    try:
-        result = _run(["bash", "-lc", f"{_LLM_BIN} keys list 2>/dev/null"])
-    except Exception:
-        return False
-    names = {line.strip() for line in result.stdout.splitlines() if line.strip()}
-    return provider in names
-
-
 def set_llm_key(provider: str, value: str) -> Tuple[bool, str]:
     """Save `value` under `provider` via `llm keys set <provider> --value
     <value>`. `provider`/`value` are passed as real argv elements (through
