@@ -262,10 +262,12 @@ not routed through `resource_loader`.
 
 ## 10. Other modules
 
-- `src/config.py` — theme/color palette, window constants, `STYLESHEET`,
-  `AUTHORIZED_SCOPE` (`192.168.1.0/24`), and the `TOOL_COMMANDS`/`WARHEAD_*`
-  accessors that load the JSON above. *(Large; still holds hardcoded UI strings —
-  see gaps.)*
+- `src/theme.py` — the visual layer: window constants, color palette,
+  `STYLESHEET`, terminal-font constants (split from `config.py` 2026-08-07).
+- `src/config.py` — re-exports everything from `theme.py` (so `from src.config
+  import PURPLE, STYLESHEET, …` is unchanged), and itself holds the
+  resource-driven `TOOL_COMMANDS`/`WARHEAD_*` accessors + `AUTHORIZED_SCOPE`
+  (`192.168.1.0/24`). `__all__` documents the public surface.
 - `src/core/tool_manager.py` — installed-tool detection for the TOOLS combo.
 - `src/core/llm_keys.py` — `set_llm_key` / `remove_llm_key` for the LLM Mode
   page (shells to the `llm` CLI). Kept out of `src/ui/` per the no-logic-in-GUI
