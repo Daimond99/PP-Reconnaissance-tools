@@ -157,8 +157,8 @@ def _execute_step(
     print(f"  $ {cmd}")
     impact_box(step.impact)
 
-    confirm = input(f"  {cyan('Accept impact and proceed? (yes/no) ')}").strip().lower()
-    if confirm not in ("y", "yes", ""):
+    confirm = input(f"  {cyan('Accept impact and proceed? (type yes to run) ')}").strip().lower()
+    if confirm != "yes":
         warn("Skipped.")
         return "skipped"
 
@@ -239,9 +239,9 @@ def _offer_post_exploit(
     print(f"  $ {cmd}")
     impact_box(action.get("impact", "Uses the harvested credential against the service."))
     confirm = input(
-        f"  {cyan('Run this post-exploit action? (yes/no) ')}"
+        f"  {cyan('Run this post-exploit action? (type yes to run) ')}"
     ).strip().lower()
-    if confirm in ("y", "yes", ""):
+    if confirm == "yes":
         out, _ = run_cmd(cmd, plan.logfile)
         _echo_output(out)
     else:
@@ -266,9 +266,9 @@ def _offer_winrm(
         "4672 (admin) are generated and auditable."
     )
     confirm = input(
-        f"  {cyan('Connect via evil-winrm with this credential? (yes/no) ')}"
+        f"  {cyan('Connect via evil-winrm with this credential? (type yes to run) ')}"
     ).strip().lower()
-    if confirm in ("y", "yes", ""):
+    if confirm == "yes":
         out, _ = run_cmd(ev_cmd, plan.logfile)
         _echo_output(out)
     else:
