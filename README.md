@@ -93,7 +93,7 @@ flowchart TD
 | Wrapped tools | Nmap · Masscan · Hydra · Ncrack · Ncat · Evil-WinRM | 6-tool whitelist |
 | Test framework | pytest | `tests/` |
 | Audit format | JSONL, append-only, size-rotated | `logs/audit_log.jsonl` |
-| Optional LLM | `llm` CLI (OpenAI / Gemini), OpenCode agent | LLM Mode page |
+| Optional LLM | `llm` CLI (OpenAI / Gemini/ Claude), OpenCode agent | LLM Mode page |
 
 ---
 
