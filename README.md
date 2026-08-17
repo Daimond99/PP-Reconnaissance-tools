@@ -1,4 +1,4 @@
-# TheRecon
+# PP-Reconnaissance-tools
 
 > **Safety-gated GUI orchestrator for authorized network reconnaissance.**
 > Solves the "one wrong flag away from scanning the wrong subnet" problem by forcing every command through validation → preview → exact-`yes` confirmation → audited execution, all behind a single desktop app.
