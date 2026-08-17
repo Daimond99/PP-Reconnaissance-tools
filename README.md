@@ -1,177 +1,68 @@
 # TheRecon
 
-**Network Reconnaissance Console** — a PySide6 desktop GUI that orchestrates a
-chain of authorized security-testing tools (Nmap, Masscan, Hydra, Ncrack, Ncat,
-Evil-WinRM) behind a guided wizard and a gated manual-command mode.
+**เครื่องมือช่วยตรวจสอบความปลอดภัยของระบบเครือข่าย** แบบมีหน้าจอ (GUI) — สร้างเพื่อให้การใช้งานเครื่องมือสาย security ที่ปกติต้องพิมพ์คำสั่งยากๆ ในหน้าจอดำ กลายเป็นการคลิกผ่านหน้าต่างที่เข้าใจง่าย และมี **ระบบยืนยันก่อนยิงคำสั่งจริงทุกครั้ง** เพื่อกันความผิดพลาด
 
-> **Authorized testing only.** Every path that runs a real command requires an
-> explicit human confirmation first. Point it only at systems you own or have
-> **written** permission to test.
+> ทำในแล็บจำลองเพื่อการศึกษาเท่านั้น ห้ามใช้กับระบบที่ไม่ได้รับอนุญาตเป็นลายลักษณ์อักษร
 
 ---
 
-## What it is
+## ตัวอย่างหน้าจอ
 
-TheRecon is a **front-end and safety layer** over six command-line tools. It
-doesn't reimplement them — it helps you build the right command, shows you
-exactly what will run and its impact, makes you confirm, then runs it inside a
-real terminal and collects the results. The actual tools run inside **WSL2
-(Ubuntu)** on Windows, or **natively** on Linux.
+**โหมด Wizard — ไกด์ทีละขั้นตอน**
+![Wizard Mode](img-gui/wizardmode.png)
 
-**Supported tools:** Nmap · Masscan · Hydra · Ncrack · Ncat · Evil-WinRM
+**โหมด Direct Tool — พิมพ์คำสั่งเอง + เลือก profile สำเร็จรูป**
+![Direct Tool Mode](img-gui/direct-tool-mode.png)
 
-## What it can do today
+**กล่องยืนยันก่อนรันจริง (ต้องพิมพ์ `yes` เป๊ะๆ)**
+![Confirm Dialog](img-gui/warring-confirm.png)
 
-- **Wizard Console** — the guided path. A form on the left (target / mode /
-  wordlists) drives an embedded chain CLI in a real terminal beside it:
-  `scan → impact-ranked attack plan → brute-force → credential harvest →
-  in-scope post-exploit`. Each step asks for confirmation before it runs.
-- **Direct Tool Mode** (top bar) — pick a tool + a pre-built "warhead" profile,
-  or type a command yourself. It's validated, previewed with a per-flag impact
-  summary, and only runs after you type the exact word `yes`. Secrets
-  (passwords) are masked in the preview and the audit log.
-- **Results Display** — parses completed Nmap/Masscan scans into a host/port
-  table and Hydra/Ncrack output into a credentials table.
-- **Raw Output** — display-only view of what Direct Tool Mode ran.
-- **LLM Mode** — two AI-assisted terminals (an `llm` CLI with nmap tools, and a
-  scoped OpenCode agent). Optional, ungated by design — see the safety note.
+**หน้าแสดงผลลัพธ์ — แปลงผลสแกนดิบเป็นตารางอ่านง่าย**
+![Results Display](img-gui/results-display.png)
 
-**What it is *not*:** a web-application scanner. The six tools cover the
-network / service / credential / post-exploit layers well, but there is no
-directory brute-forcer, web-vuln scanner, or SQLi/XSS tooling. Scanning a
-website with it reaches the service and TLS layer only.
+**โหมด LLM — ใช้ AI ช่วยแนะนำคำสั่ง**
+![LLM Mode](img-gui/llm-ai-agent.png)
 
 ---
 
-## Install
+## จุดเด่น
 
-Tools run **inside WSL2 (Ubuntu)** on Windows, or **natively** on Linux. The
-GUI itself always runs on the host Python.
-
-### Quick install (one command)
-
-**Linux:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.sh | bash
-```
-
-**Windows** (first run from an **elevated** PowerShell if WSL isn't installed
-yet — installing WSL needs admin + a reboot, so the script stops and asks you
-to reboot then re-run once):
-```powershell
-irm https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.ps1 | iex
-```
-
-Both install the 6 tools, clone the repo (default `~/TheRecon`, override with
-`$THERECON_DIR`/`THERECON_DIR`), create a venv, and install Python deps.
-Re-running is safe (idempotent).
-
-### Manual install
-
-**1. Windows only — WSL2 + Ubuntu:**
-```powershell
-wsl --install -d Ubuntu
-```
-Reboot if prompted, then open Ubuntu once to finish user setup.
-
-**2. Install the 6 tools** — inside WSL Ubuntu (Windows) or your native shell
-(Linux), same command either way:
-```bash
-sudo apt-get update
-sudo apt-get install -y nmap masscan hydra ncrack ncat ruby ruby-dev
-sudo gem install evil-winrm
-```
-
-**3. Clone + Python deps:**
-
-> **WSL users:** clone into your Linux home (`cd ~` first), **not** `/mnt/c/...`.
-> Cloning onto the Windows filesystem from inside WSL fails with
-> `chmod on .git/config.lock failed: Operation not permitted` (DrvFs doesn't
-> support the permissions git needs). The app still runs fine on Windows either
-> way — this is only about where the repo folder lives.
-
-```bash
-cd ~
-git clone https://github.com/Daimond99/TheRecon.git
-cd TheRecon
-
-# Windows:         python -m venv .venv  &&  .venv\Scripts\activate
-# Linux/WSL/macOS: python3 -m venv .venv  &&  source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-> **Debian/Kali/Ubuntu:** if `pip install` errors with
-> `externally-managed-environment` (PEP 668), you skipped the venv step above —
-> that's the fix, not `--break-system-packages`.
-
-**4. Run:**
-```bash
-python -m src.main
-```
-
-At startup a **preflight doctor** checks WSL, the 6 tools, and both Python
-runtimes; if anything's missing it shows a non-blocking warning with the exact
-fix. Run it standalone any time:
-```bash
-python -m src.preflight
-```
+- **ปลอดภัยเป็นค่าเริ่มต้น** — ทุกคำสั่งที่จะยิงจริง ต้องมีคนกดยืนยันก่อน พิมพ์คำว่า `yes` เต็มๆ เท่านั้นถึงจะรัน
+- **โหมด Wizard พาทีละขั้น** — เริ่มจากสแกน หาช่องโหว่ วางแผน ทดสอบรหัสผ่าน จนถึงเข้าระบบ ทำต่อกันเป็นสาย
+- **รวม 6 เครื่องมือสายเน็ตเวิร์กในที่เดียว** — Nmap, Masscan, Hydra, Ncrack, Ncat, Evil-WinRM ไม่ต้องสลับหน้าต่างไปมา
+- **แสดงผลกระทบก่อนรัน** — บอกว่าคำสั่งจะทำอะไร ใช้สิทธิ์ระดับไหน ดังแค่ไหน ก่อนตัดสินใจ
+- **ปิดบังรหัสผ่านอัตโนมัติ** — ใน log และหน้าจอ preview รหัสผ่านจะถูกซ่อนไว้ กันหลุด
+- **ทำงานได้ทั้ง Windows และ Linux** — บน Windows รันผ่าน WSL2 (Ubuntu) ให้อัตโนมัติ
 
 ---
 
-## Optional: LLM Mode setup
+## วิธีใช้งานคร่าวๆ
 
-Not covered by the installers — only needed for the LLM Mode page. Run inside
-WSL Ubuntu (Windows) or your native shell (Linux):
-
-**"LLM" tab** — `llm` CLI + nmap function-calling tools:
-```bash
-pipx install llm
-git clone https://gitlab.com/kalilinux/packages/llm-tools-nmap.git tools/llm-tools-nmap
-llm keys set openai          # or: llm install llm-gemini && llm keys set gemini
-```
-
-**"OpenCode" tab** — scoped coding agent:
-```bash
-curl -fsSL https://opencode.ai/install | bash
-```
-The tab sets up its own scoped workspace on first open.
+1. ติดตั้งด้วยสคริปต์เดียว (`install.ps1` บน Windows / `install.sh` บน Linux) จะติดตั้งเครื่องมือ 6 ตัว + Python deps ให้อัตโนมัติ
+2. เปิดโปรแกรมด้วย `python -m src.main`
+3. เลือกโหมด Wizard (ถ้าอยากให้ไกด์) หรือ Direct Tool (ถ้าถนัดคำสั่งเอง) → ใส่เป้าหมาย → กดรัน → พิมพ์ `yes` ยืนยัน
 
 ---
 
-## Tests
+## เทคโนโลยีที่ใช้
 
-```bash
-python -m pytest tests/ -q
-```
-Covers the safety-critical validators and the confirmation gate: the 6-tool
-whitelist, the quote-aware shell-injection guard, the exact-`yes` rule,
-Windows→WSL path rewriting, scope enforcement, single-use replay protection,
-and secret masking.
+- **Python 3** + **PySide6** (หน้าจอ GUI)
+- **WSL2 (Ubuntu)** สำหรับรันเครื่องมือบน Windows
+- **xterm.js** + PTY จริง สำหรับเทอร์มินัลในโปรแกรม
+- **pytest** สำหรับ test ระบบความปลอดภัย
+- (เสริม) **OpenAI / Gemini** ผ่าน `llm` CLI สำหรับโหมด AI
 
 ---
 
-## Safety note
+## เอกสารเพิ่มเติม
 
-- The **Wizard Console** and **Direct Tool Mode** are gated — nothing runs
-  without a per-step / exact-`yes` confirmation.
-- **Raw Output** is display-only (no keystroke reaches a shell).
-- **LLM Mode** is two *ungated* real shells, by design. Review your threat model
-  before using it against real targets.
-
----
-
-## More detail
-
-- **[CLAUDE.md](CLAUDE.md)** — architecture rules and hard constraints.
-- **[docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)** — a file-by-file map of
-  what's implemented and what each module does.
-- **[docs/PROGRESS.md](docs/PROGRESS.md)** — the running change log.
+- [`docs/OVERVIEW_TH.md`](docs/OVERVIEW_TH.md) — ภาพรวมภาษาไทยแบบละเอียด
+- [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — แผนที่ไฟล์ทีละไฟล์
+- [`CLAUDE.md`](CLAUDE.md) — กฎเชิงสถาปัตยกรรม
+- [`LICENSE`](LICENSE) — MIT
 
 ---
 
-## Disclaimer
+## ข้อจำกัดความรับผิด
 
-The authors and contributors of TheRecon are not responsible for any misuse or
-damage caused by this program. Use responsibly and only on systems you are
-authorized to test.
+ผู้พัฒนาไม่รับผิดชอบต่อความเสียหายจากการใช้งานผิดวัตถุประสงค์ ใช้กับระบบที่คุณเป็นเจ้าของ หรือได้รับอนุญาตเป็นลายลักษณ์อักษรเท่านั้น
