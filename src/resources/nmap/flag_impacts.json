@@ -9,6 +9,8 @@
   "-Pn": "Skips host discovery (ping) and scans every IP as if it were always online — may increase scan time",
   "-n": "Skips DNS resolution, scans slightly faster",
   "-F": "Scans only the 100 most common ports (faster than scanning every port)",
+  "--top-ports": "Scans only the N most common ports (faster, less thorough than a full 1-65535 sweep)",
+  "-p-": "Scans all 65535 ports — thorough but much slower and noisier than a top-ports scan",
   "--open": "Only shows ports found open in the results",
   "-f": "Splits packets into small fragments to evade basic firewalls/IDS that only inspect whole packets",
   "--script": "Runs the specified NSE script, which may send extra requests to the target depending on the script",

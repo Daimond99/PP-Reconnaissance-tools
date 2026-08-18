@@ -53,7 +53,7 @@
     {
       "name": "HTTP form brute-force (hydra)",
       "tool": "hydra",
-      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http80.txt http-post-form://{target}:80/login.php:user=^USER^&pass=^PASS^:F=incorrect -V",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http80.txt 'http-post-form://{target}:80/login.php:user=^USER^&pass=^PASS^:F=incorrect' -V",
       "impact": "WAF / ModSecurity may block your IP; access log volume spikes.",
       "is_recommended": true
     }
@@ -96,7 +96,7 @@
     {
       "name": "HTTPS form brute-force (hydra)",
       "tool": "hydra",
-      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_https443.txt https-post-form://{target}:443/login.php:user=^USER^&pass=^PASS^:F=incorrect -V",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_https443.txt 'https-post-form://{target}:443/login.php:user=^USER^&pass=^PASS^:F=incorrect' -V",
       "impact": "Cloudflare / WAF / rate-limit may block your IP.",
       "is_recommended": true
     }
@@ -244,7 +244,7 @@
     {
       "name": "HTTP (8080) form brute-force (hydra)",
       "tool": "hydra",
-      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http8080.txt http-post-form://{target}:8080/login.php:user=^USER^&pass=^PASS^:F=incorrect -V",
+      "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http8080.txt 'http-post-form://{target}:8080/login.php:user=^USER^&pass=^PASS^:F=incorrect' -V",
       "impact": "Reverse proxy or WAF may block your IP.",
       "is_recommended": true
     }

@@ -4,6 +4,7 @@ This is the main logic that the CLI (or future GUI) calls.
 """
 
 import re
+import shlex
 from core.display import section, info, ok, warn, impact_box, bold, cyan, green
 from core.executor import run_cmd
 from core.models import AttackPlan, Step
@@ -145,10 +146,17 @@ def _execute_step(
     if step.tool == "evil-winrm":
         return "skipped"
 
+    # userlist/passlist are shell-quoted here (not at the source) because
+    # they can be arbitrary filesystem paths -- Windows paths with spaces
+    # (GUI Browse... dialog) or anything else a user picks -- and every
+    # command_template in attack_map.json substitutes them unquoted, then
+    # runs through subprocess shell=True (core/executor.run_cmd). An
+    # unquoted space in the path silently truncates the wordlist arg and
+    # was reproduced causing a false "file not found"-shaped hydra failure.
     cmd = step.command_template.format(
         target=plan.target,
-        userlist=plan.user_wordlist,
-        passlist=plan.pass_wordlist,
+        userlist=shlex.quote(plan.user_wordlist),
+        passlist=shlex.quote(plan.pass_wordlist),
     )
 
     print(f"\n  {'─' * 60}")
@@ -229,6 +237,12 @@ def _offer_post_exploit(
         info(f"No post-exploit action mapped for {service} — credential saved for manual use.")
         return
 
+    # NOT shlex-quoted (unlike userlist/passlist below): several
+    # post_exploit.json templates embed {user}/{password} *inside* their own
+    # single-quoted printf string (ftp/telnet banner-grab) -- wrapping the
+    # substitution in another layer of quotes there would break out of that
+    # quoting instead of protecting it. Credentials here always originate
+    # from this run's own hydra/ncrack parse, not attacker-controlled input.
     user, password = cred
     cmd = action["command_template"].format(
         target=plan.target, user=user, password=password,
@@ -258,7 +272,7 @@ def _offer_winrm(
     ssl_flag = " -S" if port == 5986 else ""
     ev_cmd = (
         f"evil-winrm -i {plan.target} "
-        f"-u {username} -p '{password}'{ssl_flag}"
+        f"-u {shlex.quote(username)} -p {shlex.quote(password)}{ssl_flag}"
     )
     print(f"  $ {ev_cmd}")
     impact_box(

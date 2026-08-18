@@ -9,6 +9,7 @@ pane falls back to the normal interactive loop for any follow-up run.
 """
 
 import os
+import re
 import sys
 import glob
 import argparse
@@ -29,6 +30,20 @@ _WORDLIST_DIRS = [
     "/usr/share/wordlists",
     "/usr/share/seclists/Passwords",
 ]
+
+
+def _win_to_wsl_path(path: str) -> str:
+    """Convert a Windows-style path (`C:\\...` / `C:/...`) to its WSL
+    `/mnt/c/...` form. No-op for anything that isn't a drive-letter path
+    (already-POSIX paths pass straight through). The wizard always executes
+    inside WSL/Linux bash, which has no drive letters -- a raw Windows path
+    (e.g. from the GUI's wordlist Browse... dialog, which runs on Windows
+    Python) silently fails to resolve there otherwise."""
+    m = re.match(r"^([A-Za-z]):[\\/](.*)$", path)
+    if not m:
+        return path
+    drive, rest = m.group(1).lower(), m.group(2).replace("\\", "/")
+    return f"/mnt/{drive}/{rest}"
 
 
 def _enable_path_completion() -> None:
@@ -79,7 +94,7 @@ def _resolve_wordlist(prompt: str, default: str, choices: list[str]) -> str:
             return choices[idx]
         warn(f"No menu item #{raw} — treating '{raw}' as a path.")
 
-    path = os.path.expanduser(raw)
+    path = _win_to_wsl_path(os.path.expanduser(raw))
     if not os.path.exists(path):
         warn(f"File not found: {path} — falling back to {default}")
         return default
@@ -109,8 +124,8 @@ def _parse_args(argv: list[str] | None = None) -> _Preset | None:
         return None
 
     default_wl = "/usr/share/wordlists/rockyou.txt"
-    user_wl = a.user_wl or default_wl
-    pass_wl = a.pass_wl or user_wl
+    user_wl = _win_to_wsl_path(a.user_wl) or default_wl
+    pass_wl = _win_to_wsl_path(a.pass_wl) or user_wl
     return _Preset(target=a.target, mode=a.mode, user_wl=user_wl, pass_wl=pass_wl)
 
 
@@ -124,8 +139,13 @@ def main() -> None:
             pass
 
     # Only the first pass honors the GUI-supplied preset; every run after
-    # (the pane loops so it's always "the wizard") is fully interactive.
+    # (the pane loops so it's always "the wizard") is fully interactive --
+    # but `last` carries the most recently used target/mode/wordlists
+    # forward as the *defaults* for those prompts (Enter reuses them), so
+    # a GUI-launched target doesn't get thrown away and re-typed from
+    # scratch on every loop.
     preset = _parse_args()
+    last: "_Preset | None" = preset
 
     # Run the wizard in a loop so the pane is always "the wizard":
     #   Ctrl-C  → cancel the current step, restart at the mode menu.
@@ -133,7 +153,9 @@ def main() -> None:
     #   Ctrl-D  → exit for real (the launcher drops to a shell as an escape).
     while True:
         try:
-            _interactive(preset)
+            used = _interactive(preset, last)
+            if used is not None:
+                last = used
             preset = None  # subsequent runs prompt normally
         except KeyboardInterrupt:
             preset = None
@@ -144,7 +166,13 @@ def main() -> None:
             return
 
 
-def _interactive(preset: "_Preset | None" = None) -> None:
+def _interactive(
+    preset: "_Preset | None" = None,
+    last: "_Preset | None" = None,
+) -> "_Preset | None":
+    """Run one wizard pass. Returns the `_Preset` actually used (so the
+    caller can offer it back as next loop's defaults), or `None` if the
+    user aborted before a target was chosen."""
     banner(
         title="PENTEST CHAIN WIZARD",
         subtitle="auto / semi · nmap masscan hydra ncrack ncat evil-winrm",
@@ -160,25 +188,29 @@ def _interactive(preset: "_Preset | None" = None) -> None:
         ok(f"Pass wordlist: {preset.pass_wl}")
         print()
         run_chain(preset.target, preset.user_wl, preset.pass_wl, preset.mode)
-        return
+        return preset
 
-    # ─── Mode selection ─────────────────────────────────────────
+    # ─── Mode selection (defaults to the last-used mode) ─────────
+    default_mode = last.mode if last else "auto"
+    default_mode_num = "2" if default_mode == "semi" else "1"
     print("  Select mode:")
     print(f"    {green('1')}. {bold('AUTO')} — auto-pick best tool per port, confirm each")
     print(f"    {green('2')}. {bold('SEMI')} — show all options, pick per port")
-    mode_choice = input(f"  {cyan('Choice [1/2]: ')}").strip()
+    mode_choice = input(f"  {cyan(f'Choice [1/2] [{default_mode_num}]: ')}").strip() or default_mode_num
     mode = "auto" if mode_choice == "1" else "semi"
     ok(f"Mode: {mode.upper()}")
 
-    # ─── Target ─────────────────────────────────────────────────
-    target = input(f"\n  {cyan('Target (IP / domain / CIDR): ')}").strip()
+    # ─── Target (defaults to the last-used target — blank reuses it) ─
+    default_target = last.target if last else ""
+    target_hint = f" [{default_target}]" if default_target else ""
+    target = input(f"\n  {cyan(f'Target (IP / domain / CIDR){target_hint}: ')}").strip() or default_target
     if not target:
         fail("No target provided — back to the start.")
-        return
+        return None
 
     # ─── Wordlists ──────────────────────────────────────────────
     _enable_path_completion()
-    default_wl = "/usr/share/wordlists/rockyou.txt"
+    default_wl = last.user_wl if last else "/usr/share/wordlists/rockyou.txt"
 
     found = _discover_wordlists()
     if found:
@@ -194,6 +226,7 @@ def _interactive(preset: "_Preset | None" = None) -> None:
 
     # ─── Execute ────────────────────────────────────────────────
     run_chain(target, user_wl, pass_wl, mode)
+    return _Preset(target=target, mode=mode, user_wl=user_wl, pass_wl=pass_wl)
 
 
 if __name__ == "__main__":

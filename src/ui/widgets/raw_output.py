@@ -1,5 +1,6 @@
-"""RawOutputTab — the display-only surface for Direct Tool Mode Execute
-output (read-only terminal backend)."""
+"""RawOutputTab — the output surface for Direct Tool Mode Execute
+(free-typing terminal backend, so interactive prompts like `sudo`'s
+password can always be answered)."""
 
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PySide6.QtCore import Signal, Qt
@@ -10,16 +11,13 @@ from src.ui.widgets.helpers import wrap_in_terminal
 
 
 class RawOutputTab(QWidget):
-    """Display-only output surface — same backend the Wizard Console uses
-    (XtermTerminal → PtyTerminal → InteractiveTerminal), but with keyboard
-    input dropped (`read_only=True`) so it's never typed into directly.
-    XtermTerminal narrows that further: input is unlocked for the duration
-    of a `run_command()` call and re-locked the instant it reports done, so
-    an interactive prompt the gated command itself raises (e.g. `sudo`'s
-    password prompt) can be answered without ever exposing a free-typing
-    shell. The top-bar Execute button sends its gated command here instead
-    of a QMessageBox, so the scan runs with real color/output in a real
-    terminal.
+    """Output surface — same backend the Wizard Console uses (XtermTerminal
+    → PtyTerminal → InteractiveTerminal), kept free-typing (`read_only=False`)
+    so an interactive prompt the gated command raises (e.g. `sudo`'s password
+    prompt) can always be answered, not just for the duration of a
+    `run_command()` call. The top-bar Execute button sends its gated command
+    here instead of a QMessageBox, so the scan runs with real color/output in
+    a real terminal.
 
     The terminal itself (one QWebEngineView = one Chromium renderer process,
     plus a real wsl.exe/bash PTY) is not spawned until this page is actually
@@ -39,7 +37,7 @@ class RawOutputTab(QWidget):
 
         self.terminal = None
         self.console = None
-        self._placeholder = QLabel("Idle — display-only, waiting for a command to run here.")
+        self._placeholder = QLabel("Idle — waiting for a command to run here.")
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet(f"color: {TEXT_MUTE};")
         self._layout.addWidget(self._placeholder, 1)
@@ -47,7 +45,7 @@ class RawOutputTab(QWidget):
     def _ensure_terminal(self) -> None:
         if self.terminal is not None:
             return
-        self.terminal = make_terminal("shell", read_only=True)
+        self.terminal = make_terminal("shell", read_only=False)
         self.console = self.terminal
         self._layout.removeWidget(self._placeholder)
         self._placeholder.deleteLater()
