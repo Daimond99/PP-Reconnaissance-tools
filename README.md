@@ -130,9 +130,14 @@ sudo gem install evil-winrm
 git clone https://github.com/Daimond99/PP-Reconnaissance-tools.git
 cd PP-Reconnaissance-tools
 python -m venv .venv
-# Windows:         .venv\Scripts\activate
-# Linux/WSL/macOS: source .venv/bin/activate
+# Windows (PowerShell): .venv\Scripts\Activate.ps1
+# Windows (cmd.exe):    .venv\Scripts\activate.bat
+# Linux/WSL/macOS:      source .venv/bin/activate
 pip install -r requirements.txt
+
+# Or without activating, call pip/python inside .venv directly:
+# Windows:         .venv\Scripts\pip install -r requirements.txt
+# Linux/WSL/macOS: .venv/bin/pip install -r requirements.txt
 
 # 4. Run
 python -m src.main
