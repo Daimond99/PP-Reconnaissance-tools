@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from src.config import (
     TERM_BAR, TERM_MUTE, CONSOLE_TEXT, BORDER_SOFT, CONSOLE_BG, PANEL_LIGHT,
-    PANEL,
+    PANEL, PURPLE, PURPLE_DIM,
 )
 
 # PyCharm-style active-tab accent (orange underline).
@@ -503,9 +503,25 @@ class TerminalTabsWidget(QWidget):
             border-right: 1px solid {BORDER_SOFT};
             border-bottom: 3px solid {_TAB_ACCENT};
         }}
+        /* Fixed/"block" tabs (today: LLM Mode's "LLM Nmap"/"OpenCode" pair)
+        get the app's own purple accent instead of the orange used by
+        Wizard Console/Raw Output's tabs, so they read as part of the same
+        page as the gated panel beside them rather than a mismatched color
+        borrowed from elsewhere in the app. */
         QTabBar#TermTabBar[blockStyle="true"]::tab {{
             font-size: 14px;
             font-weight: 600;
+            padding: 10px 14px;
+        }}
+        QTabBar#TermTabBar[blockStyle="true"]::tab:hover {{
+            background: {PANEL_LIGHT};
+            color: {CONSOLE_TEXT};
+        }}
+        QTabBar#TermTabBar[blockStyle="true"]::tab:selected {{
+            background: {CONSOLE_BG};
+            color: {CONSOLE_TEXT};
+            border-right: 1px solid {BORDER_SOFT};
+            border-bottom: 3px solid {PURPLE};
         }}
         QToolButton#TermTabBtn {{
             color: {TERM_MUTE};

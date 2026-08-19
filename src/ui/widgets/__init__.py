@@ -12,6 +12,7 @@ from src.ui.widgets.topbar import TopBar
 from src.ui.widgets.raw_output import RawOutputTab
 from src.ui.widgets.results_display import ResultsDisplayTab
 from src.ui.widgets.input_management import InputManagementTab
+from src.ui.widgets.llm_nmap_panel import LlmNmapPanel
 from src.ui.widgets.main_content import MainContentArea, _wizard_console_page
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "RawOutputTab",
     "ResultsDisplayTab",
     "InputManagementTab",
+    "LlmNmapPanel",
     "MainContentArea",
     "_wizard_console_page",
 ]

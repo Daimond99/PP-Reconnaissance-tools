@@ -19,7 +19,15 @@
 <script>
   // ---- xterm.js setup -------------------------------------------------------
   var term = new Terminal({
-    fontFamily: "Consolas, 'Cascadia Mono', 'Ubuntu Mono', 'DejaVu Sans Mono', 'Courier New', monospace",
+    // Nerd Font fallbacks appended at the end: plain-ASCII rendering is
+    // unchanged (Consolas etc. still win for normal text — Chromium's
+    // canvas text renderer only falls through per-glyph when the earlier
+    // font in this list lacks that character), but the icon/box glyphs
+    // TUI agents like OpenCode print (Private-Use-Area codepoints, not in
+    // Consolas/Cascadia at all) render correctly instead of as tofu boxes
+    // *if* the user has one of these installed — see docs/CURRENT_STATE.md
+    // if none are, since installing a font is outside what this file can do.
+    fontFamily: "Consolas, 'Cascadia Mono', 'Ubuntu Mono', 'DejaVu Sans Mono', 'Courier New', 'CaskaydiaCove Nerd Font', 'CaskaydiaCove Nerd Font Mono', 'FiraCode Nerd Font', 'Symbols Nerd Font Mono', 'Symbols Nerd Font', monospace",
     fontSize: 14,
     cursorBlink: true,
     allowProposedApi: true,

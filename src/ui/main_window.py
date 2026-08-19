@@ -22,7 +22,7 @@ from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     WARHEAD_COMMANDS, TOOL_COMMANDS,
 )
-from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, svg_icon
+from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, RawOutputTab, svg_icon
 from src.core.confirmation_gate import ConfirmationGate
 from src.core.llm_keys import set_llm_key, remove_llm_key
 from src.tools.nmap.parser import parse_nmap_xml
@@ -399,6 +399,9 @@ class ReconMainWindow(QMainWindow):
         self.top_bar.target_input.textChanged.connect(self._on_target_changed)
         self._last_target = self._get_target()
 
+        self.main_area.llm_nmap_panel.executeRequested.connect(
+            self._on_llm_nmap_execute_requested)
+
         input_tab = self.main_area.input_tab
         input_tab.reuseRequested.connect(self.top_bar.command_input.setText)
         input_tab.cancelRequested.connect(self._on_queue_cancel)
@@ -407,6 +410,9 @@ class ReconMainWindow(QMainWindow):
         # itself (not the lazily-spawned inner terminal) — safe to connect
         # here regardless of whether the real terminal has been created yet.
         self.main_area.raw_output_tab.commandDone.connect(self._on_direct_command_done)
+        # Same completion handler — it's token-keyed and tab-agnostic, so
+        # the LLM Mode page's own output terminal can share it.
+        self.main_area.llm_output_tab.commandDone.connect(self._on_direct_command_done)
 
         # run_command() token -> _PendingDirectScan, for the async completion
         # signal from the Raw Output terminal (Direct Tool Mode Execute).
@@ -620,6 +626,47 @@ class ReconMainWindow(QMainWindow):
         gate.confirm("yes")
         self._run_direct_command(gate, capture)
 
+    def _on_llm_nmap_execute_requested(self, cmd: str, target: str):
+        """LLM Mode's gated "LLM Nmap" panel — an AI-suggested (and
+        user-editable) command asking to run. Mirrors `_on_execute_clicked`
+        exactly, reusing the same capture/gate/confirm/run pipeline, with
+        one deliberate difference: `skip_scope` stays False here (unlike
+        Direct Tool Mode's own-lab TARGET field) because this target is
+        free-typed for an AI suggestion, so AUTHORIZED_SCOPE stays
+        enforced."""
+        cmd = cmd.strip()
+        if not cmd:
+            return
+
+        capture: Optional[Tuple[str, str, str]] = None
+        xml_paths = self._scan_xml_capture_paths(cmd)
+        if xml_paths:
+            cmd = f"{cmd} -oX {xml_paths[0]}"
+            capture = ("scan", xml_paths[0], xml_paths[1])
+
+        gate = ConfirmationGate(channel="ai")
+        result = gate.request(cmd, target)
+        if not result.ok:
+            QMessageBox.warning(self, "Command Rejected", result.message)
+            return
+
+        reply = QMessageBox.question(
+            self, "Confirm Execution",
+            f"{result.preview_box}\n\nRun this command exactly as previewed above?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            gate.cancel("user_declined")
+            return
+
+        gate.confirm("yes")
+        # Stay on the LLM Mode page — run in its own output terminal
+        # instead of jumping to Raw Output.
+        self._run_direct_command(
+            gate, capture,
+            output_tab=self.main_area.llm_output_tab, switch_page=False)
+
     # Both tools' own output-format flags — if the user already asked for
     # one of these, don't tack on a second -oX (nmap: -oX/-oA/-oN/-oG/-oS;
     # masscan: -oX/-oJ/-oL/-oG/-oD/-oB).
@@ -700,16 +747,24 @@ class ReconMainWindow(QMainWindow):
         return tool, shell_path, host_path
 
     def _run_direct_command(self, gate: ConfirmationGate,
-                             capture: tuple[str, str, str] | None = None) -> None:
+                             capture: tuple[str, str, str] | None = None,
+                             output_tab: Optional[RawOutputTab] = None,
+                             switch_page: bool = True) -> None:
+        """Run `gate.argv` (already confirmed) in `output_tab` (defaults to
+        the Raw Output page — Direct Tool Mode's own terminal). Pass
+        `output_tab=self.main_area.llm_output_tab, switch_page=False` to
+        keep the caller's own page in view instead (LLM Mode)."""
+        output_tab = output_tab or self.main_area.raw_output_tab
         row = self.main_area.input_tab.add_entry(gate.command, status="Running")
 
-        # Jump the view to Raw Output so the scan is visible immediately, and
-        # give the terminal real keyboard focus so Ctrl+C interrupts it.
-        self.sidebar.select_index(self.RAW_OUTPUT_INDEX)
-        self.main_area.stack.setCurrentIndex(self.RAW_OUTPUT_INDEX)
-        self.main_area.raw_output_tab.focus()
+        if switch_page:
+            # Jump the view to Raw Output so the scan is visible immediately.
+            self.sidebar.select_index(self.RAW_OUTPUT_INDEX)
+            self.main_area.stack.setCurrentIndex(self.RAW_OUTPUT_INDEX)
+        # Give the terminal real keyboard focus so Ctrl+C interrupts it.
+        output_tab.focus()
 
-        token = self.main_area.raw_output_tab.run_command(shlex.join(gate.argv))
+        token = output_tab.run_command(shlex.join(gate.argv))
         if token:
             self._pending_direct_scans[token] = _PendingDirectScan(gate, row, capture)
         else:
@@ -885,7 +940,8 @@ class ReconMainWindow(QMainWindow):
             event.ignore()
             return
 
-        for tabs_widget in (self.main_area.wizard_tab, self.main_area.llm_tab):
+        for tabs_widget in (self.main_area.wizard_tab, self.main_area.llm_tab,
+                            self.main_area.opencode_tab):
             stop_all = getattr(tabs_widget, "stop_all", None)
             if callable(stop_all):
                 stop_all()
