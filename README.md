@@ -126,7 +126,7 @@ sudo apt-get update
 sudo apt-get install -y nmap masscan hydra ncrack ncat ruby ruby-dev
 sudo gem install evil-winrm
 
-# 3. Clone + Python deps
+# 3. Clone + Python deps (windows)
 git clone https://github.com/Daimond99/PP-Reconnaissance-tools.git
 cd PP-Reconnaissance-tools
 python -m venv .venv
