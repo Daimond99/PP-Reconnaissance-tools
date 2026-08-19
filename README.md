@@ -141,12 +141,12 @@ pip install -r requirements.txt
 
 # 4. Run
 python -m src.main
+.\.venv\Scripts\python -m src.main
 ```
 
 Standalone preflight check:
 ```bash
 python -m src.preflight
-.\.venv\Scripts\python -m src.main
 ```
 
 ---
