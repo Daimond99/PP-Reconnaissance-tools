@@ -146,6 +146,7 @@ python -m src.main
 Standalone preflight check:
 ```bash
 python -m src.preflight
+.\.venv\Scripts\python -m src.main
 ```
 
 ---
