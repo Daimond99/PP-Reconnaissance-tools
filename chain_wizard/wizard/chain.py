@@ -193,6 +193,7 @@ def _execute_step(
             user, password = creds[0]
             return f"cred:{port}/{service} {user}:{password}"
 
+    _echo_output(output)
     return "done"
 
 
