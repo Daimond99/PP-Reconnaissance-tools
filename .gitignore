@@ -62,4 +62,5 @@ chain_wizard/*.log
 chain_wizard/*.gnmap
 chain_wizard/loot_*.txt
 chain_wizard/hydra_*.txt
+chain_wizard/hydra.restore
 chain_wizard/smtp_enum.log
