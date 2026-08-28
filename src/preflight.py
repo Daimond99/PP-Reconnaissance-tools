@@ -4,15 +4,19 @@ tool chain, on whatever machine just cloned the repo.
 
 The app is split across two Python runtimes and two OSes:
   * the GUI runs in a Windows Python (PySide6 + a ConPTY/WebEngine terminal),
-  * the 6 tools + the `chain_wizard` CLI run inside WSL under the distro's
-    own `python3` (a different interpreter entirely).
+  * the `chain_wizard` CLI runs inside WSL under the distro's own `python3`
+    (a different interpreter entirely).
+  * the 6 tools themselves (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run
+    sandboxed inside the `therecon-tools` Docker container (docker/), not
+    on the WSL host directly — see docs/List การเเก้ไข.md item 5.
 
 "works on my machine" breaks across clones for boring, specific reasons:
-missing WSL, a distro with no tools installed, a `python3` too old for the
-CLI's `str | None` syntax, or a Windows `python` that's really the Microsoft
-Store stub. This module checks each of those explicitly and, for every
-failure, prints the exact command that fixes it — instead of letting the
-first broken CLI invocation fail cryptically mid-scan.
+missing WSL, a `python3` too old for the CLI's `str | None` syntax, a
+Windows `python` that's really the Microsoft Store stub, or Docker not
+running / the tool container not built yet. This module checks each of
+those explicitly and, for every failure, prints the exact command that
+fixes it — instead of letting the first broken CLI invocation fail
+cryptically mid-scan.
 
 Pure standard library, never raises (every probe is best-effort with a
 timeout), so it is safe to call at GUI startup AND to run standalone:
@@ -31,18 +35,8 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 
-# The 6 authorized tools, mapped to how you'd install each one inside a
-# Debian/Ubuntu/Kali WSL distro. evil-winrm is a Ruby gem, not an apt
-# package — the rest are apt. Kept in sync with install.sh / install.ps1.
-_TOOLS = ("nmap", "masscan", "hydra", "ncrack", "ncat", "evil-winrm")
-_TOOL_INSTALL = {
-    "nmap": "sudo apt-get install -y nmap",
-    "masscan": "sudo apt-get install -y masscan",
-    "hydra": "sudo apt-get install -y hydra",
-    "ncrack": "sudo apt-get install -y ncrack",
-    "ncat": "sudo apt-get install -y ncat",
-    "evil-winrm": "sudo gem install evil-winrm",
-}
+# Name docker/run.sh gives the long-lived tool container.
+_TOOL_CONTAINER = "therecon-tools"
 
 # chain_wizard uses PEP 604 unions (`str | None`), so the WSL/native python3
 # that runs it must be at least this new. Ubuntu 22.04+ (3.10), Debian 12
@@ -171,7 +165,7 @@ def _check_windows_stack(rep: Report) -> None:
         return
     rep.add("WSL distro", True, detail=", ".join(distros))
     _check_wsl_python(rep, prefix=["wsl.exe", "-e", "bash", "-lc"])
-    _check_wsl_tools(rep, prefix=["wsl.exe", "-e", "bash", "-lc"])
+    _check_docker(rep, prefix=["wsl.exe", "-e", "bash", "-lc"])
 
 
 def _check_linux_stack(rep: Report) -> None:
@@ -180,7 +174,7 @@ def _check_linux_stack(rep: Report) -> None:
         ".venv/bin/pip install -r requirements.txt",
     )
     _check_wsl_python(rep, prefix=["bash", "-lc"])
-    _check_wsl_tools(rep, prefix=["bash", "-lc"])
+    _check_docker(rep, prefix=["bash", "-lc"])
 
 
 def _check_wsl_python(rep: Report, prefix: list[str]) -> None:
@@ -210,26 +204,31 @@ def _check_wsl_python(rep: Report, prefix: list[str]) -> None:
     )
 
 
-def _check_wsl_tools(rep: Report, prefix: list[str]) -> None:
-    """Probe all 6 tools in a single shell so we only pay WSL's boot once.
-    Prints one line per tool: `<tool> OK|MISSING`."""
-    probe = "; ".join(
-        f'command -v {t} >/dev/null 2>&1 && echo "{t} OK" || echo "{t} MISSING"'
-        for t in _TOOLS
-    )
-    code, out = _run(prefix + [probe])
-    found = {
-        line.split()[0]
-        for line in out.splitlines()
-        if line.strip().endswith(" OK")
-    }
-    for t in _TOOLS:
-        present = t in found
+def _check_docker(rep: Report, prefix: list[str]) -> None:
+    """The 6 tools live in the `therecon-tools` container (docker/), not
+    on the WSL host — check Docker itself is reachable and that container
+    is actually running, instead of probing for the tools on $PATH (they
+    were deliberately removed from the host, see docs/List การเเก้ไข.md
+    item 5)."""
+    code, out = _run(prefix + ["docker version --format '{{.Server.Version}}'"])
+    if code != 0:
         rep.add(
-            f"tool: {t}", present,
-            detail="on PATH" if present else "not found",
-            fix="" if present else _TOOL_INSTALL[t] + "   (or run install.ps1)",
+            "Docker", False, detail=out.strip() or "docker not reachable",
+            fix="Inside the WSL distro: sudo systemctl enable --now docker "
+            "(installed via: sudo apt-get install -y docker.io)",
         )
+        return
+    rep.add("Docker", True, detail=f"server {out.strip()}")
+
+    code, out = _run(prefix + [
+        f"docker inspect -f '{{{{.State.Running}}}}' {_TOOL_CONTAINER}"
+    ])
+    running = code == 0 and out.strip() == "true"
+    rep.add(
+        f"container: {_TOOL_CONTAINER}", running,
+        detail="running" if running else (out.strip() or "not found"),
+        fix="" if running else "From the repo root (inside WSL): ./docker/run.sh",
+    )
 
 
 def run_checks() -> Report:

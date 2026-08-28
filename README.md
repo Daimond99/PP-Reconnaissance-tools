@@ -48,37 +48,6 @@ Every item below maps to code that ships in this repo — see the file reference
 
 ---
 
-## Architecture / Workflow
-
-```mermaid
-flowchart TD
-    A[User: type command OR pick warhead profile] --> B{Direct Tool Mode<br/>OR Wizard step}
-    B --> C[Windows→WSL path rewrite<br/>convert_windows_paths_to_wsl]
-    C --> D[Scope check<br/>is_target_in_scope]
-    D -->|off-scope| X1[Reject: scope violation]
-    D -->|in-scope| E[Injection guard + whitelist<br/>parse_command_line]
-    E -->|blocked| X2[Reject: bad char / not in 6-tool allow-list]
-    E -->|allowed| F[Per-flag impact preview<br/>generate_impact_description]
-    F --> G[Confirmation dialog<br/>show masked command + impact]
-    G --> H{User types exact 'yes'?}
-    H -->|no / y / Yes / empty| X3[Cancel + audit log]
-    H -->|yes| I[audit_log_llm: executed=true]
-    I --> J[PTY execution<br/>xterm.js + ConPTY/pty.fork]
-    J --> K[Parser<br/>nmap/hydra/ncrack]
-    K --> L[Results Display<br/>host-port table + credentials table]
-    J --> M[mark_executed_result<br/>exit_code → audit log]
-
-    style X1 fill:#5a1a1a,color:#fff
-    style X2 fill:#5a1a1a,color:#fff
-    style X3 fill:#5a1a1a,color:#fff
-    style I fill:#1a4a2a,color:#fff
-    style G fill:#4a3a1a,color:#fff
-```
-
-**Layer discipline** (from `CLAUDE.md`): GUI → Validation → Confirmation Gate → Execution → Parser → Analyzer → Results. No layer may skip another. GUI never builds commands or contains security logic.
-
----
-
 ## Tech Stack
 
 | Layer | Choice | Where |
@@ -99,7 +68,7 @@ flowchart TD
 
 ## How to Run / Setup
 
-**Prerequisites**: Python 3.10+; Windows users also need WSL2 + Ubuntu (auto-installed by `install.ps1`).
+**Prerequisites**: Python 3.10+; Windows users also need WSL2 + Ubuntu and Docker Engine inside it — not Docker Desktop (both auto-installed by `install.ps1`).
 
 ### Quick install (one command)
 
@@ -113,7 +82,7 @@ curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/m
 irm https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.ps1 | iex
 ```
 
-Both installers are idempotent: install the 6 tools, clone the repo, create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows).
+Both installers are idempotent: install Docker Engine, build + start the sandboxed tool container (`docker/run.sh`), clone the repo, create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`.
 
 ### Manual install
 
@@ -121,10 +90,12 @@ Both installers are idempotent: install the 6 tools, clone the repo, create a ve
 # 1. Windows only: WSL2 + Ubuntu
 wsl --install -d Ubuntu   # reboot if prompted, open Ubuntu once
 
-# 2. Install the 6 tools (inside WSL Ubuntu on Windows, or native shell on Linux)
+# 2. Install Docker Engine (inside WSL Ubuntu on Windows, or native shell on Linux)
+#    -- NOT Docker Desktop, the native package
 sudo apt-get update
-sudo apt-get install -y nmap masscan hydra ncrack ncat ruby ruby-dev
-sudo gem install evil-winrm
+sudo apt-get install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"   # log out/in (or open a fresh WSL terminal) to pick this up
 
 # 3. Clone + Python deps (windows)
 git clone https://github.com/Daimond99/PP-Reconnaissance-tools.git
@@ -139,7 +110,12 @@ pip install -r requirements.txt
 # Windows:         .venv\Scripts\pip install -r requirements.txt
 # Linux/WSL/macOS: .venv/bin/pip install -r requirements.txt
 
-# 4. Run
+# 4. Build + start the sandboxed tool container (inside WSL Ubuntu on
+#    Windows, or the native shell on Linux)
+chmod +x docker/run.sh
+./docker/run.sh
+
+# 5. Run
 python -m src.main
 .\.venv\Scripts\python -m src.main
 ```

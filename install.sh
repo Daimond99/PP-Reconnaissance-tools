@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # TheRecon — one-command installer (Linux native, Debian/Ubuntu/Kali apt-based).
-# Installs the 6 authorized tools + Python venv + deps. Idempotent — safe to
-# re-run. Does NOT run the app or touch anything outside this repo / apt / gem.
+# Installs Docker Engine, builds + starts the sandboxed tool container
+# (docker/run.sh — the 6 authorized tools run only inside it, never on this
+# host directly, see docs/List การเเก้ไข.md item 5) + Python venv + deps.
+# Idempotent — safe to re-run.
 #
 # Two ways to run it:
 #   1. Already have a checkout: `cd TheRecon && ./install.sh`
@@ -53,29 +55,21 @@ else
     fi
 fi
 
-log "installing the 6 authorized tools (nmap masscan hydra ncrack ncat ruby) via apt"
+log "installing Docker Engine via apt"
 sudo apt-get update
-sudo apt-get install -y nmap masscan hydra ncrack ncat ruby ruby-dev \
-    python3-pip python3-venv
-
-log "installing evil-winrm via gem"
-sudo gem install evil-winrm
-
-log "verifying tool versions"
-for t in nmap masscan hydra ncrack ncat; do
-    if command -v "$t" >/dev/null 2>&1; then
-        printf '  %-10s %s\n' "$t" "$("$t" --version 2>&1 | head -n1)"
-    else
-        printf '  %-10s NOT FOUND\n' "$t"
-    fi
-done
-if command -v evil-winrm >/dev/null 2>&1; then
-    printf '  %-10s %s\n' "evil-winrm" "$(evil-winrm --version 2>&1 | head -n1)"
-else
-    printf '  %-10s NOT FOUND (check gem install output above)\n' "evil-winrm"
-fi
+sudo apt-get install -y docker.io python3-pip python3-venv
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
 
 cd "$REPO_DIR"
+
+log "building + starting the sandboxed tool container (docker/run.sh)"
+chmod +x docker/run.sh
+# `sg docker` picks up the group just added above for this one command,
+# without needing a fresh login/shell (which `usermod` alone would need) --
+# running the whole script as root instead would make it own the results/
+# mount, which the container's own non-root user then can't write into.
+sg docker -c "./docker/run.sh"
 
 log "creating Python venv (.venv)"
 if [ ! -d ".venv" ]; then

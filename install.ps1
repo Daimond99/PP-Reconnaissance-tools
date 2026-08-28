@@ -3,9 +3,12 @@
 # Mirrors README.md's manual steps:
 #   1. WSL2 + Ubuntu (if not already installed) -- needs a reboot the first
 #      time, this script can't skip that, Windows enforces it
-#   2. the 6 authorized tools inside WSL (nmap masscan hydra ncrack ncat
-#      ruby -> evil-winrm via gem)
+#   2. Docker Engine inside WSL (native -- NOT Docker Desktop)
 #   3. clone (or update) the repo, create a venv, install Python deps
+#   4. build + start the sandboxed tool container (docker/run.sh) -- the 6
+#      authorized tools (nmap masscan hydra ncrack ncat evil-winrm) run
+#      only inside it, never installed on the WSL host directly. See
+#      docs/List การเเก้ไข.md item 5.
 #
 # Usage (from an elevated PowerShell the first time, for step 1):
 #   irm https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.ps1 | iex
@@ -47,14 +50,12 @@ if (Test-WslReady) {
     exit 0
 }
 
-# ---- 2. The 6 tools, inside WSL -----------------------------------------
-Log "installing the 6 authorized tools inside WSL (you may be prompted for your WSL sudo password)"
-$toolScript = "sudo apt-get update && sudo apt-get install -y nmap masscan hydra ncrack ncat ruby ruby-dev python3 python3-pip python3-venv && sudo gem install evil-winrm"
-wsl.exe -e bash -lc $toolScript
-if ($LASTEXITCODE -ne 0) { Fail "tool install inside WSL failed (see output above)" }
-
-Log "verifying tool versions"
-wsl.exe -e bash -lc 'for t in nmap masscan hydra ncrack ncat; do printf "  %-10s %s\n" "$t" "$(command -v "$t" >/dev/null 2>&1 && $t --version 2>&1 | head -n1 || echo "NOT FOUND")"; done; printf "  %-10s %s\n" "evil-winrm" "$(command -v evil-winrm >/dev/null 2>&1 && evil-winrm --version 2>&1 | head -n1 || echo "NOT FOUND")"'
+# ---- 2. Docker Engine, inside WSL (native, not Docker Desktop) ---------
+Log "installing Docker Engine inside WSL (you may be prompted for your WSL sudo password)"
+$dockerScript = "sudo apt-get update && sudo apt-get install -y docker.io python3 python3-pip python3-venv && sudo systemctl enable --now docker && sudo usermod -aG docker `$USER"
+wsl.exe -e bash -lc $dockerScript
+if ($LASTEXITCODE -ne 0) { Fail "Docker install inside WSL failed (see output above)" }
+Log "docker group membership needs a fresh WSL session -- this script's later 'wsl.exe -e' calls open new ones, so no reboot needed"
 
 # ---- 3. Repo + Python deps (Windows side) -------------------------------
 $RepoUrl = "https://github.com/Daimond99/TheRecon.git"
@@ -92,10 +93,22 @@ Log "installing Python deps"
 & ".venv\Scripts\pip.exe" install --upgrade pip
 & ".venv\Scripts\pip.exe" install -r requirements.txt
 
-# Final gate: the dependency doctor re-checks WSL + all 6 tools + both
-# Python runtimes from the app's own point of view and prints an exact fix
-# for anything still missing, so a half-finished install is caught here
-# rather than mid-scan. Non-fatal — a fresh box may still need a WSL reboot.
+# ---- 4. Build + start the sandboxed tool container ----------------------
+function ConvertTo-WslPath($winPath) {
+    $full = (Resolve-Path $winPath).Path
+    $drive = $full.Substring(0, 1).ToLower()
+    $rest = $full.Substring(2) -replace '\\', '/'
+    return "/mnt/$drive$rest"
+}
+Log "building + starting the sandboxed tool container (docker/run.sh)"
+$wslRepoDir = ConvertTo-WslPath $RepoDir
+wsl.exe -e bash -lc "cd '$wslRepoDir/docker' && chmod +x run.sh && ./run.sh"
+if ($LASTEXITCODE -ne 0) { Fail "docker/run.sh failed (see output above)" }
+
+# Final gate: the dependency doctor re-checks WSL + Docker + the tool
+# container + both Python runtimes from the app's own point of view and
+# prints an exact fix for anything still missing, so a half-finished
+# install is caught here rather than mid-scan.
 Log "running preflight doctor"
 & ".venv\Scripts\python.exe" -m src.preflight
 
