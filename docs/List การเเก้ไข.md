@@ -21,9 +21,3 @@
 - ยกเลิกหน้าต่างข้อความที่ให้ผู้ใช้พิมพ์ตัวเลขชอยส์ $1, 2, 3$ ใน Console
 - เปลี่ยนเป็นใช้วิดเจ็ตของ PySide6 (เช่น QRadioButton, QCheckBox, ปุ่มกด Next / Back) ในการเลือก Step การสแกน
 - ทำกล่อง Pop-up / Dialog ยืนยันคำสั่งและแสดงคำเตือนระดับความเสี่ยงก่อนสั่ง Execute
-
-**5. ทำระบบกักกันการรันเครื่องมือด้วย Container (Docker / Sandbox) (ยากที่สุด)**
-
-- เขียน Dockerfile สำหรับแพ็กเครื่องมือความปลอดภัยทั้ง 6 ตัวไว้ใน Container Image
-- ปรับโค้ดส่วนรันคำสั่ง (Backend Execution) จากเดิมที่รันตรงบน Host/WSL2 ให้เปลี่ยนไปสั่งรันผ่าน Docker CLI หรือ Docker SDK
-- ตั้งค่า Network ของ Container ให้ตัดการเข้าถึง Physical/Local Network เพื่อจำกัดความเสียหายหากโดน Reverse Attack หรือ Prompt Injection ย้อนกลับมา
