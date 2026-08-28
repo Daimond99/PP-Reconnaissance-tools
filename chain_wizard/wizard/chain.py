@@ -5,9 +5,10 @@ This is the main logic that the CLI (or future GUI) calls.
 
 import re
 import shlex
-from core.display import section, info, ok, warn, impact_box, bold, cyan, green
+from core.display import section, info, ok, warn, bold, cyan, green
 from core.executor import run_cmd
 from core.models import AttackPlan, Step
+from core.ui_driver import get_ui
 from library.scanner import scan_target
 from library.post_exploit import post_action_for
 from wizard.pipeline import build_plan, step_priority
@@ -32,6 +33,8 @@ def run_chain(
     section("OPEN PORTS")
     for r in sorted(scan_results, key=lambda x: x.port):
         print(f"  {green(str(r.port).rjust(5))}/tcp  →  {cyan(r.service or 'unknown')}")
+        get_ui().status("scan_result", f"{r.port}/tcp → {r.service or 'unknown'}",
+                        {"port": r.port, "service": r.service or "unknown"})
 
     # ─── Phase 2: Build attack plan ─────────────────────────────
     plan = build_plan(target, user_wordlist, pass_wordlist, scan_results, mode)
@@ -73,15 +76,9 @@ def run_chain(
     for cred in creds_found:
         ok(f"Credential harvested: {cred}")
     print()
-
-
-def _prio_tag(priority: int) -> str:
-    """Colored priority label for the selection menu."""
-    if priority >= 4:
-        return green("(recommended)")
-    if priority == 3:
-        return cyan("(optional)   ")
-    return "(info)       "
+    get_ui().status("summary", f"Executed: {done} · Skipped: {skipped}",
+                    {"executed": done, "skipped": skipped,
+                     "creds_found": creds_found, "logfile": plan.logfile})
 
 
 def _select_steps(
@@ -93,15 +90,14 @@ def _select_steps(
     """
     ranked = sorted(steps, key=lambda t: (-step_priority(t[2]), t[0]))
 
-    section("ATTACK PLAN — RANKED BY IMPACT (pick what to run)")
-    for i, (port, service, step) in enumerate(ranked, 1):
-        tag = _prio_tag(step_priority(step))
-        print(f"    {green(str(i).rjust(2))}. {tag}  "
-              f"{bold(str(port))}/{cyan(service)}  [{step.tool}] {step.name}")
-    print()
-    info("(recommended) = leads to creds / shell (top = highest impact).")
-    prompt = "Select: numbers (e.g. 1,3,5) / 'r' recommended / 'a' all / '0' none: "
-    raw = input(f"  {cyan(prompt)}").strip().lower()
+    items = [
+        {"port": port, "service": service, "tool": step.tool,
+         "name": step.name, "priority": step_priority(step)}
+        for port, service, step in ranked
+    ]
+    raw = get_ui().multiselect(
+        "Attack plan — ranked by impact (pick what to run)", items,
+    ).strip().lower()
 
     if raw in ("a", ""):
         return ranked
@@ -159,17 +155,22 @@ def _execute_step(
         passlist=shlex.quote(plan.pass_wordlist),
     )
 
-    print(f"\n  {'─' * 60}")
-    print(f"  Port  {bold(str(port))}  ({cyan(service)})")
-    print(f"  Step  {bold(step.name)}  [{cyan(step.tool)}]")
-    print(f"  $ {cmd}")
-    impact_box(step.impact)
-
-    confirm = input(f"  {cyan('Accept impact and proceed? (type yes to run) ')}").strip().lower()
-    if confirm != "yes":
+    title = f"Port {port} ({service}) — {step.name} [{step.tool}]"
+    if not get_ui().confirm(cmd, step.impact, title=title):
         warn("Skipped.")
+        get_ui().status("step_done", f"[{step.tool}] {step.name} — skipped",
+                        {"port": port, "service": service, "tool": step.tool,
+                         "name": step.name, "outcome": "skipped"})
         return "skipped"
 
+    # run_cmd() blocks synchronously until the real tool exits (up to its
+    # timeout, default 600s) with zero output in between — a full hydra
+    # wordlist or nmap scan can legitimately take minutes. Emit a
+    # "running" row now so the GUI shows the step is in flight rather than
+    # looking frozen for however long the real command takes.
+    get_ui().status("step_start", f"[{step.tool}] {step.name} — running",
+                    {"port": port, "service": service, "tool": step.tool,
+                     "name": step.name})
     output, _ = run_cmd(cmd, plan.logfile)
 
     # ─── Post-step: harvest credentials from any brute-force step ──
@@ -181,6 +182,9 @@ def _execute_step(
             for user, password in creds:
                 ok(f"CREDENTIAL  {bold(f'{port}/{service}')}  "
                    f"{green(f'{user}:{password}')}")
+                get_ui().status("cred_found", f"{user}:{password} on {port}/{service}",
+                                {"port": port, "service": service,
+                                 "user": user, "password": password})
             info(f"Saved {len(creds)} credential(s) → {loot}")
 
             # Exploit stage: WinRM ports pop a shell via evil-winrm; any other
@@ -194,6 +198,9 @@ def _execute_step(
             return f"cred:{port}/{service} {user}:{password}"
 
     _echo_output(output)
+    get_ui().status("step_done", f"[{step.tool}] {step.name} — done",
+                    {"port": port, "service": service, "tool": step.tool,
+                     "name": step.name, "outcome": "done"})
     return "done"
 
 
@@ -248,15 +255,9 @@ def _offer_post_exploit(
     cmd = action["command_template"].format(
         target=plan.target, user=user, password=password,
     )
-    section("POST-EXPLOIT")
-    print(f"  {bold(action.get('desc', 'Post-exploit action'))}  "
-          f"[{cyan(action.get('tool', ''))}]")
-    print(f"  $ {cmd}")
-    impact_box(action.get("impact", "Uses the harvested credential against the service."))
-    confirm = input(
-        f"  {cyan('Run this post-exploit action? (type yes to run) ')}"
-    ).strip().lower()
-    if confirm == "yes":
+    title = f"Post-exploit — {action.get('desc', 'Post-exploit action')} [{action.get('tool', '')}]"
+    impact = action.get("impact", "Uses the harvested credential against the service.")
+    if get_ui().confirm(cmd, impact, title=title):
         out, _ = run_cmd(cmd, plan.logfile)
         _echo_output(out)
     else:
@@ -275,15 +276,9 @@ def _offer_winrm(
         f"evil-winrm -i {plan.target} "
         f"-u {shlex.quote(username)} -p {shlex.quote(password)}{ssl_flag}"
     )
-    print(f"  $ {ev_cmd}")
-    impact_box(
-        "Active WinRM session — Event IDs 4648 (logon), "
-        "4672 (admin) are generated and auditable."
-    )
-    confirm = input(
-        f"  {cyan('Connect via evil-winrm with this credential? (type yes to run) ')}"
-    ).strip().lower()
-    if confirm == "yes":
+    impact = ("Active WinRM session — Event IDs 4648 (logon), "
+               "4672 (admin) are generated and auditable.")
+    if get_ui().confirm(ev_cmd, impact, title=f"Connect via evil-winrm — {plan.target}"):
         out, _ = run_cmd(ev_cmd, plan.logfile)
         _echo_output(out)
     else:

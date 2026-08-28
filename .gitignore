@@ -63,3 +63,8 @@ chain_wizard/*.gnmap
 chain_wizard/loot_*.txt
 chain_wizard/hydra_*.txt
 chain_wizard/smtp_enum.log
+
+# Docker tool container: scan output + user-supplied wordlists, both
+# mounted into the container at runtime (docker/run.sh) -- not source.
+chain_wizard/results/
+docker/wordlists/

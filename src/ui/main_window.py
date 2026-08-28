@@ -23,6 +23,7 @@ from src.config import (
     WARHEAD_COMMANDS, TOOL_COMMANDS,
 )
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, RawOutputTab, svg_icon
+from src.ui.terminal_launch import _SUDO_IN_CONTAINER
 from src.core.confirmation_gate import ConfirmationGate
 from src.core.llm_keys import set_llm_key, remove_llm_key
 from src.tools.nmap.parser import parse_nmap_xml
@@ -764,7 +765,18 @@ class ReconMainWindow(QMainWindow):
         # Give the terminal real keyboard focus so Ctrl+C interrupts it.
         output_tab.focus()
 
-        token = output_tab.run_command(shlex.join(gate.argv))
+        argv = gate.argv
+        if (len(argv) > 1 and argv[0] == "sudo" and argv[1] in _SUDO_IN_CONTAINER):
+            # Raw Output/LLM Mode's terminal has the container-backed tool
+            # wrappers on PATH (see terminal_launch._tool_wrapper_snippet);
+            # nmap/masscan's own wrapper already runs `sudo` *inside* the
+            # container (docker/Dockerfile's scoped sudoers rule). Typing
+            # a leading "sudo" here would hit the real WSL2 host sudo
+            # instead (its secure_path resets PATH, bypassing the wrapper
+            # entirely) -- strip it so the confirmed command reaches the
+            # sandboxed tool the way it was actually previewed to the user.
+            argv = argv[1:]
+        token = output_tab.run_command(shlex.join(argv))
         if token:
             self._pending_direct_scans[token] = _PendingDirectScan(gate, row, capture)
         else:
@@ -940,8 +952,7 @@ class ReconMainWindow(QMainWindow):
             event.ignore()
             return
 
-        for tabs_widget in (self.main_area.wizard_tab, self.main_area.llm_tab,
-                            self.main_area.opencode_tab):
+        for tabs_widget in (self.main_area.llm_tab, self.main_area.opencode_tab):
             stop_all = getattr(tabs_widget, "stop_all", None)
             if callable(stop_all):
                 stop_all()
@@ -949,5 +960,6 @@ class ReconMainWindow(QMainWindow):
             stop = getattr(term, "stop", None)
             if callable(stop):
                 stop()
+        self.main_area.wizard_runner.stop()
 
         super().closeEvent(event)

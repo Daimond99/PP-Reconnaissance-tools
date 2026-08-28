@@ -12,20 +12,6 @@ from __future__ import annotations
 from src.ui import terminal_launch as t
 
 
-class TestWizardArgStr:
-    def test_empty(self):
-        assert t._wizard_arg_str(None) == ""
-        assert t._wizard_arg_str([]) == ""
-
-    def test_leading_space_and_join(self):
-        assert t._wizard_arg_str(["--mode", "auto"]) == " --mode auto"
-
-    def test_shell_metachars_are_quoted(self):
-        # a malicious/space-y target must be POSIX-quoted, never bare
-        out = t._wizard_arg_str(["--target", "a;b c"])
-        assert " --target 'a;b c'" == out
-
-
 class TestWinToWslPath:
     def test_drive_letter_lowercased_and_mounted(self):
         assert t._win_to_wsl_path(r"D:\TheRecon") == "/mnt/d/TheRecon"

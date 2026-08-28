@@ -2,9 +2,23 @@
 Command execution and logging.
 """
 
+import os
 import subprocess
 from datetime import datetime
 from core.display import info, ok, warn
+
+# The long-lived tool container started by docker/run.sh (repo root). Every
+# real tool invocation (nmap/masscan/hydra/ncrack/ncat/evil-winrm) runs
+# inside it via `docker exec`, never directly on this WSL2 host — the
+# wizard's own orchestration (this process) still runs in WSL, only the
+# tool subprocess itself is sandboxed. See docs/List การเเก้ไข.md item 5.
+#
+# No host-side sudo priming needed any more: nmap/masscan commands already
+# come prefixed "sudo ..." (library/scanner.py), and the container's own
+# sudoers rule (docker/Dockerfile) is NOPASSWD-scoped to exactly those two
+# binaries, so `docker exec` reaches it non-interactively without this
+# process ever touching a real password.
+CONTAINER = os.environ.get("THERECON_CONTAINER", "therecon-tools")
 
 
 def run_cmd(
@@ -13,32 +27,23 @@ def run_cmd(
     timeout: int = 600,
 ) -> tuple[str, int]:
     """
-    Execute a shell command and return (stdout+stderr, returncode).
-    If logfile is provided, append the full output with a timestamp.
+    Execute a shell command inside the TheRecon tool container and return
+    (stdout+stderr, returncode). If logfile is provided, append the full
+    output with a timestamp.
     """
     info(f"running: {cmd}")
-    if cmd.lstrip().startswith("sudo "):
-        # Prime/refresh sudo's own tty-timestamp cache before the real
-        # command runs, on the same controlling tty this PTY session
-        # already has. First sudo-prefixed command in a run prompts once
-        # (same /dev/tty mechanism as the command itself would use);
-        # every later one within the cache window succeeds silently and
-        # extends it, so masscan/nmap steps stop re-prompting on every
-        # single invocation.
-        try:
-            subprocess.run(["sudo", "-v"], timeout=120)
-        except subprocess.TimeoutExpired:
-            warn("sudo password prompt timed out")
     try:
         proc = subprocess.run(
-            cmd,
-            shell=True,
+            ["docker", "exec", "-i", CONTAINER, "bash", "-c", cmd],
             capture_output=True,
             text=True,
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         warn(f"command timed out after {timeout}s — killed")
+        return "", 1
+    except FileNotFoundError:
+        warn("docker not found — is Docker Engine installed in this WSL distro?")
         return "", 1
 
     output = proc.stdout + proc.stderr

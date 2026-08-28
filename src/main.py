@@ -97,10 +97,13 @@ def main():
     window = ReconMainWindow()
     window.show()
 
-    # Keep the splash up past widget construction, until the Wizard
-    # Console's terminal has actually spawned its WSL/bash backend (not
-    # just until Python-side __init__ returns) — WSL's own boot can take a
-    # few seconds longer than building the widget tree.
+    # Keep the splash up past widget construction, until one of the LLM
+    # Mode terminals has actually spawned its WSL/bash backend (not just
+    # until Python-side __init__ returns) — WSL's own boot can take a few
+    # seconds longer than building the widget tree. The Wizard Console no
+    # longer opens a terminal of its own (it's a hidden `--gui` subprocess
+    # driven entirely by Qt dialogs, see `src/ui/wizard_runner.py`), so
+    # `llm_tab` (opened up front, `fixed=True`) is the readiness proxy now.
     closed = {"done": False}
 
     def _close_splash():
@@ -108,7 +111,7 @@ def main():
             closed["done"] = True
             splash.finish(window)
 
-    window.main_area.wizard_tab.firstTabReady.connect(_close_splash)
+    window.main_area.llm_tab.firstTabReady.connect(_close_splash)
     QTimer.singleShot(_SPLASH_MAX_WAIT_MS, _close_splash)
 
     # Dependency doctor: check WSL + the 6 tools + both Python runtimes in

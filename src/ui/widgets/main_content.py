@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 from src.config import PANEL, BORDER_SOFT, CONSOLE_BG, CONSOLE_TEXT, TERM_MUTE, PURPLE
 from src.ui.terminal_tabs import TerminalTabsWidget
 from src.ui.wizard_panel import WizardControlPanel
+from src.ui.wizard_runner import WizardRunner
 from src.ui.widgets.helpers import wrap_in_terminal
 from src.ui.widgets.raw_output import RawOutputTab
 from src.ui.widgets.results_display import ResultsDisplayTab
@@ -16,17 +17,21 @@ from src.ui.widgets.llm_nmap_panel import LlmNmapPanel
 
 
 def _wizard_console_page(panel: WizardControlPanel,
-                         tabs: TerminalTabsWidget) -> QWidget:
-    """Wizard Console page: control panel (left) + terminal tabs (right).
-    Panel's scanRequested drives a fresh Wizard tab in the terminal beside
-    it — no popup, controls stay visible for re-scans."""
+                         runner: WizardRunner) -> QWidget:
+    """Wizard Console page: control panel (left) + live progress view
+    (right). Every menu/confirmation the wizard needs pops as a Qt dialog
+    over this page — no terminal, no typed commands (see
+    `src/ui/wizard_runner.py` / `wizard_dialogs.py`)."""
     page = QWidget()
     row = QHBoxLayout(page)
     row.setContentsMargins(0, 0, 0, 0)
     row.setSpacing(0)
     row.addWidget(panel)
-    row.addWidget(wrap_in_terminal(tabs), 1)
-    panel.scanRequested.connect(tabs.start_wizard_scan)
+    row.addWidget(runner, 1)
+    runner.bind_start_button(panel.start_btn)
+    runner.bind_stop_button(panel.stop_btn)
+    panel.scanRequested.connect(runner.start)
+    panel.stopRequested.connect(runner.stop)
     return page
 
 
@@ -105,18 +110,16 @@ class MainContentArea(QWidget):
         layout.addWidget(self.stack)
 
     def _build_pages(self):
-        # Wizard Console is a VS Code-style tabbed terminal (TerminalTabsWidget):
-        # first tab runs the 'chain_wizard' chain CLI, `+`/`⌄` open more Wizard
-        # or plain Shell tabs. Each tab picks its own backend (XtermTerminal →
-        # PtyTerminal → InteractiveTerminal). The older native wizard pages
-        # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py) were
-        # removed — this is the only wizard path now.
-        # Wizard Console = control panel (left) + terminal tabs (right).
-        # `self.wizard_tab` stays the TerminalTabsWidget so main.py's
-        # firstTabReady splash wait and closeEvent's stop_all keep working;
-        # the panel drives it via scanRequested → start_wizard_scan.
-        self.wizard_tab = TerminalTabsWidget(form_driven=True)
+        # Wizard Console = control panel (left) + a live Qt progress view
+        # (right). The wizard runs as a hidden subprocess (`chain_wizard`,
+        # `--gui`) talking a JSON protocol; `WizardRunner` answers every
+        # menu/confirmation with a real dialog (`wizard_dialogs.py`) — no
+        # terminal tab, no typed commands. The older native wizard pages
+        # (wizard_terminal.py / wizard_console.py / src/wizard/engine.py),
+        # and later the PTY-terminal-driven Wizard Console itself, were
+        # removed as each was superseded.
         self.wizard_panel = WizardControlPanel()
+        self.wizard_runner = WizardRunner()
         self.input_tab = InputManagementTab()
         self.raw_output_tab = RawOutputTab()
         self.results_tab = ResultsDisplayTab()
@@ -146,7 +149,7 @@ class MainContentArea(QWidget):
         self.llm_output_tab = RawOutputTab()
 
         # Order matches Sidebar.NAV_ITEMS / navigate(index) 0-4.
-        self.stack.addWidget(_wizard_console_page(self.wizard_panel, self.wizard_tab))
+        self.stack.addWidget(_wizard_console_page(self.wizard_panel, self.wizard_runner))
         self.stack.addWidget(self.input_tab)
         self.stack.addWidget(self.raw_output_tab)
         self.stack.addWidget(self.results_tab)

@@ -49,7 +49,7 @@ class TestWindowStructure:
         assert ma.stack.count() == 5
         assert isinstance(ma.results_tab, ResultsDisplayTab)
         assert isinstance(ma.input_tab, InputManagementTab)
-        assert hasattr(ma, "wizard_tab") and hasattr(ma, "raw_output_tab")
+        assert hasattr(ma, "wizard_runner") and hasattr(ma, "raw_output_tab")
 
     def test_sidebar_navigates_all_pages(self, window):
         hits: list[int] = []

@@ -4,11 +4,13 @@ Console. A beginner fills target / mode / wordlists here and presses Start
 scan instead of answering the chain CLI's raw text prompts one at a time.
 
 The panel only *collects* choices and emits `scanRequested(dict)`; it never
-builds or runs a command. The container wires that signal to
-`TerminalTabsWidget.start_wizard_scan`, which launches the same
-`chain_wizard` CLI with those choices as flags. The CLI still does its own
-per-step confirmation once a scan starts — this form sits entirely ahead of
-that gate, so no safety path is bypassed.
+builds or runs a command. `main_content.py` wires that signal to
+`WizardRunner.start` (`src/ui/wizard_runner.py`), which launches the same
+`chain_wizard` CLI (hidden, `--gui`, JSON protocol — no terminal) and answers
+every menu/confirmation with a Qt dialog. The CLI still does its own
+per-step confirmation once a scan starts, now routed through
+`ConfirmationGate(channel="wizard")` — this form sits entirely ahead of that
+gate, so no safety path is bypassed.
 
 Styling reuses the app's own controls so the panel reads as part of the
 mission bar: fields carry the `MissionInput` object name and the mode picker
@@ -34,6 +36,7 @@ class WizardControlPanel(QWidget):
     """Embedded scan form. Emits `scanRequested(dict)` on Start scan."""
 
     scanRequested = Signal(dict)
+    stopRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -53,7 +56,7 @@ class WizardControlPanel(QWidget):
         heading.setObjectName("WizHeading")
         root.addWidget(heading)
 
-        sub = QLabel("Fill these in, then press Start — the wizard runs in the terminal beside this.")
+        sub = QLabel("Fill these in, then press Start — every step shows up as a dialog beside this.")
         sub.setObjectName("WizSub")
         sub.setWordWrap(True)
         root.addWidget(sub)
@@ -108,6 +111,13 @@ class WizardControlPanel(QWidget):
         self.start_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.start_btn.clicked.connect(self._on_start)
         root.addWidget(self.start_btn)
+
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setObjectName("WizStop")
+        self.stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.clicked.connect(self.stopRequested.emit)
+        root.addWidget(self.stop_btn)
 
         self.target.setFocus()
         self.setStyleSheet(self._qss())
@@ -184,4 +194,16 @@ class WizardControlPanel(QWidget):
             border-radius: 8px; padding: 11px;
         }}
         QPushButton#WizStart:hover {{ background: {PURPLE}; color: {BG_APP}; }}
+        QPushButton#WizStart:disabled {{
+            background: {BG_INPUT}; border: 1px solid {BORDER}; color: {TEXT_DIM};
+        }}
+        QPushButton#WizStop {{
+            background: {BG_INPUT}; border: 1px solid {ACCENT_RED};
+            color: {ACCENT_RED}; font-size: 13px; font-weight: 600;
+            border-radius: 8px; padding: 11px;
+        }}
+        QPushButton#WizStop:hover {{ background: {ACCENT_RED}; color: {BG_APP}; }}
+        QPushButton#WizStop:disabled {{
+            background: {BG_INPUT}; border: 1px solid {BORDER}; color: {TEXT_DIM};
+        }}
         """

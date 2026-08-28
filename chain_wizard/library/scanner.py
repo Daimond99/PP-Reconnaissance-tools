@@ -4,21 +4,19 @@ Port scanner abstraction — supports nmap and masscan.
 
 import os
 from datetime import datetime
-from core.display import section, warn, impact_box, cyan
+from core.display import section, warn
 from core.executor import run_cmd
 from core.models import ScanResult
+from core.ui_driver import get_ui
 from library.parser import parse_gnmap
 
 
-def _confirm_impact(cmd: str, impact: str) -> bool:
-    """Show the command + a boxed impact note, ask for explicit 'yes'.
-    Same pattern as the per-step confirmation later in the chain
-    (wizard/chain.py::_execute_step) — Phase 1 wasn't following it before,
-    so a scan could fire with no impact warning shown at all."""
-    print(f"\n  $ {cmd}")
-    impact_box(impact)
-    confirm = input(f"  {cyan('Accept impact and proceed? (type yes to run) ')}").strip().lower()
-    return confirm == "yes"
+def _confirm_impact(cmd: str, impact: str, title: str = "Port scan") -> bool:
+    """Show the command + impact, ask for explicit 'yes'. Same pattern as
+    the per-step confirmation later in the chain (wizard/chain.py) — Phase 1
+    wasn't following it before, so a scan could fire with no impact warning
+    shown at all."""
+    return get_ui().confirm(cmd, impact, title=title)
 
 
 def scan_target(target: str) -> list[ScanResult]:
@@ -36,15 +34,18 @@ def scan_target(target: str) -> list[ScanResult]:
     # scan type by mistake and having to Ctrl-C the whole wizard (which
     # also throws away the target/wordlists already entered).
     while True:
-        print("  Select scanner:")
-        print("    1. nmap quick    (top 1000 ports, -sS -sV -T4)")
-        print("    2. nmap top100   (100 most common ports, -sS -sV -T4 — fastest useful sweep)")
-        print("    3. nmap full     (all 65535 ports, -sS -sV -T4)")
-        print("    4. nmap stealth  (ninja mode — slow, fragmented, decoys; evades IDS/firewall)")
-        print("    5. nmap web      (web ports only: 80,443,8080,8443, -sV)")
-        print("    6. nmap vuln     (top 1000 ports + NSE vuln scripts, -sV --script vuln)")
-        print("    7. masscan       (fast raw-socket scanner — pick a profile next)")
-        choice = input("  Choice [1-7]: ").strip()
+        choice = get_ui().menu(
+            "Select scanner:",
+            [
+                "1. nmap quick    (top 1000 ports, -sS -sV -T4)",
+                "2. nmap top100   (100 most common ports, -sS -sV -T4 — fastest useful sweep)",
+                "3. nmap full     (all 65535 ports, -sS -sV -T4)",
+                "4. nmap stealth  (ninja mode — slow, fragmented, decoys; evades IDS/firewall)",
+                "5. nmap web      (web ports only: 80,443,8080,8443, -sV)",
+                "6. nmap vuln     (top 1000 ports + NSE vuln scripts, -sV --script vuln)",
+                "7. masscan       (fast raw-socket scanner — pick a profile next)",
+            ],
+        )
         if choice not in ("1", "2", "3", "4", "5", "6", "7"):
             warn(f"'{choice}' is not a valid choice — enter 1-7.")
             continue
@@ -73,7 +74,7 @@ def scan_target(target: str) -> list[ScanResult]:
             # ports only — a stealth full sweep would take days.
             # Timing is tunable: lower = quieter/slower, higher = louder.
             #   0 paranoid · 1 sneaky · 2 polite · 3 normal · 4 aggressive · 5 insane
-            tval = input("  Timing -T [0-5, lower = stealthier, 'b' = back] [1]: ").strip() or "1"
+            tval = get_ui().text("Timing -T [0-5, lower = stealthier, 'b' = back]", "1")
             if tval == "b":
                 continue
             if tval not in ("0", "1", "2", "3", "4", "5"):
@@ -144,13 +145,16 @@ def scan_target(target: str) -> list[ScanResult]:
 def _masscan_scan(target: str, logfile: str, gnmap_file: str) -> str | None:
     """Masscan profile sub-menu. Returns 'back' to reopen the scanner menu,
     else runs the chosen scan and returns None."""
-    print("  masscan profile:")
-    print("    1. Common services  (21,22,23,25,53,80,110,143,443,445,3389,8080 — rate 5000)")
-    print("    2. Full port blast  (1-65535 — rate 100000, very loud/fast)")
-    print("    3. Banner grab      (1-65535 --banners — rate 25000)")
-    print("    4. Slow/stealthy    (1-1000 — rate 50)")
-    print("    5. Custom           (enter your own ports + rate)")
-    choice = input("  Choice [1-5, 'b' = back]: ").strip().lower()
+    choice = get_ui().menu(
+        "masscan profile:",
+        [
+            "1. Common services  (21,22,23,25,53,80,110,143,443,445,3389,8080 — rate 5000)",
+            "2. Full port blast  (1-65535 — rate 100000, very loud/fast)",
+            "3. Banner grab      (1-65535 --banners — rate 25000)",
+            "4. Slow/stealthy    (1-1000 — rate 50)",
+            "5. Custom           (enter your own ports + rate)",
+        ],
+    ).strip().lower()
     if choice == "b":
         return "back"
 
@@ -169,11 +173,10 @@ def _masscan_scan(target: str, logfile: str, gnmap_file: str) -> str | None:
     if choice in profiles:
         flags, impact = profiles[choice]
     elif choice == "5":
-        ports = input("  Ports (e.g. 1-1000 or 80,443) ['b' = back] [1-65535]: ").strip()
+        ports = get_ui().text("Ports (e.g. 1-1000 or 80,443) ['b' = back]", "1-65535")
         if ports == "b":
             return "back"
-        ports = ports or "1-65535"
-        rate = input("  Rate (pkts/s) [1000]: ").strip() or "1000"
+        rate = get_ui().text("Rate (pkts/s)", "1000")
         flags = f"-p {ports} --rate {rate}"
         impact = f"Custom masscan sweep — {ports} at {rate} pkts/s. Higher rate = louder, more detectable."
     else:

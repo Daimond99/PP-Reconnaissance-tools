@@ -8,6 +8,108 @@ Running log of what's done, what's in flight, what's next.
 
 ---
 
+## 2026-08-27 — Wizard Console: full Qt-dialog rewrite, no terminal/CLI
+
+`List การเเก้ไข.md` item 4 ("Wizard Console: Text-Menu → GUI"). The control
+panel form already existed; the remaining text-menu surface was every menu
+and confirmation *after* Start scan, which ran inside `chain_wizard` as a
+subprocess in a PTY/xterm.js terminal tab, answered by typing into it.
+Rebuilt so nothing is typed anywhere — every menu/confirmation is a Qt
+dialog, the wizard subprocess is hidden (plain `QProcess` pipes, never a
+PTY).
+
+- **`chain_wizard/core/ui_driver.py`** (new) — a `UI` interface
+  (`menu`/`text`/`multiselect`/`confirm`/`status`/`sudo_password`) every
+  interactive point in `chain_wizard/` now calls instead of `input()`/
+  `print()`/`core.display` helpers directly. `CliUI` reproduces the
+  original terminal prompts byte-for-byte (standalone `python3 -m
+  wizard.main` unchanged); `IpcUI` speaks one JSON object per line on
+  stdin/stdout, selected via a new `--gui` flag. `wizard/main.py` redirects
+  `print()` to stderr for the whole process under `--gui`, so stdout stays
+  reserved exclusively for the JSON protocol (verified with a real
+  subprocess round-trip: scanner menu → decline confirm → correctly loops
+  back to the menu, clean JSON-only stdout throughout).
+- Every call site in `wizard/main.py`, `wizard/chain.py`, `wizard/
+  pipeline.py`, `library/scanner.py` now goes through `get_ui()` — decision
+  logic (which options exist, what `cmd`/`impact` string to show) is
+  unchanged, only the I/O surface moved. `core/executor.py`'s sudo priming
+  branches on `ui.needs_sudo_password`: real tty `sudo -v` for `CliUI`
+  (unchanged), `sudo -S` fed a password from `ui.sudo_password()` for
+  `IpcUI` (no tty to prompt on over plain pipes).
+- **`src/core/wizard_driver.py`** (new) — the Qt-side half. Spawns the
+  subprocess, parses each JSON message into a Qt signal, and routes every
+  `confirmRequested` through `ConfirmationGate(channel="wizard")` — the
+  wizard's audit trail now lands in the same `logs/audit_log.jsonl` as
+  Direct Tool Mode instead of a separate log.
+- **`src/ui/wizard_dialogs.py`** (new) — `QDialog`s answering each signal
+  (menu list, free-text, checkable multi-select, impact confirm with
+  Run/Skip, sudo password) — render-only, never build a command string
+  (CLAUDE.md's GUI/logic layering rule).
+- **`src/ui/wizard_runner.py`** (new) — `WizardRunner`/`WizardProgressView`:
+  wires `WizardControlPanel.scanRequested` to a `WizardDriver`, connects its
+  signals to the dialogs above, streams status updates into a read-only
+  progress log. Replaces the terminal tabs beside the control panel
+  (`main_content.py`'s `_wizard_console_page`).
+- **Removed** (nothing called them once the above landed):
+  `terminal_tabs.py`'s `"wizard"` profile, `start_wizard_scan`/
+  `_panel_to_wizard_args`, `TerminalTabsWidget`'s `form_driven` mode +
+  empty-state placeholder; `terminal_launch.py`'s `_wizard_arg_str`.
+  `MainContentArea.wizard_tab` → `wizard_runner`; the startup-splash
+  readiness wait moved to `llm_tab.firstTabReady` (main.py) since the
+  wizard no longer opens a terminal to wait on.
+- Tests: `chain_wizard/tests/test_ui_driver.py` (new, 11 tests — `IpcUI`
+  JSON shapes, `CliUI`/`IpcUI.needs_sudo_password`, the `get_ui`/`set_ui`
+  singleton) + `chain_wizard/tests/conftest.py`. Repo-root `tests/`
+  (68 tests: `test_terminal_launch.py`'s `_wizard_arg_str` class removed,
+  `test_gui_smoke.py`'s `wizard_tab` → `wizard_runner` assertion) all still
+  pass, including the real-window headless smoke test.
+- **Not yet done:** a human clicking through the dialogs in the actual app
+  window against a real WSL target — see `CURRENT_STATE.md` §12.
+
+---
+
+## 2026-08-27 — OpenCode: real permission gate + trimmed AGENTS.md
+
+Follow-up to `List การเเก้ไข.md` item 1 (critical commands must stop and wait
+for human confirmation). Two changes to `src/ui/terminal_launch.py`
+(`_opencode_launch`), both auto-written to the OpenCode workspace dir
+(`tools/opencode-workspace/`) only if the file doesn't already exist there:
+
+- **`_AGENTS_MD` trimmed.** Dropped the paragraph that spelled out the exact
+  blocked-tool list (git/python/curl/pip/apt/ssh) and "do not attempt..."
+  wording — that's prompt-only advice a model can ignore, not a real
+  boundary, and documenting the restriction mechanism to the model it's
+  restricting doesn't add safety. Replaced with an **Allowed without
+  asking** / **Ask first** split (read-only recon vs. hydra/ncrack/
+  evil-winrm/aggressive scans/out-of-scope targets) — structure taken from
+  published AGENTS.md best-practice guides.
+- **`_OPENCODE_JSON` added** — writes `opencode.json` (project-root config
+  OpenCode itself reads) with a `permission.bash` rule set: default
+  `"allow"` (nmap/masscan/ncat/etc. run at full power, no extra prompting),
+  overridden to `"ask"` for `hydra *`, `ncrack *`, `evil-winrm*`,
+  `masscan *`, and aggressive-scan shapes (`*-T4*`, `*-T5*`, `*-p-*`). This
+  is the actual enforced gate — OpenCode blocks on it until the user
+  approves, unlike AGENTS.md. PATH-scoping (`~/.recon_agent_bin`) is
+  unchanged.
+
+Neither the 6 tools nor Direct Tool Mode / Wizard Console (the two main
+execution paths) lost any capability — this only adds a confirmation step
+inside the LLM Mode → OpenCode tab for the tools/flags that need one.
+`tests/test_terminal_launch.py` (12 tests) still pass unchanged.
+
+Same day, follow-up: added an **"Advanced usage reference"** section to
+`_AGENTS_MD` — per-tool power-user flags (nmap `-p- --min-rate=1000 -T4`,
+`-A`, `--script vuln`/`smb-*`; masscan `--rate`; hydra/ncrack `-f -t 16 -l/-L
+-P`; ncat `-l -p ... -e ... --ssl`; evil-winrm `-i -u -p -e`), sourced from
+public pentest cheat sheets (HackerDNA's Nmap Cheat Sheet 2026,
+CompassSecurity/Hacking_Tools_Cheat_Sheet). Explicitly notes the Ask-first
+list is the only restriction — these flags don't bypass it, since the real
+gate is `opencode.json`'s `permission.bash`, not AGENTS.md text. Regenerated
+`tools/opencode-workspace/AGENTS.md` from the updated `_AGENTS_MD` constant
+to keep the two in sync.
+
+---
+
 ## 2026-08-07 — Structural refactor: split god-modules, add GUI + launch tests
 
 Follow-up to the cleanup below. Three low-risk structural refactors, each its

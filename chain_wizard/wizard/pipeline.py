@@ -4,7 +4,8 @@ Pipeline — maps scan results to executable attack steps based on the selected 
 
 from core.models import ScanResult, Step, AttackPlan
 from library.attack_map import steps_for_port, recommended_steps_for_port
-from core.display import info, warn, cyan, green, yellow, bold, magenta
+from core.display import info, warn
+from core.ui_driver import get_ui
 
 # Tools that are follow-up actions requiring a credential first — never queued
 # as standalone plan steps. They are only reached AFTER a brute-force step
@@ -77,8 +78,14 @@ def build_plan(
             info(f"Port {port}: {len(selected)} recommended step(s) queued.")
 
         elif mode == "semi":
-            _show_steps_for_port(port, service, all_steps)
-            picks = input(f"  {cyan('Select numbers (e.g. 1,2 or 0 to skip): ')}").strip()
+            items = [
+                {"tool": step.tool, "name": step.name, "is_recommended": step.is_recommended}
+                for step in all_steps
+            ]
+            picks = get_ui().multiselect(
+                f"Port {port} ({service}) — available steps "
+                f"(numbers, e.g. 1,2, or 0 to skip)", items,
+            ).strip()
             if picks == "0":
                 warn(f"Skipping port {port}.")
                 continue
@@ -90,13 +97,3 @@ def build_plan(
                         plan.steps.append((port, service, all_steps[idx]))
 
     return plan
-
-
-def _show_steps_for_port(port: int, service: str, steps: list[Step]) -> None:
-    """Print a numbered menu of available steps for a single port."""
-    print(f"\n  {'─' * 50}")
-    print(f"  Port {bold(str(port))} ({cyan(service)}) — available steps:")
-    for i, step in enumerate(steps, 1):
-        tag = green("[recommended]") if step.is_recommended else yellow("[alternative]")
-        print(f"    {green(str(i))}. {magenta(f'[{step.tool}]')} {step.name} {tag}")
-    print(f"    {green('0')}. {yellow('Skip this port')}")

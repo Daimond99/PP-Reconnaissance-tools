@@ -1,13 +1,18 @@
 """
-Entry point — command-line interface for the chain wizard.
+Entry point for the chain wizard.
 
-Runs interactively by default (prompts for mode / target / wordlists). The
-GUI's Wizard Console passes those same choices up front as CLI flags
-(`--target ... --mode auto ...`) so a beginner fills a form instead of
-typing at raw prompts; that first run skips straight to the scan, then the
-pane falls back to the normal interactive loop for any follow-up run.
+Two ways to run it:
+  - Standalone (`python3 -m wizard.main`): interactive terminal, prompts for
+    mode/target/wordlists via `CliUI`, loops so the terminal is always "the
+    wizard" until Ctrl-D.
+  - `--target ... --gui` (the Qt GUI's Wizard Console): the panel's choices
+    come in as flags, `IpcUI` takes over every menu/confirmation as a JSON
+    line-protocol on stdin/stdout (see `core/ui_driver.py`), and the process
+    exits after that one run — the GUI starts a fresh process per scan.
 """
 
+import builtins
+import functools
 import os
 import re
 import sys
@@ -15,6 +20,7 @@ import glob
 import argparse
 from dataclasses import dataclass
 from core.display import banner, section, info, ok, warn, fail, bold, cyan, green, yellow
+from core.ui_driver import get_ui, set_ui, IpcUI
 from wizard.chain import run_chain
 
 try:
@@ -83,7 +89,7 @@ def _resolve_wordlist(prompt: str, default: str, choices: list[str]) -> str:
       - blank to use `default`.
     Falls back to `default` if the chosen path doesn't exist.
     """
-    raw = input(f"  {cyan(prompt)} [{default}]: ").strip()
+    raw = get_ui().text(prompt, default)
     if not raw:
         return default
 
@@ -110,23 +116,27 @@ class _Preset:
     pass_wl: str
 
 
-def _parse_args(argv: list[str] | None = None) -> _Preset | None:
-    """Parse the GUI's up-front flags. Returns a `_Preset` when `--target`
-    is given, else `None` (→ fully interactive, unchanged behavior)."""
+def _parse_args(argv: list[str] | None = None) -> tuple[_Preset | None, bool]:
+    """Parse the GUI's up-front flags. Returns (`_Preset` when `--target`
+    is given, else `None` → fully interactive, unchanged behavior; whether
+    `--gui` was passed)."""
     p = argparse.ArgumentParser(prog="wizard", add_help=True)
     p.add_argument("--target", help="IP / domain / CIDR to scan")
     p.add_argument("--mode", choices=("auto", "semi"), default="auto")
     p.add_argument("--user-wordlist", dest="user_wl", default="")
     p.add_argument("--pass-wordlist", dest="pass_wl", default="")
+    p.add_argument("--gui", action="store_true",
+                    help="Talk the JSON IPC protocol on stdin/stdout instead "
+                         "of prompting a terminal — set by the Qt GUI launcher.")
     a = p.parse_args(argv)
 
     if not a.target:
-        return None
+        return None, a.gui
 
     default_wl = "/usr/share/wordlists/rockyou.txt"
     user_wl = _win_to_wsl_path(a.user_wl) or default_wl
     pass_wl = _win_to_wsl_path(a.pass_wl) or user_wl
-    return _Preset(target=a.target, mode=a.mode, user_wl=user_wl, pass_wl=pass_wl)
+    return _Preset(target=a.target, mode=a.mode, user_wl=user_wl, pass_wl=pass_wl), a.gui
 
 
 def main() -> None:
@@ -138,14 +148,35 @@ def main() -> None:
         except (AttributeError, ValueError):
             pass
 
+    preset, use_gui = _parse_args()
+    if use_gui:
+        set_ui(IpcUI())
+        # Reserve real stdout exclusively for the IpcUI JSON protocol — every
+        # `print()` call in this package (banners, section dividers, status
+        # lines via core/display.py, and the few bare `print()`s in
+        # wizard/chain.py) would otherwise interleave raw text into the
+        # stream the Qt side is parsing as JSON. Redirecting the builtin
+        # once here, instead of touching every call site, keeps CliUI's
+        # behavior (and every other module) byte-identical when --gui is
+        # not set.
+        builtins.print = functools.partial(print, file=sys.stderr)
+
     # Only the first pass honors the GUI-supplied preset; every run after
     # (the pane loops so it's always "the wizard") is fully interactive --
     # but `last` carries the most recently used target/mode/wordlists
     # forward as the *defaults* for those prompts (Enter reuses them), so
     # a GUI-launched target doesn't get thrown away and re-typed from
     # scratch on every loop.
-    preset = _parse_args()
     last: "_Preset | None" = preset
+
+    if use_gui:
+        # One QProcess run == one "Start scan" click: the GUI already offers
+        # a fresh form for the next scan, so there's no terminal to loop
+        # back into here. Run the single preset pass and exit — no
+        # KeyboardInterrupt/EOFError handling needed either, since there's
+        # no real tty for Ctrl-C/Ctrl-D to arrive on.
+        _interactive(preset, last)
+        return
 
     # Run the wizard in a loop so the pane is always "the wizard":
     #   Ctrl-C  → cancel the current step, restart at the mode menu.
@@ -193,17 +224,18 @@ def _interactive(
     # ─── Mode selection (defaults to the last-used mode) ─────────
     default_mode = last.mode if last else "auto"
     default_mode_num = "2" if default_mode == "semi" else "1"
-    print("  Select mode:")
-    print(f"    {green('1')}. {bold('AUTO')} — auto-pick best tool per port, confirm each")
-    print(f"    {green('2')}. {bold('SEMI')} — show all options, pick per port")
-    mode_choice = input(f"  {cyan(f'Choice [1/2] [{default_mode_num}]: ')}").strip() or default_mode_num
+    mode_choice = get_ui().menu(
+        "Select mode:",
+        ["1. AUTO — auto-pick best tool per port, confirm each",
+         "2. SEMI — show all options, pick per port"],
+        default=default_mode_num,
+    )
     mode = "auto" if mode_choice == "1" else "semi"
     ok(f"Mode: {mode.upper()}")
 
     # ─── Target (defaults to the last-used target — blank reuses it) ─
     default_target = last.target if last else ""
-    target_hint = f" [{default_target}]" if default_target else ""
-    target = input(f"\n  {cyan(f'Target (IP / domain / CIDR){target_hint}: ')}").strip() or default_target
+    target = get_ui().text("Target (IP / domain / CIDR)", default_target)
     if not target:
         fail("No target provided — back to the start.")
         return None

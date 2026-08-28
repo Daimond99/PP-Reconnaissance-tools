@@ -46,7 +46,7 @@ always runs before a command is built; execution always runs behind the gate.
 |--------|-------|-------|
 | Entry point | `src/main.py` | splash → `ReconMainWindow` → preflight doctor |
 | The safety gate | `src/core/confirmation_gate.py` | Direct Tool Mode Execute only |
-| Guided wizard | `chain_wizard/` (repo root) | subprocess CLI, 6-tool restricted, self-confirming |
+| Guided wizard | `chain_wizard/` (repo root) | subprocess CLI, 6-tool restricted, `--gui` JSON protocol → Qt dialogs |
 | Primary terminal | `src/ui/webterm/xterm_widget.py` | xterm.js + real PTY |
 | Terminal fallback | `pty_terminal.py` → `terminal.py` | ConPTY+pyte → plain pipe |
 | Command validation | `src/validation/common.py` | whitelist + injection guard |
@@ -77,16 +77,33 @@ Assembled by `src/ui/main_window.py` + the `src/ui/widgets/` package (split
 re-exports every public name so `from src.ui.widgets import …` is unchanged).
 
 ### Page 0 — Wizard Console
-Split layout: **control panel (left, 280px)** + **terminal tabs (right)**.
+Split layout: **control panel (left, 280px)** + **live progress view
+(right)**. No terminal tab anymore, no typed commands — every menu and
+confirmation the wizard needs pops as a Qt dialog (2026-08-27 rewrite; the
+old PTY-driven text-menu flow is gone, see §13).
 - **`WizardControlPanel`** (`src/ui/wizard_panel.py`) — a form: Target / Mode
   (AUTO·SEMI) / User + Pass wordlist (with Browse…) / Start scan. It only
   *collects* choices and emits `scanRequested(dict)`; it never builds or runs a
   command.
-- **`TerminalTabsWidget(form_driven=True)`** (`src/ui/terminal_tabs.py`) —
-  VS Code-style tabs. Before the first scan, a placeholder hint fills the pane.
-  Start scan → the panel dict becomes CLI flags (`_panel_to_wizard_args`) →
-  opens a Wizard tab running `chain_wizard/` with `--target/--mode/--wordlist`
-  (skips the CLI's own prompts). `+`/`⌄` open more Wizard or Shell tabs (cap 4).
+- **`WizardRunner` + `WizardProgressView`** (`src/ui/wizard_runner.py`) —
+  `scanRequested` starts a `WizardDriver` (`src/core/wizard_driver.py`),
+  which launches `chain_wizard/` as a **hidden** `QProcess` (plain pipes,
+  never a PTY/xterm): `python3 -m wizard.main --target ... --gui`. The
+  subprocess talks a JSON line protocol (`chain_wizard/core/ui_driver.py`'s
+  `IpcUI`) instead of `input()`/`print()` — `WizardRunner` answers each
+  `menuRequested`/`textRequested`/`multiselectRequested`/`confirmRequested`/
+  `sudoPasswordRequested` signal with a dialog from `src/ui/wizard_dialogs.py`
+  and streams `statusUpdate`s (scan results, credentials, step outcomes)
+  into `WizardProgressView`, a read-only log. One `WizardDriver`/subprocess
+  per "Start scan" click; the Start button disables while one is running.
+  Every `confirmRequested` routes through `ConfirmationGate(channel="wizard")`
+  (`src/core/confirmation_gate.py`) — same preview-box rendering and
+  `logs/audit_log.jsonl` audit trail as Direct Tool Mode / LLM Mode, not a
+  second bespoke confirmation path.
+- Command building never moved into `src/ui/` — every `cmd`/`impact` string
+  a dialog shows was already built inside `chain_wizard/` (attack-map
+  templates, `shlex.quote`d wordlist paths); the Qt layer only renders it
+  and returns a choice/boolean, per CLAUDE.md's GUI/logic layering rule.
 
 ### Page 1 — Input Management (`InputManagementTab`)
 Zenmap-style scan queue (Status / Command). Every Direct Tool Mode Execute lands
@@ -104,11 +121,17 @@ Zenmap-style split pane. Two data shapes:
 - **Hydra/Ncrack** → separate credentials table (`kind: "credentials"`).
 
 ### Page 4 — LLM Mode (`TerminalTabsWidget(fixed=True)`)
-Two fixed, square-block tabs, **ungated by design** (same trade-off as Raw
-Output):
-- **"LLM"** — `llm` CLI + `llm-tools-nmap` plugin (nmap function-calling).
+Two fixed, square-block tabs:
+- **"LLM"** — `llm` CLI + `llm-tools-nmap` plugin (nmap function-calling),
+  **ungated by design** (same trade-off as Raw Output).
 - **"OpenCode"** — a coding agent, PATH-scoped to the 6 tools + read-only utils
-  (soft confinement, not a sandbox).
+  (soft confinement, not a sandbox), **and gated by an `opencode.json`
+  `permission.bash` config** (`src/ui/terminal_launch.py::_OPENCODE_JSON`,
+  auto-written to `tools/opencode-workspace/`) — `hydra`/`ncrack`/
+  `evil-winrm`/`masscan`/aggressive-scan flags require an explicit approval
+  inside OpenCode's own UI before they run; everything else stays `allow`.
+  This is a real, tool-enforced gate (unlike `AGENTS.md`, which is prompt-only
+  advice the model isn't forced to follow).
 
 ### Title bar
 - **Sidebar toggle** (left) — hides the sidebar + divider.
@@ -174,9 +197,16 @@ The single human-in-the-loop gate. **One instance per pending command**
 2. `confirm(reply)` — returns True only for exact `"yes"`; audit-logs the
    decision; marks the gate spent so a repeat `confirm("yes")` can't re-fire.
 
-Only the top-bar **Direct Tool Mode Execute** path uses this gate
-(`main_window._on_execute_clicked` → `_run_gated_command`). The Wizard Console
-has its **own** per-step confirmation inside the `chain_wizard` CLI.
+Two callers now: the top-bar **Direct Tool Mode Execute** path
+(`main_window._on_execute_clicked` → `_run_gated_command`), and the
+**Wizard Console** (`src/core/wizard_driver.py`, `channel="wizard"`,
+`skip_scope=True` — the wizard's target is the same "own lab" assumption
+Direct Tool Mode makes). Every per-step confirmation the `chain_wizard` CLI
+asks for is still decided inside the CLI's own flow (which step, what
+`cmd`/`impact` to show), but the actual yes/no now round-trips through this
+gate via the GUI dialog in `wizard_dialogs.py`, landing in the same
+`logs/audit_log.jsonl` as every other execution path instead of a separate
+per-CLI log.
 
 ### `src/tools/nmap/analyzer.py`
 Impact/risk text for the gate — `generate_impact_description(flags, target,
@@ -222,23 +252,34 @@ the user remembering the flag.
 
 Self-contained Python package, **not** under `src/`, launched as a subprocess by
 the Wizard Console. No imports from GUI code. Runs all 6 tools directly via
-`subprocess` — it does **not** go through `src/tools/` or `ConfirmationGate`; it
-carries its own per-step confirmation.
+`subprocess` — it does **not** go through `src/tools/`; its own confirmations
+now route through `src/core/confirmation_gate.py` when launched `--gui` (see
+§6), same audit trail as every other execution path.
 
 **Flow:** target → mode (AUTO/SEMI) → scan (nmap/masscan) → impact-ranked plan →
 per-step confirm → execute → harvest credentials → in-scope post-exploit.
 
+Every interactive point (menus, free-text prompts, multi-select pickers, the
+impact confirmation, the sudo password) goes through `core/ui_driver.py`'s
+`UI` interface instead of calling `input()`/`print()` directly — `CliUI`
+reproduces the original terminal prompts (`python3 -m wizard.main`,
+standalone/headless), `IpcUI` (`--gui`) speaks one JSON object per line on
+stdin/stdout to `src/core/wizard_driver.py` on the Qt side. `wizard/main.py`
+redirects `print()` to stderr for the whole process when `--gui` is set, so
+stdout stays reserved exclusively for the JSON protocol.
+
 | Module | Purpose |
 |--------|---------|
-| `wizard/main.py` | Entry; prompts, or the GUI's `--target/--mode/--*-wordlist` preset; loop control |
+| `wizard/main.py` | Entry; prompts (or the GUI's `--target/--mode/--*-wordlist --gui` preset); loop control |
 | `wizard/chain.py` | Orchestration: scan → plan → confirm → run → parse creds → post-exploit |
 | `wizard/pipeline.py` | `build_plan()` (AUTO/SEMI), `step_priority()` (impact ranking) |
 | `library/scanner.py` | nmap quick/full/stealth + masscan |
 | `library/attack_map.py` + `.json` | port → attack (which tool + command template) |
 | `library/post_exploit.py` + `.json` | service → post-exploit action |
 | `library/parser.py` | gnmap → `ScanResult` |
-| `core/executor.py` | `subprocess.run(shell=True)`, routed by launcher context |
-| `core/color.py`, `core/display.py` | ANSI color (off-TTY safe), adaptive banners |
+| `core/executor.py` | `subprocess.run(shell=True)`; sudo primed via tty (`CliUI`) or `sudo -S` + `ui.sudo_password()` (`IpcUI`) |
+| `core/ui_driver.py` | `UI`/`CliUI`/`IpcUI` — the menu/text/multiselect/confirm/sudo-password backend abstraction (2026-08-27) |
+| `core/color.py`, `core/display.py` | ANSI color (off-TTY safe), adaptive banners — CLI-mode only, `print()` redirected to stderr under `--gui` |
 | `core/models.py` | `Step`, `ScanResult`, `AttackPlan` dataclasses |
 
 ---
@@ -277,13 +318,25 @@ not routed through `resource_loader`.
 
 ## 11. Tests (`tests/`)
 
-`python -m pytest tests/` — 52 tests, no external target needed.
+`python -m pytest tests/` — 68 tests, no external target needed.
 - **`test_validation.py`** — whitelist, 6 injection shapes, sudo handling,
   quote-aware scanner, exact-`yes`, Windows→WSL path rewrite.
 - **`test_confirmation_gate.py`** — request/reject, scope enforce/bypass, exact
   `"yes"`, **single-use replay protection**, secret masking, cancel logging.
+- **`test_terminal_launch.py`** — launch-script builders (shell/llm/opencode),
+  Windows→WSL path derivation, `_SCOPE_TOOLS`.
+- **`test_gui_smoke.py`** — headless (offscreen Qt) real-window build: page
+  count/types, sidebar nav, warhead repopulation, dropdown.
 - **`conftest.py`** — puts the repo root on `sys.path`; stubs the audit logger
   so tests never write to `logs/`.
+
+`python -m pytest chain_wizard/tests/` — 11 tests (separate suite, its own
+`conftest.py` puts `chain_wizard/` on `sys.path` since its modules use
+absolute imports like `from core.display import ...`):
+- **`test_ui_driver.py`** — `IpcUI`'s JSON request/reply shapes for every
+  message type (menu/text/multiselect/confirm/status/sudo_password),
+  `CliUI`/`IpcUI`'s `needs_sudo_password` flag, the `get_ui()`/`set_ui()`
+  singleton.
 
 ---
 
@@ -292,11 +345,14 @@ not routed through `resource_loader`.
 **Gated (safe):**
 - ✓ Direct Tool Mode Execute — `ConfirmationGate` + exact `"yes"`.
 - ✓ Raw Output — read-only, no keystroke reaches a shell.
-- ✓ Wizard Console — per-step CLI confirmation.
+- ✓ Wizard Console — per-step confirmation via a Qt dialog, routed through
+  the same `ConfirmationGate` (`channel="wizard"`) as Direct Tool Mode.
 
 **Ungated (intentional trade-offs, documented, not oversights):**
-1. **LLM Mode** — two real shells, no gate. Review the threat model before real
-   targets. OpenCode has soft PATH/dir confinement only.
+1. **LLM Mode "LLM" tab** — real shell, no gate. Review the threat model before
+   real targets. The **"OpenCode" tab** now has a real gate for its riskiest
+   commands (`opencode.json` `permission.bash` — see §4), plus soft PATH/dir
+   confinement; everything else in that tab is still ungated.
 2. **Direct Tool Mode uses `skip_scope=True`** — `AUTHORIZED_SCOPE` is not
    enforced on the main GUI path (targets are assumed to be the user's own lab).
    The gate is still the enforcement.
@@ -304,8 +360,12 @@ not routed through `resource_loader`.
 **Polish / open work (not safety):**
 - Hardcoded UI strings remain in `config.py` / `main_window.py` (STYLESHEET,
   QMessageBox text) — partial resource migration.
-- The wizard control panel has **not been run end-to-end in the full GUI on a
-  real scan** yet (verified headless/argparse only).
+- The 2026-08-27 Qt-dialog wizard rewrite has **not been run end-to-end in
+  the full GUI against a real WSL target** yet — verified via unit tests
+  (`chain_wizard/tests/test_ui_driver.py`, the headless GUI smoke test) and
+  a real subprocess round-trip of the JSON protocol (menu → confirm →
+  decline → back-to-menu, matching the original CLI's own control flow),
+  but no human has clicked through the dialogs in the actual app window.
 - No web-application scanning capability (no dir-brute / web-vuln / SQLi tools) —
   the 6-tool set reaches the network/service layer only.
 
@@ -322,6 +382,15 @@ clean — this only fires on `kill`-style termination.
   `llm_mode.py`, `CommandEditorTab`, `src/wizard/engine.py`.
 - Dead core: `auto_chain.py`, `api_key_manager.py`, the
   `llm-tools-nmap.py` direct-exec script.
+- 2026-08-27: the Wizard Console's old PTY-terminal path — `terminal_tabs.py`'s
+  `"wizard"` profile, `start_wizard_scan`/`_panel_to_wizard_args`,
+  `TerminalTabsWidget`'s `form_driven` mode + empty-state placeholder, and
+  `terminal_launch.py`'s `_wizard_arg_str` — all removed once the Qt-dialog
+  rewrite (`wizard_runner.py`/`wizard_dialogs.py`/`wizard_driver.py`) meant
+  nothing called them. `MainContentArea.wizard_tab` → `wizard_runner`; the
+  startup-splash readiness signal moved from it to `llm_tab.firstTabReady`
+  (still a real WSL-boot proxy; the wizard PTY's version of that signal was
+  firing instantly regardless of WSL state in `form_driven` mode anyway).
 - `nmap/builder.py` + `validator.py` (never wired).
 - Cleaned 2026-08-07: `llm_keys.has_llm_key` (uncalled), an unused `QComboBox`
   import, `ACCENT_YELLOW`/`ACCENT_CYAN` constants, and `gobuster`/`dirb` from

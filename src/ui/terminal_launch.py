@@ -13,7 +13,6 @@ machine's `D:\\TheRecon`, which would break on any other clone location.
 from __future__ import annotations
 
 import os
-import shlex
 
 # What OpenCode's own shell tool is allowed to invoke by bare name, once
 # PATH is restricted to `~/.recon_agent_bin` — the 6 authorized tools plus
@@ -23,15 +22,123 @@ import shlex
 _SCOPE_TOOLS = ["nmap", "masscan", "hydra", "ncrack", "ncat", "evil-winrm"]
 _SCOPE_UTILS = ["ls", "cat", "grep", "find", "head", "tail", "wc", "file", "mkdir", "touch"]
 
+# nmap/masscan need the container's own scoped-sudo (docker/Dockerfile's
+# NOPASSWD rule for exactly those two binaries) -- baked into the wrapper
+# itself so a caller (human or OpenCode) never has to type "sudo".
+_SUDO_IN_CONTAINER = {"nmap", "masscan"}
+_TOOL_CONTAINER = "therecon-tools"
+
+
+def _wrapper_lines(dir_expr: str, tool: str, interactive_tty: bool) -> list[str]:
+    """The two bash lines that (re)write one `docker exec`-into-the-container
+    wrapper script for `tool` into `dir_expr` (a shell expression for the
+    target directory, e.g. `"$SCOPE_BIN"` or `"$HOME/.recon_docker_bin"`).
+    Shared by `_tool_wrapper_snippet` (plain Shell/LLM tabs) and
+    `_opencode_launch` (its own `$SCOPE_BIN`) so both PATH-scoping schemes
+    point at the same container instead of the real host binary. nmap/
+    masscan wrappers run `sudo` *inside* the container (its own
+    NOPASSWD-scoped sudoers rule, docker/Dockerfile) so callers never need
+    to type sudo themselves."""
+    flag = "-it" if interactive_tty else "-i"
+    inner = f"sudo {tool}" if tool in _SUDO_IN_CONTAINER else tool
+    # `dir_expr` already carries its own quoting (e.g. `"$SCOPE_BIN"`) --
+    # adjacent quoted/unquoted concatenation (`"$SCOPE_BIN"/nmap`) is valid
+    # bash, so `path` must NOT be wrapped in another layer of quotes below.
+    path = f'{dir_expr}/{tool}'
+    return [
+        f"printf '#!/bin/bash\\nexec docker exec {flag} "
+        f"{_TOOL_CONTAINER} {inner} \"$@\"\\n' > {path};",
+        f'chmod +x {path};',
+    ]
+
+
+def _tool_wrapper_snippet(interactive_tty: bool) -> str:
+    """Bash fragment: (re)generate one wrapper script per authorized tool
+    in `~/.recon_docker_bin`, each `docker exec`-ing the same-named binary
+    inside the `therecon-tools` container (docker/Dockerfile) instead of
+    reaching whatever copy is installed directly on this WSL host. The
+    host still has its own copies (the pre-container "Windows Demo"
+    install) -- this PATH-scoping is what actually stops a tab from
+    reaching those directly instead of the sandboxed ones. See
+    docs/List การเเก้ไข.md item 5 / docker/run.sh for the container itself.
+
+    `interactive_tty=True` adds `-t` (real terminal, arrow keys, etc. --
+    for a human typing into an actual pty, e.g. the plain Shell tab).
+    `interactive_tty=False` uses `-i` only: OpenCode's own bash tool may
+    not hand its child a real controlling tty, and `docker exec -t`
+    without one fails outright ("the input device is not a TTY")."""
+    lines = [
+        'if [ -n "$HOME" ]; then',
+        '  mkdir -p "$HOME/.recon_docker_bin";',
+    ]
+    for t in _SCOPE_TOOLS:
+        for line in _wrapper_lines('"$HOME/.recon_docker_bin"', t, interactive_tty):
+            lines.append(f"  {line}")
+    lines.append('  export PATH="$HOME/.recon_docker_bin:$PATH";')
+    lines.append("fi; ")
+    return "\n".join(lines) + " "
+
 _AGENTS_MD = (
     "# Scope\n\n"
-    "This OpenCode session is restricted to TheRecon's 6 authorized tools:\n"
-    "nmap, masscan, hydra, ncrack, ncat, evil-winrm.\n\n"
-    "Only those 6 tools plus a few read-only utilities (ls, cat, grep, find,\n"
-    "head, tail, wc, file, mkdir, touch) are on PATH in this shell -- \n"
-    "everything else (git, python, curl, pip, apt, ssh, ...) is\n"
-    "intentionally unavailable. Do not attempt package installs or try to\n"
-    "reach outside this scope.\n"
+    "This OpenCode session works with TheRecon's 6 authorized tools:\n"
+    "nmap, masscan, hydra, ncrack, ncat, evil-winrm. Targets are limited to\n"
+    "the user's own authorized lab scope -- never suggest or run against a\n"
+    "target the user hasn't named in this session.\n\n"
+    "## Allowed without asking\n\n"
+    "- Read-only recon: nmap discovery/version/script scans (-sV, -sC, -A),\n"
+    "  listing/viewing existing scan output or loot files.\n"
+    "- A single, low-rate ncat connectivity check.\n\n"
+    "## Ask first, wait for an explicit yes\n\n"
+    "- Any hydra or ncrack run (brute force / credential guessing).\n"
+    "- Any evil-winrm session (post-exploitation, remote code execution).\n"
+    "- Aggressive/high-rate scans (masscan, nmap -T4/-T5, full -p-).\n"
+    "- Anything against a target not already confirmed in-scope this "
+    "session.\n\n"
+    "When unsure, ask a clarifying question or propose the command instead\n"
+    "of running it.\n\n"
+    "## Advanced usage reference\n\n"
+    "Use each tool's full capability -- the Ask-first list above is the only\n"
+    "restriction, not the flags below.\n\n"
+    "- nmap: `-sC -sV` default recon; `-p- --min-rate=1000 -T4` fast full-port\n"
+    "  sweep; `-A` aggressive (OS + version + default scripts + traceroute,\n"
+    "  noisy); `--script vuln` vulnerability scan; `--script=smb-*` /\n"
+    "  `http-*` for protocol-targeted NSE.\n"
+    "- masscan: `-p<ports> <target> --rate=<n>` for a fast internet-scale\n"
+    "  port sweep, then hand live ports to nmap `-sV` for service detail.\n"
+    "- hydra: `-f -t 16 -l <user> -P <wordlist> <service>://<target>`\n"
+    "  (stop on first hit); `-L <userlist>` instead of `-l` for multiple\n"
+    "  usernames.\n"
+    "- ncrack: `-U <users.txt> -P <pass.txt> <service>://<target>`, same\n"
+    "  idea as hydra with its own timing/retry controls.\n"
+    "- ncat: `-l -p <port> -e /bin/bash -i` for a listener/shell, `--ssl`\n"
+    "  to wrap the channel in TLS.\n"
+    "- evil-winrm: `-i <target> -u <user> -p <pass>` for an interactive\n"
+    "  WinRM shell; `-e <path>` to load local executables into the session.\n"
+)
+
+# Technical backstop for the "ask first" section above -- AGENTS.md is only
+# a prompt (the model can ignore it), so the actual approval gate is
+# OpenCode's own `permission.bash` config (opencode.json, project root =
+# the workspace dir). Default "allow" so nmap/masscan/ncat run at full
+# power with no extra prompting; only the tools/flags that need a human
+# in the loop are downgraded to "ask". Last matching pattern wins, so the
+# risky rules are listed after the "*" default.
+_OPENCODE_JSON = (
+    "{\n"
+    '  "$schema": "https://opencode.ai/config.json",\n'
+    '  "permission": {\n'
+    '    "bash": {\n'
+    '      "*": "allow",\n'
+    '      "hydra *": "ask",\n'
+    '      "ncrack *": "ask",\n'
+    '      "evil-winrm*": "ask",\n'
+    '      "masscan *": "ask",\n'
+    '      "*-T4*": "ask",\n'
+    '      "*-T5*": "ask",\n'
+    '      "*-p-*": "ask"\n'
+    "    }\n"
+    "  }\n"
+    "}\n"
 )
 
 
@@ -194,6 +301,7 @@ def _shell_launch(scope_dir: str) -> str:
         f"{_bashrc_once(_OPENCODE_BLOCK_MARKER, _OPENCODE_BLOCK_BODY)}"
         'export TR_BLOCK_OPENCODE=1; '
         "fi; "
+        f"{_tool_wrapper_snippet(interactive_tty=True)}"
         "exec bash -l"
     )
 
@@ -205,6 +313,7 @@ def _llm_launch(llm_dir: str) -> str:
     prints the literal string "No keys found" when empty."""
     return (
         _confine_snippet(llm_dir) +
+        f"{_tool_wrapper_snippet(interactive_tty=False)}"
         # Banner width is hardcoded, not read from `tput cols`/$COLUMNS --
         # querying real terminal size this early (before the pane's first
         # PTY-resize round-trip lands, see term.html's retry-fit loop) is
@@ -237,14 +346,20 @@ def _llm_launch(llm_dir: str) -> str:
 
 def _opencode_launch(workspace_dir: str) -> str:
     """cd into a dedicated OpenCode workspace, drop an AGENTS.md describing
-    the intended scope (only if one doesn't already exist there — the user
-    may edit it), then rebuild a restricted PATH (`~/.recon_agent_bin`,
-    symlinks to only the 6 authorized tools + a few read-only utilities)
-    before launching OpenCode. This restricts what OpenCode's own shell
-    tool can invoke *by bare name* — it is not a hard sandbox, an absolute
-    path still reaches anything on the real filesystem, but it blocks the
-    common case of it reaching for git/curl/python/apt on its own."""
-    tools = " ".join(_SCOPE_TOOLS + _SCOPE_UTILS)
+    the intended scope and an opencode.json permission config (only if they
+    don't already exist there — the user may edit either), then rebuild a
+    restricted PATH (`~/.recon_agent_bin`, symlinks to only the 6 authorized
+    tools + a few read-only utilities) before launching OpenCode. AGENTS.md
+    is just a prompt (the model can ignore it); opencode.json's
+    `permission.bash` rules are the real, tool-enforced gate that makes
+    OpenCode actually stop and ask before hydra/ncrack/evil-winrm or an
+    aggressive scan — everything else stays "allow" so the 6 tools run at
+    full power with no extra prompting. PATH-scoping restricts what
+    OpenCode's shell tool can invoke *by bare name* — it is not a hard
+    sandbox, an absolute path still reaches anything on the real
+    filesystem, but it blocks the common case of it reaching for
+    git/curl/python/apt on its own."""
+    utils = " ".join(_SCOPE_UTILS)
     return (
         # `$HOME` has been observed empty in some non-interactive WSL
         # invocation shapes -- abort before touching the filesystem at all
@@ -272,6 +387,9 @@ def _opencode_launch(workspace_dir: str) -> str:
         f"if [ ! -f AGENTS.md ]; then cat > AGENTS.md << 'AGENTSEOF'\n"
         f"{_AGENTS_MD}AGENTSEOF\n"
         "fi; "
+        f"if [ ! -f opencode.json ]; then cat > opencode.json << 'OCJSONEOF'\n"
+        f"{_OPENCODE_JSON}OCJSONEOF\n"
+        "fi; "
         # Installed for consistency with every other tab, but it's inert
         # here in practice: PROMPT_COMMAND only fires at an interactive
         # bash prompt, and this tab never reaches one -- it loops straight
@@ -280,12 +398,23 @@ def _opencode_launch(workspace_dir: str) -> str:
         # OpenCode's own shell tool can reach.
         f"{_confine_snippet(workspace_dir, do_cd=False)}"
         'SCOPE_BIN="$HOME/.recon_agent_bin"; mkdir -p "$SCOPE_BIN"; '
-        # Delete only symlinks this script itself would have created, one
+        # Delete only entries this script itself would have created, one
         # named path at a time -- never a `dir/*` glob, which silently
         # becomes a root-level glob if `$SCOPE_BIN` were ever empty.
-        f'for t in {tools}; do rm -f "$SCOPE_BIN/$t"; done; '
-        f'for t in {tools}; do p=$(command -v "$t" 2>/dev/null); '
+        f'for t in {utils}; do rm -f "$SCOPE_BIN/$t"; done; '
+        f'for t in {utils}; do p=$(command -v "$t" 2>/dev/null); '
         '[ -n "$p" ] && ln -sf "$p" "$SCOPE_BIN/$t"; done; '
+        # The 6 authorized tools are wrapper scripts into the sandboxed
+        # container instead of symlinks to the real host binary -- this is
+        # the actual fix for the scenario a target's own malicious banner
+        # (indirect prompt injection) tricks OpenCode into running a
+        # dangerous suggested command: it still only ever reaches the
+        # container copy, never the real WSL2 host tool.
+        + "".join(
+            f'{line} '
+            for t in _SCOPE_TOOLS
+            for line in _wrapper_lines('"$SCOPE_BIN"', t, interactive_tty=False)
+        ) +
         'export PATH="$SCOPE_BIN"; '
         # `exec bash -l` used to run here on exit, but PATH is scoped to
         # `$SCOPE_BIN` by this point, which never includes `bash` itself --
@@ -303,14 +432,3 @@ def _opencode_launch(workspace_dir: str) -> str:
         # failing instantly every run.
         'while :; do "$OC"; sleep 1; done'
     )
-
-
-def _wizard_arg_str(wizard_args: "list[str] | None") -> str:
-    """POSIX-quote GUI-supplied wizard flags into a launch-command suffix.
-
-    Returns e.g. ` --mode auto --target '192.168.1.1'` (leading space), or
-    "" when no args — both WSL bash and native Linux bash are POSIX, so
-    `shlex.quote` is the right escaper for either target."""
-    if not wizard_args:
-        return ""
-    return " " + " ".join(shlex.quote(a) for a in wizard_args)
