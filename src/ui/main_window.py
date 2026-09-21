@@ -952,7 +952,7 @@ class ReconMainWindow(QMainWindow):
             event.ignore()
             return
 
-        for tabs_widget in (self.main_area.llm_tab, self.main_area.opencode_tab):
+        for tabs_widget in (self.main_area.opencode_tab,):
             stop_all = getattr(tabs_widget, "stop_all", None)
             if callable(stop_all):
                 stop_all()

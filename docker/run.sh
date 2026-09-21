@@ -37,6 +37,15 @@ docker build -t "$IMAGE" "$SCRIPT_DIR"
 # setuid-root included, so without adding these back sudo itself fails
 # with "unable to change to root gid" before it even reaches the sudoers
 # check. Still nowhere near full root capabilities.
+#
+# /opt/oc-tmp: a second, `exec`-enabled tmpfs used ONLY as OpenCode's
+# `$TMPDIR` (src/ui/terminal_launch.py::_opencode_launch) -- its OpenTUI
+# render library extracts and `dlopen()`s a native `.so` into whatever
+# `$TMPDIR` resolves to at startup, which fails outright
+# ("failed to map segment from shared object") on the main `/tmp` above,
+# mounted `noexec` on purpose. Kept separate from `/tmp` instead of just
+# dropping `noexec` there, so nothing else in the container (nmap,
+# masscan, ...) gains the ability to execute a file written to `/tmp`.
 docker run -d \
     --name "$CONTAINER" \
     --network "$NETWORK" \
@@ -48,6 +57,7 @@ docker run -d \
     --read-only \
     --tmpfs /tmp:rw,size=256m \
     --tmpfs /run:rw,size=64m \
+    --tmpfs /opt/oc-tmp:rw,exec,nosuid,nodev,mode=1777,size=64m \
     --memory=1g \
     --cpus=2 \
     --pids-limit=256 \

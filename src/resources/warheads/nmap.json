@@ -8,5 +8,6 @@
   "Nmap - Service + Script Scan": "nmap -sV -sC --top-ports 100 192.168.1.0/24",
   "Nmap - Top100 Fast Scan": "nmap --top-ports 100 -T4 192.168.1.0/24",
   "Nmap - HTTP/HTTPS Version Scan": "nmap -sV -p 80,443 192.168.1.0/24",
-  "Nmap - Full Port Sweep (No Ping)": "nmap -p- -T4 -Pn 192.168.1.0/24"
+  "Nmap - Full Port Sweep (No Ping)": "nmap -p- -T4 -Pn 192.168.1.0/24",
+  "Nmap - HTTP Enum Scan": "nmap --script http-enum -p80,443 192.168.1.0/24"
 }

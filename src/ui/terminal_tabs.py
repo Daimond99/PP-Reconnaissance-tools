@@ -1,7 +1,7 @@
 """
 VS Code-style tabbed terminal container, used by the LLM Mode page
-("opencode" / "llm-nmap" profiles, `fixed=True`) and available for a plain
-interactive shell ("shell" profile).
+("opencode" profile, `fixed=True`) and available for a plain interactive
+shell ("shell" profile).
 
 A thin Qt shell — a `QTabBar` + `QStackedWidget` — over the existing terminal
 backends. Each tab is an independent terminal (its own PTY + view). Nothing
@@ -40,9 +40,7 @@ from src.ui.pty_terminal import PtyTerminal, PTY_AVAILABLE
 from src.ui.webterm import XtermTerminal, XTERM_AVAILABLE
 # Pure launch-script + path builders (no Qt) — split out so they're testable.
 from src.ui.terminal_launch import (
-    _repo_root_dir, _repo_local_llm_dir, _repo_local_opencode_dir,
-    _wsl_root_dir, _wsl_llm_dir, _wsl_opencode_dir,
-    _shell_launch, _llm_launch, _opencode_launch,
+    _repo_root_dir, _wsl_root_dir, _shell_launch, _opencode_launch,
 )
 
 # Each tab is a separate QWebEngineView = a separate Chromium renderer
@@ -118,14 +116,14 @@ def _wsl_missing_widget() -> QWidget:
 
 
 def make_terminal(profile: str, read_only: bool = False) -> QWidget:
-    """Build a terminal widget for `profile` ("shell" | "llm-nmap" |
-    "opencode").
+    """Build a terminal widget for `profile` ("shell" | "opencode").
 
     Same backend fallback chain (Xterm → Pty → Interactive) for all
-    profiles; only the launch command differs. "llm-nmap" auto-cd's into
-    the llm-tools-nmap plugin dir and offers to set an API key if none is
-    stored yet. "opencode" launches the OpenCode agent CLI with its PATH
-    restricted to TheRecon's 6 authorized tools (see `_opencode_launch`).
+    profiles; only the launch command differs. "opencode" `docker exec`s
+    straight into the sandboxed `therecon-tools` container, where OpenCode
+    is installed alongside the 6 authorized tools (see `_opencode_launch`)
+    — identical on Windows/WSL and native Linux, since `docker exec`
+    doesn't care which host launched it.
 
     `read_only=True` (Raw Output) drops every keystroke/paste from the page
     before it reaches the PTY -- display-only, real output still streams
@@ -139,12 +137,10 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
     if os.name == "nt" and not _wsl_available():
         return _wsl_missing_widget()
 
-    if profile == "llm-nmap":
-        wsl_launch = _llm_launch(_wsl_llm_dir())
-        lin_launch = _llm_launch(_repo_local_llm_dir())
-    elif profile == "opencode":
-        wsl_launch = _opencode_launch(_wsl_opencode_dir())
-        lin_launch = _opencode_launch(_repo_local_opencode_dir())
+    if profile == "opencode":
+        # Same `docker exec` script regardless of host OS — no WSL-vs-native
+        # path distinction needed any more (see `_opencode_launch`).
+        wsl_launch = lin_launch = _opencode_launch()
     else:  # plain interactive shell — opencode blocked, see _shell_launch()
         wsl_launch = _shell_launch(_wsl_root_dir())
         lin_launch = _shell_launch(_repo_root_dir())
@@ -159,7 +155,7 @@ def make_terminal(profile: str, read_only: bool = False) -> QWidget:
             # (confirmed: `OC=x; [ -z "$OC" ] && echo BUG` prints BUG
             # without `-e`, correctly doesn't with it). Harmless for the
             # simple one-liner "shell" launch, but silently broke
-            # "llm-nmap"/"opencode"'s multi-step setup scripts.
+            # "opencode"'s multi-step setup script.
             argv = ["wsl.exe", "-e", "bash", "-lc", wsl_launch]  # default distro
         else:
             argv = ["bash", "-lc", lin_launch]

@@ -24,12 +24,9 @@ class TestPathDerivation:
     def test_wsl_dirs_hang_off_wsl_root(self):
         root = t._wsl_root_dir()
         assert t._wsl_dir() == f"{root}/chain_wizard"
-        assert t._wsl_llm_dir() == f"{root}/tools/llm-tools-nmap"
-        assert t._wsl_opencode_dir() == f"{root}/tools/opencode-workspace"
 
     def test_local_dirs_end_with_expected_tail(self):
         assert t._repo_local_dir().replace("\\", "/").endswith("/chain_wizard")
-        assert t._repo_local_llm_dir().replace("\\", "/").endswith("/tools/llm-tools-nmap")
 
 
 class TestShellLaunch:
@@ -45,24 +42,26 @@ class TestShellLaunch:
         assert 'if [ -z "$HOME" ]' in t._shell_launch("/scope")
 
 
-class TestLlmLaunch:
-    def test_offers_key_setup_when_none(self):
-        s = t._llm_launch("/llm")
-        assert "No keys found" in s
-        assert "llm keys set openai" in s
-        assert s.strip().endswith("exec bash -l")
-
-
 class TestOpencodeLaunch:
-    def test_scopes_path_and_respawns(self):
-        s = t._opencode_launch("/ws")
-        assert 'if [ -z "$HOME" ]' in s          # HOME guard first
-        assert "recon_agent_bin" in s            # restricted PATH dir
+    def test_execs_into_tool_container_and_respawns(self):
+        s = t._opencode_launch()
+        assert "therecon-tools" in s              # the shared tool container
+        assert "docker exec -i therecon-tools bash -s" in s   # non-tty setup pass
         assert "AGENTS.md" in s                   # scope note dropped
-        # per-name deletes, never a dir/* glob (the safety-incident fix)
-        assert '"$SCOPE_BIN"/*' not in s
-        assert 'while :; do "$OC"; sleep 1; done' in s
+        assert "opencode.json" in s               # permission gate config
+        assert "/results/opencode-workspace" in s  # under the rw bind mount
+        assert "/results/opencode-home" in s
+        assert "docker exec -it -e HOME=" in s    # interactive pass, real tty
+        assert s.strip().endswith(
+            "therecon-tools opencode; sleep 1; done")
 
-    def test_only_the_six_tools_plus_readonly_utils_scoped(self):
-        # the PATH-scope symlink set must not silently grow
+    def test_checks_container_is_running_first(self):
+        s = t._opencode_launch()
+        assert "docker inspect -f '{{.State.Running}}' therecon-tools" in s
+        assert "./docker/run.sh" in s              # the fix, if it isn't
+
+
+class TestShellWrapperScope:
+    def test_only_the_six_tools_scoped(self):
+        # the Shell tab's PATH-scope wrapper set must not silently grow
         assert t._SCOPE_TOOLS == ["nmap", "masscan", "hydra", "ncrack", "ncat", "evil-winrm"]

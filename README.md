@@ -7,7 +7,7 @@
 ![PySide6](https://img.shields.io/badge/PySide6-6.6%2B-41CD52?logo=qt)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey)
-![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-82%20passing-brightgreen)
 
 ---
 
@@ -40,7 +40,8 @@ Every item below maps to code that ships in this repo — see the file reference
 - **Single-use replay protection** — `ConfirmationGate` sets `_pending = False` after every `confirm()` (success or failure), so a stale `"yes"` cannot re-fire the same argv (`src/core/confirmation_gate.py:145`).
 - **Secret masking via `argv_override`** — the preview string / audit-log entry can be a masked version (`****`) of the command while the real argv still executes. Real credentials never touch `self.command`, the preview box, or the audit log (`confirmation_gate.py:82-86`).
 - **Append-only JSONL audit log with size-based rotation** — `src/report/audit_log.py` writes every gated decision (channel, command, target, response, executed, provider, exit_code) to `logs/audit_log.jsonl`. Rotates at 5 MB × 3 backups so a long-lived install can't fill the disk; history is preserved, never overwritten mid-write.
-- **Scope enforcement (least-privilege target)** — `is_target_in_scope()` checks the target against `AUTHORIZED_SCOPE` (CIDR, defaults to `192.168.1.0/24`) before validation runs. Off-scope targets are rejected with `[!] Scope violation`. `skip_scope=True` exists only for local-bind operations (Ncat listen mode) that have no remote target.
+- **Sandboxed execution (Docker)** — all 6 tools run inside a non-root, `--cap-drop=ALL`, `--read-only`-rootfs container (`docker/Dockerfile` + `docker/run.sh`), never directly on the WSL2/Linux host. Specifically defends against indirect prompt injection: a scanned target's banner tricking an LLM into suggesting a `sudo`-prefixed command that a human then approves still only damages the disposable container. See `docs/DOCKER_SANDBOX_DEFENSE.md` for the full threat model + live test evidence.
+- **Scope enforcement (least-privilege target)** — `is_target_in_scope()` checks the target against `AUTHORIZED_SCOPE` (CIDR, defaults to `192.168.1.0/24`) before validation runs. Off-scope targets are rejected with `[!] Scope violation`. In practice `skip_scope=True` is used for Direct Tool Mode and the Wizard Console (both take a target the human typed in directly — the human typing it is treated as the scope decision); it's actively enforced on the one path where the target is AI-suggested rather than human-typed (the "LLM Nmap" panel).
 - **Windows→WSL path rewrite** — `convert_windows_paths_to_wsl()` transparently rewrites `C:\wordlists\rockyou.txt` → `/mnt/c/wordlists/rockyou.txt` before validation, because commands actually execute inside WSL bash which has no drive-letter concept. Runs before the injection guard sees a bare backslash.
 - **Per-flag impact preview** — `generate_impact_description(flags, target, tool)` reads `src/resources/flag_impacts.json` (all 6 tools) and produces a human-readable "this will…" block shown in the confirmation dialog. Detects bare `sudo` and appends an explicit root-privilege warning.
 - **Non-repudiable channel tagging** — audit entries carry `channel` (`plain` / `ai` / `wizard`) and `provider` (`openai` / `gemini`) so an AI-suggested run is distinguishable from a human-typed one post-hoc.
@@ -59,6 +60,7 @@ Every item below maps to code that ships in this repo — see the file reference
 | Terminal (last resort) | `QProcess` pipe | `src/ui/terminal.py` |
 | Execution env (Windows) | WSL2 / Ubuntu | via `wsl.exe` |
 | Execution env (Linux) | native shell | — |
+| Tool sandbox | Docker container (`therecon-tools`) | `docker/Dockerfile`, `docker/run.sh` — all 6 tools run here, not on the host |
 | Wrapped tools | Nmap · Masscan · Hydra · Ncrack · Ncat · Evil-WinRM | 6-tool whitelist |
 | Test framework | pytest | `tests/` |
 | Audit format | JSONL, append-only, size-rotated | `logs/audit_log.jsonl` |
@@ -130,19 +132,19 @@ python -m src.preflight
 ## Test Coverage
 
 ```bash
-python -m pytest tests/ -q
+python -m pytest tests/ -q             # 82 passed — GUI + safety layer
+python -m pytest chain_wizard/tests/ -q   # 14 passed — wizard CLI + IPC protocol
 ```
 
-**53 tests** across 4 files, all covering safety-critical paths:
+Two separate suites, both safety-critical, no external target required for either:
 
-| File | Tests | Covers |
-|---|---:|---|
-| `tests/test_validation.py` | 21 | 6-tool whitelist, quote-aware injection guard, exact-`yes` rule, Windows→WSL path rewrite, `sudo` prefix handling, `shlex` parse errors |
-| `tests/test_confirmation_gate.py` | 13 | Scope enforcement, preview/argv separation, single-use replay protection, secret masking via `argv_override`, audit-log side effects, cancel path |
-| `tests/test_terminal_launch.py` | 12 | Cross-platform launcher script builders (WSL vs native), terminal fallback chain |
-| `tests/test_gui_smoke.py` | 7 | Headless PySide6 widget construction — imports don't break, main window builds |
-
-No external target is required — the safety layer is fully unit-testable.
+| Suite | File | Covers |
+|---|---|---|
+| `tests/` | `test_validation.py` | 6-tool whitelist, quote-aware injection guard, exact-`yes` rule, Windows→WSL path rewrite, `sudo` prefix handling, `shlex` parse errors |
+| `tests/` | `test_confirmation_gate.py` | Scope enforcement, preview/argv separation, single-use replay protection, secret masking via `argv_override`, audit-log side effects, cancel path |
+| `tests/` | `test_terminal_launch.py` | Cross-platform launcher script builders (WSL vs native, incl. the OpenCode→Docker `docker exec` launch) |
+| `tests/` | `test_gui_smoke.py` | Headless PySide6 widget construction — imports don't break, main window builds |
+| `chain_wizard/tests/` | `test_ui_driver.py`, `test_chain_status.py` | `IpcUI` JSON request/reply shapes, `CliUI`/`IpcUI` singleton, wizard status events |
 
 ---
 
@@ -171,8 +173,9 @@ src/
 └── utils/resource_loader.py      # single JSON-loader chokepoint (cached)
 
 chain_wizard/                     # standalone guided-chain CLI (subprocess)
-tests/                            # 53 tests, safety-critical paths
-docs/                             # architecture + Thai overview + change log
+docker/                           # Dockerfile + run.sh — the sandbox the 6 tools run in
+tests/                            # 82 tests, safety-critical paths (chain_wizard/tests/ has its own 14)
+docs/                             # architecture, sandbox defense, data flow, Thai overview, scope Q&A, change log
 img-gui/                          # GUI screenshots
 ```
 
@@ -180,10 +183,16 @@ img-gui/                          # GUI screenshots
 
 ## Docs
 
-- [`CLAUDE.md`](CLAUDE.md) — architecture rules, layer discipline, hard constraints
-- [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — file-by-file map of what's implemented
-- [`docs/OVERVIEW_TH.md`](docs/OVERVIEW_TH.md) — Thai-language deep-dive
-- [`docs/PROGRESS.md`](docs/PROGRESS.md) — running change log
+**Core (read these to understand the system + project scope):**
+- [`CLAUDE.md`](CLAUDE.md) — architecture rules, layer discipline, hard constraints (source of truth when anything else conflicts with the source tree)
+- [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — file-by-file map of what's implemented, known gaps
+- [`docs/DOCKER_SANDBOX_DEFENSE.md`](docs/DOCKER_SANDBOX_DEFENSE.md) — the tool sandbox's threat model, design, and live test evidence
+- [`docs/OVERVIEW_TH.md`](docs/OVERVIEW_TH.md) — Thai-language first-read overview
+- [`docs/WIZARD_DATA_FLOW.md`](docs/WIZARD_DATA_FLOW.md) — `chain_wizard/`'s internal data flow + every JSON schema that crosses a process/storage boundary
+- [`docs/PP-scope-checklist.md`](docs/PP-scope-checklist.md) / [`docs/PP-SCOPE-QA.md`](docs/PP-SCOPE-QA.md) — academic project-scope checklist + a defend-ready Q&A mapping each scope item to code evidence
+
+**History (not needed to understand the system as it is today):**
+- [`docs/PROGRESS.md`](docs/PROGRESS.md) — append-only running log, session by session
 
 ---
 

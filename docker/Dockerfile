@@ -1,5 +1,6 @@
 # TheRecon tool container — the 6 authorized tools (nmap, masscan, hydra,
-# ncrack, ncat, evil-winrm), isolated from the WSL2/Windows host.
+# ncrack, ncat, evil-winrm) plus the OpenCode agent CLI (added 2026-08-29,
+# see docs/List การเเก้ไข.md item 6), all isolated from the WSL2/Windows host.
 #
 # Least-privilege by design:
 # - runs as non-root `recon` user; nmap/masscan need raw sockets, which
@@ -31,19 +32,35 @@ RUN apt-get update \
         ncrack \
         ruby ruby-dev build-essential libssl-dev \
         ca-certificates \
+        curl unzip \
         sudo \
     && rm -rf /var/lib/apt/lists/*
 
 RUN gem install evil-winrm --no-document
 
-RUN apt-get update \
-    && apt-get purge -y ruby-dev build-essential \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
 RUN useradd -m -s /bin/bash recon \
     && mkdir -p /results \
     && chown recon:recon /results
+
+# OpenCode agent CLI — installed as `recon` (not root) so its own binary and
+# any first-run files land under /home/recon, same ownership as everything
+# else that user touches. Runs *inside* this container from here on (see
+# docs/List การเเก้ไข.md item 6 / src/ui/terminal_launch.py::_opencode_launch)
+# instead of on the WSL host with a soft PATH-scoping trick — this
+# container's own filesystem + installed binaries + scoped sudoers rule
+# below ARE its sandbox now, a real boundary instead of a restricted PATH.
+USER recon
+RUN curl -fsSL https://opencode.ai/install | bash
+ENV PATH="/home/recon/.opencode/bin:${PATH}"
+USER root
+
+# curl/unzip were only needed to fetch the OpenCode installer above — drop
+# them same as the ruby build toolchain, nothing else in this image needs
+# network access or an archive tool of its own.
+RUN apt-get update \
+    && apt-get purge -y ruby-dev build-essential curl unzip \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
 
 # Scoped sudo — exactly nmap and masscan, nothing else, no password prompt
 # (docker exec has no interactive tty for sudo to prompt on). `recon`

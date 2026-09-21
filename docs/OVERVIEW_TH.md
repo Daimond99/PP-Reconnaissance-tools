@@ -5,7 +5,10 @@
 
 > เอกสารกฎเชิงสถาปัตยกรรม → [`CLAUDE.md`](../CLAUDE.md)
 > แผนที่ไฟล์ทีละไฟล์ (อังกฤษ) → [`docs/CURRENT_STATE.md`](CURRENT_STATE.md)
-> บันทึกการเปลี่ยนแปลง → [`docs/PROGRESS.md`](PROGRESS.md)
+> รายละเอียด Docker sandbox (threat model + ทดสอบจริง) → [`docs/DOCKER_SANDBOX_DEFENSE.md`](DOCKER_SANDBOX_DEFENSE.md)
+> Data flow ของ wizard + JSON schema → [`docs/WIZARD_DATA_FLOW.md`](WIZARD_DATA_FLOW.md)
+> ขอบเขตโครงงาน + Q&A สำหรับ defend → [`docs/PP-scope-checklist.md`](PP-scope-checklist.md) / [`docs/PP-SCOPE-QA.md`](PP-SCOPE-QA.md)
+> บันทึกการเปลี่ยนแปลง (log ประวัติ ไม่ใช่ current state) → [`docs/PROGRESS.md`](PROGRESS.md)
 
 ---
 
@@ -19,8 +22,14 @@ TheRecon เป็น **desktop GUI (PySide6) + ชั้นความปล�
 ไม่ได้เขียนเครื่องมือใหม่ — หน้าที่คือ **ช่วยประกอบคำสั่งให้ถูก, แสดงผลกระทบ,
 บังคับให้คนกด "ยืนยัน", รันในเทอร์มินัลจริง, แล้วอ่านผลลัพธ์กลับมาแสดง**
 
-- **Windows** → เครื่องมือรันใน **WSL2 (Ubuntu)**; ตัว GUI รันบน Windows Python
-- **Linux** → เครื่องมือรัน native
+- **Windows** → ตัว GUI รันบน Windows Python, ต่อไปยังเครื่องมือผ่าน **WSL2 (Ubuntu)**
+- **Linux** → ตัว GUI ต่อไปยังเครื่องมือผ่าน shell native
+- ไม่ว่าทางไหน **เครื่องมือทั้ง 6 ตัวรันอยู่ใน Docker container ที่แยกจาก
+  host จริง** (`therecon-tools` — `docker/Dockerfile` + `docker/run.sh`)
+  ไม่ใช่รันตรงบน WSL2/Linux host แล้ว — เจตนาเพื่อกัน indirect prompt
+  injection (banner ของ target หลอก AI ให้แนะนำคำสั่ง `sudo` แล้วคนกด
+  "yes" โดยไม่ทันสังเกต) ไม่ให้ทะลุออกไปถึง host จริง รายละเอียดเต็ม +
+  ผลทดสอบจริง → [`docs/DOCKER_SANDBOX_DEFENSE.md`](DOCKER_SANDBOX_DEFENSE.md)
 - ถูกจำกัดไว้ที่ **6 ตัวเท่านั้น** ตลอดทั้งระบบ (whitelist ของ validator,
   ตัวตรวจว่าเครื่องมือติดตั้งไหม, warhead profiles, และ attack map ของ wizard
   ตรงกันหมด) เพิ่มตัวที่ 7 = ต้องแก้ทุกจุด
@@ -58,7 +67,7 @@ TheRecon เป็น **desktop GUI (PySide6) + ชั้นความปล�
 
 ### เส้นทาง B — Wizard Console (โหมดไกด์, มี confirm ของตัวเอง)
 
-ฟอร์มซ้าย (target / mode AUTO·SEMI / wordlist) → กด Start scan → ฟอร์มถูกแปลงเป็น
+ฟอร์มซ้าย (target / wordlist) → กด Start scan → ฟอร์มถูกแปลงเป็น
 flag แล้วเปิดแท็บเทอร์มินัลรัน **`chain_wizard/`** เป็น subprocess:
 
 ```
@@ -67,8 +76,12 @@ scan (nmap/masscan) → วางแผนโจมตีเรียงตา�
 ```
 
 `chain_wizard/` เป็น Python แยกต่างหาก (อยู่ราก repo ไม่ใช่ใต้ `src/`),
-รันเครื่องมือทั้ง 6 ตรง ๆ ผ่าน `subprocess`, **ไม่ผ่าน** `ConfirmationGate` ของ GUI
-แต่ถือ confirm ทีละสเต็ปเป็นของตัวเอง
+รันเครื่องมือทั้ง 6 ผ่าน `subprocess` (เข้า Docker container ข้างบน ไม่ใช่ host
+ตรง ๆ) — แต่ละ step ยังตัดสินใจ "จะยืนยันอะไร/แสดง cmd+impact อะไร" ในโค้ด
+ของตัวเองเหมือนเดิม ต่างจากก่อนหน้านี้ตรงที่ตัว **"yes"/"no" จริงตอนนี้วน
+กลับไปผ่าน `ConfirmationGate(channel="wizard")` เดียวกับ Direct Tool Mode**
+(ผ่าน dialog ของ Qt แทนพิมพ์ในเทอร์มินัล) — ลง audit log เดียวกัน ไม่ใช่
+เส้นทางลับที่แยกออกไปอีกทางแล้ว
 
 ### การรันจริงอยู่ที่เทอร์มินัลไหน
 
@@ -123,7 +136,11 @@ GUI (src/ui/)
 - **หน้า 1 — Input Management** — คิวสแกนสไตล์ Zenmap (Status / Command)
 - **หน้า 2 — Raw Output** — เทอร์มินัลแบบ **อ่านอย่างเดียว** (คีย์ผู้ใช้ถูกทิ้งก่อนถึง PTY) = พื้นผิว audit
 - **หน้า 3 — Results Display** — nmap/masscan → ตาราง host/port; hydra/ncrack → ตาราง credential
-- **หน้า 4 — LLM Mode** — เทอร์มินัล AI 2 ตัว (`llm` CLI + OpenCode), **ไม่มี gate โดยตั้งใจ**
+- **หน้า 4 — LLM Mode** — 2 แท็บ: **"OpenCode"** (เทอร์มินัล AI agent จริง, ไม่มี
+  `ConfirmationGate`/exact-"yes" ฝั่ง Qt โดยตั้งใจ — กันด้วย Docker sandbox +
+  `opencode.json` permission gate ของตัวเองแทน) และ **"LLM Nmap"** (panel ที่มี
+  gate จริง — พิมพ์ target/goal → AI เสนอคำสั่ง → ต้องผ่าน `ConfirmationGate`
+  เดียวกับ Direct Tool Mode ก่อนรัน ไม่ใช่ terminal ดิบ)
 
 ---
 

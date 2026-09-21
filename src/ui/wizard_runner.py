@@ -21,10 +21,13 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QHeaderView, QLabel, QPlainTextEdit, QStackedWidget,
-    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTabBar, QVBoxLayout, QWidget,
 )
 
-from src.config import BG_INPUT, BORDER, PANEL, TERMINAL_FONT_FAMILY, TEXT, TEXT_DIM
+from src.config import (
+    BG_INPUT, BORDER, BORDER_SOFT, CONSOLE_BG, CONSOLE_TEXT, PANEL, PURPLE,
+    TERM_MUTE, TERMINAL_FONT_FAMILY, TEXT, TEXT_DIM,
+)
 from src.core.wizard_driver import WizardDriver
 from src.ui import wizard_dialogs as dialogs
 
@@ -211,13 +214,44 @@ class WizardRunner(QWidget):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         self.progress = WizardProgressView()
         self.raw_output = WizardRawOutputView()
-        tabs = QTabWidget()
-        tabs.addTab(self.progress, "Progress")
-        tabs.addTab(self.raw_output, "Raw Output")
-        root.addWidget(tabs)
+
+        # Square-cornered QTabBar + QStackedWidget, matching the LLM Mode
+        # page's tab bar (`main_content.py`'s LlmModeTabBar) — the previous
+        # plain `QTabWidget` here kept the OS-native rounded tab chrome,
+        # the one place in the app that didn't match the square-block look
+        # used everywhere else (Wizard Console included, per
+        # `terminal_tabs.py`'s own square-tab comment).
+        tabbar = QTabBar()
+        tabbar.setObjectName("WizRunnerTabBar")
+        tabbar.addTab("Progress")
+        tabbar.addTab("Raw Output")
+        tabbar.setDrawBase(False)
+        tabbar.setExpanding(False)
+
+        stack = QStackedWidget()
+        stack.addWidget(self.progress)
+        stack.addWidget(self.raw_output)
+        tabbar.currentChanged.connect(stack.setCurrentIndex)
+
+        root.addWidget(tabbar)
+        root.addWidget(stack, 1)
+        self.setStyleSheet(f"""
+            QTabBar#WizRunnerTabBar {{ background: {PANEL}; }}
+            QTabBar#WizRunnerTabBar::tab {{
+                background: {PANEL}; color: {TERM_MUTE};
+                padding: 10px 20px; margin: 0; border: none;
+                border-right: 1px solid {BORDER_SOFT}; border-radius: 0;
+            }}
+            QTabBar#WizRunnerTabBar::tab:hover {{ color: {CONSOLE_TEXT}; }}
+            QTabBar#WizRunnerTabBar::tab:selected {{
+                background: {CONSOLE_BG}; color: {CONSOLE_TEXT};
+                border-bottom: 3px solid {PURPLE};
+            }}
+        """)
 
         self._driver: WizardDriver | None = None
         self._start_btn = None  # set via bind_start_button
@@ -252,8 +286,7 @@ class WizardRunner(QWidget):
 
         self.progress.clear()
         self.raw_output.clear()
-        self.progress.append(f"Starting wizard — target {target}, "
-                              f"mode {data.get('mode', 'auto').upper()}")
+        self.progress.append(f"Starting wizard — target {target}")
         if self._start_btn:
             self._start_btn.setEnabled(False)
         if self._stop_btn:
@@ -261,7 +294,6 @@ class WizardRunner(QWidget):
 
         driver = WizardDriver(
             target=target,
-            mode=data.get("mode", "auto"),
             user_wordlist=data.get("user_wordlist", ""),
             pass_wordlist=data.get("pass_wordlist", ""),
             parent=self,

@@ -50,20 +50,29 @@ def _estimate_host_count(target: str) -> Optional[int]:
     return 1
 
 
+# Tools that actually send scan probes at a target (vs. hydra/ncrack login
+# attempts, ncat connections, evil-winrm sessions — those get their own
+# specific warning via `extra_impact`, so the generic "sends packets" note
+# would just be noise repeated on every single confirmation box).
+_SCAN_TOOLS = {"nmap", "masscan"}
+
+
 def generate_impact_description(flags: List[str], target: str, tool: str = "nmap") -> str:
-    """Auto-generate a plain-language impact summary for the confirmation gate.
+    """Plain-language, one-thing-per-line summary of what a command will do,
+    for the confirmation gate. Kept short on purpose: only flags that
+    actually change behavior are listed, and only scan tools get the
+    generic "sends real traffic" reminder — everything else is redundant
+    with the Target line already shown in the box.
 
     `tool` picks which flag_impacts.json to read (defaults to nmap for
     backward compatibility with existing callers) — each of the 6
     authorized tools has its own flag vocabulary."""
     flag_impact = _flag_impact_map(tool)
-    notes: List[str] = []
+    bullets: List[str] = []
 
     host_count = _estimate_host_count(target)
     if host_count and host_count > 1:
-        notes.append(f"Will scan approximately {host_count} hosts across {target}")
-    else:
-        notes.append(f"Will scan a single target: {target}")
+        bullets.append(f"This hits about {host_count} computers (a range), not just one")
 
     idx = 0
     seen_flags: List[str] = []
@@ -75,29 +84,39 @@ def generate_impact_description(flags: List[str], target: str, tool: str = "nmap
             if token == "--script" and idx + 1 < len(flags):
                 desc += f" (script: {flags[idx + 1]})"
                 idx += 1
-            notes.append(f"[{token}] {desc}")
+            bullets.append(f"{token} — {desc}")
         idx += 1
 
     if "-A" in seen_flags or "-O" in seen_flags:
-        notes.append("[!] This command is intrusive — higher chance of IDS/IPS detection than usual")
+        bullets.append("Easy for the target's security tools to notice")
 
-    notes.append(
-        "Sends real packets to the target host(s) — may be detected or logged by the target's monitoring"
-    )
-    return "\n              ".join(notes)
+    if tool in _SCAN_TOOLS:
+        bullets.append("Sends real traffic to the target — it may show up in the target's own logs")
+
+    if not bullets:
+        bullets.append("Nothing risky here — a plain run against the target above")
+
+    return "\n".join(bullets)
 
 
 def format_confirmation_box(command: str, target: str, impact: str) -> str:
-    """Render the Human Confirmation Gate preview box."""
+    """Render the Human Confirmation Gate preview box — one short bullet per
+    line under a plain "What this does" heading, so it reads in a few
+    seconds instead of as a wall of bracketed flag text."""
+    bullets = "\n".join(f"   - {line}" for line in impact.splitlines() if line.strip())
     return (
         "─────────────────────────────────────────\n"
         " COMMAND PREVIEW\n"
+        "─────────────────────────────────────────\n"
         f" Command : {command}\n"
         f" Target  : {target}\n"
-        f" Impact  : {impact}\n"
-        " Scope Check : confirmed that the target is within the authorized scope (sandbox/lab)?\n"
+        "\n"
+        " In plain terms, this will:\n"
+        f"{bullets}\n"
+        "\n"
+        " Double-check: is this target inside your own authorized lab?\n"
         "─────────────────────────────────────────\n"
-        ' Type "yes" to confirm and run the command, or "no" to cancel and go back'
+        ' Type "yes" to run it, or "no" to cancel'
     )
 
 
