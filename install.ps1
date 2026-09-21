@@ -11,7 +11,7 @@
 #      docs/List การเเก้ไข.md item 5.
 #
 # Usage (from an elevated PowerShell the first time, for step 1):
-#   irm https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.ps1 | iex
 # or, from an already-cloned checkout:
 #   .\install.ps1
 
@@ -58,7 +58,7 @@ if ($LASTEXITCODE -ne 0) { Fail "Docker install inside WSL failed (see output ab
 Log "docker group membership needs a fresh WSL session -- this script's later 'wsl.exe -e' calls open new ones, so no reboot needed"
 
 # ---- 3. Repo + Python deps (Windows side) -------------------------------
-$RepoUrl = "https://github.com/Daimond99/TheRecon.git"
+$RepoUrl = "https://github.com/Daimond99/PP-Reconnaissance-tools.git"
 $ScriptDir = $PSScriptRoot
 if ($ScriptDir -and (Test-Path (Join-Path $ScriptDir "CLAUDE.md")) -and (Test-Path (Join-Path $ScriptDir "requirements.txt"))) {
     $RepoDir = $ScriptDir

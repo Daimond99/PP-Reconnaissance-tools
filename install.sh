@@ -8,11 +8,11 @@
 # Two ways to run it:
 #   1. Already have a checkout: `cd TheRecon && ./install.sh`
 #   2. One-liner, no checkout yet:
-#      curl -fsSL https://raw.githubusercontent.com/Daimond99/TheRecon/main/install.sh | bash
+#      curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.sh | bash
 #      (clones into $THERECON_DIR, default ~/TheRecon)
 set -euo pipefail
 
-REPO_URL="https://github.com/Daimond99/TheRecon.git"
+REPO_URL="https://github.com/Daimond99/PP-Reconnaissance-tools.git"
 
 log()  { printf '\n[install.sh] %s\n' "$1"; }
 fail() { printf '\n[install.sh] ERROR: %s\n' "$1" >&2; exit 1; }
