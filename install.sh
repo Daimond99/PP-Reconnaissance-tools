@@ -61,6 +61,21 @@ sudo apt-get install -y docker.io python3-pip python3-venv
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$USER"
 
+# QtWebEngine (the Wizard Console's xterm.js terminal) ships as a
+# PySide6-Addons wheel bundling Chromium's own .so, which links against
+# these system libs at runtime -- `pip install` can't provide them, and a
+# fresh Kali/Debian box usually doesn't have them yet. Without this, the
+# app imports PySide6 fine and only fails later, when the terminal widget
+# actually tries to open (preflight catches it too, but installing up
+# front avoids the round-trip). `|| true`: a renamed/missing package on an
+# unusual distro shouldn't abort the whole install -- preflight below still
+# reports the exact gap if one of these didn't land.
+log "installing QtWebEngine runtime libs"
+sudo apt-get install -y \
+    libnss3 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+    libxkbcommon0 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
+    libxshmfence1 || true
+
 cd "$REPO_DIR"
 
 log "building + starting the sandboxed tool container (docker/run.sh)"
