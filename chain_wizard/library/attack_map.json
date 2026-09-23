@@ -51,6 +51,13 @@
       "is_recommended": true
     },
     {
+      "name": "HTTP enumeration scan (nmap NSE)",
+      "tool": "nmap",
+      "command_template": "nmap --script http-enum -p80,443 -oN http_enum.log {target}",
+      "impact": "Low impact — enumerates common web paths/apps (admin panels, backup files, etc).",
+      "is_recommended": true
+    },
+    {
       "name": "HTTP form brute-force (hydra)",
       "tool": "hydra",
       "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_http80.txt 'http-post-form://{target}:80/login.php:user=^USER^&pass=^PASS^:F=incorrect' -V",

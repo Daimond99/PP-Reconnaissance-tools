@@ -18,7 +18,6 @@ def run_chain(
     target: str,
     user_wordlist: str,
     pass_wordlist: str,
-    mode: str,
 ) -> None:
     """
     Full chain attack lifecycle:
@@ -37,19 +36,14 @@ def run_chain(
                         {"port": r.port, "service": r.service or "unknown"})
 
     # ─── Phase 2: Build attack plan ─────────────────────────────
-    plan = build_plan(target, user_wordlist, pass_wordlist, scan_results, mode)
+    plan = build_plan(target, user_wordlist, pass_wordlist, scan_results)
     if not plan.steps:
         warn("No attack steps to execute.")
         return
 
     # ─── Phase 2b: Order by exploitation impact ─────────────────
-    # AUTO: show the ranked menu and let the user pick what to run.
-    # SEMI: the user already chose per-port in build_plan, so don't ask
-    #       again — just order the chosen steps highest-impact first.
-    if mode == "auto":
-        plan.steps = _select_steps(plan.steps)
-    else:
-        plan.steps = sorted(plan.steps, key=lambda t: (-step_priority(t[2]), t[0]))
+    # Show the ranked menu and let the user pick what to run.
+    plan.steps = _select_steps(plan.steps)
     if not plan.steps:
         warn("No steps selected — nothing to run.")
         return

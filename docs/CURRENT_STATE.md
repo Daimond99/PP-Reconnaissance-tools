@@ -5,8 +5,8 @@ for a fresh reader (human or AI) to understand the program without re-deriving
 it from the source. For the *rules* to follow when changing it → `CLAUDE.md`.
 For the *history* of how it got here → `PROGRESS.md`.
 
-**Last verified:** 2026-08-07
-**Branch:** feat/wizard-control-panel
+**Last verified:** 2026-09-22
+**Branch:** main
 
 ---
 
@@ -17,8 +17,15 @@ tools: **nmap, masscan, hydra, ncrack, ncat, evil-winrm**. It does not
 reimplement the tools — it builds commands, shows their impact, forces a human
 confirmation, runs them in a real terminal, and parses the results.
 
-- On **Windows**, the tools run inside **WSL2 (Ubuntu)**; the GUI runs on the
-  Windows Python. On **Linux** the tools run natively.
+- On **Windows**, the GUI runs on the Windows Python, reaching the tools through
+  **WSL2 (Ubuntu)**; on **Linux** the GUI reaches them via the native shell.
+  Either way, the 6 tools themselves run **inside a sandboxed Docker container**
+  (`therecon-tools`, `docker/Dockerfile` + `docker/run.sh`) — not directly on the
+  WSL2/Linux host. See `docs/DOCKER_SANDBOX_DEFENSE.md` for the full design/threat
+  model/test evidence; the short version: `docker exec` into a non-root,
+  `--cap-drop=ALL`, `--read-only`-rootfs container is the actual execution
+  boundary now, so a compromised/tricked command (e.g. via indirect prompt
+  injection from a scanned target's banner) can't reach the real host.
 - The whole thing is **restricted to those 6 tools** end-to-end: the validator
   whitelist, the installed-tool detector, the warhead profiles, and the wizard's
   attack map all agree on the same 6. Adding a 7th means wiring all of them.
@@ -81,8 +88,9 @@ Split layout: **control panel (left, 280px)** + **live progress view
 (right)**. No terminal tab anymore, no typed commands — every menu and
 confirmation the wizard needs pops as a Qt dialog (2026-08-27 rewrite; the
 old PTY-driven text-menu flow is gone, see §13).
-- **`WizardControlPanel`** (`src/ui/wizard_panel.py`) — a form: Target / Mode
-  (AUTO·SEMI) / User + Pass wordlist (with Browse…) / Start scan. It only
+- **`WizardControlPanel`** (`src/ui/wizard_panel.py`) — a form: Target /
+  User + Pass wordlist (with Browse…) / Start scan. Mode is always AUTO
+  (SEMI removed 2026-08-29 as unused — no mode control shown). It only
   *collects* choices and emits `scanRequested(dict)`; it never builds or runs a
   command.
 - **`WizardRunner` + `WizardProgressView`** (`src/ui/wizard_runner.py`) —
@@ -120,18 +128,29 @@ Zenmap-style split pane. Two data shapes:
 - **Nmap/Masscan** → host/port table (from `-oX` XML).
 - **Hydra/Ncrack** → separate credentials table (`kind: "credentials"`).
 
-### Page 4 — LLM Mode (`TerminalTabsWidget(fixed=True)`)
-Two fixed, square-block tabs:
-- **"LLM"** — `llm` CLI + `llm-tools-nmap` plugin (nmap function-calling),
-  **ungated by design** (same trade-off as Raw Output).
-- **"OpenCode"** — a coding agent, PATH-scoped to the 6 tools + read-only utils
-  (soft confinement, not a sandbox), **and gated by an `opencode.json`
-  `permission.bash` config** (`src/ui/terminal_launch.py::_OPENCODE_JSON`,
-  auto-written to `tools/opencode-workspace/`) — `hydra`/`ncrack`/
+### Page 4 — LLM Mode (`main_content.py::_llm_mode_page`)
+A square-block tab switcher, two tabs (the third, "LLM Nmap (raw)" — a plain
+confined `llm` CLI shell — was removed 2026-08-29 as unused):
+- **"OpenCode"** (`TerminalTabsWidget(fixed=True)`) — `docker exec`s straight
+  into the sandboxed `therecon-tools` container (2026-08-29, replacing the
+  original soft host-side PATH-scoping trick — see
+  `docs/DOCKER_SANDBOX_DEFENSE.md`); OpenCode itself is installed *inside* that
+  image. Workspace files (`AGENTS.md`, `opencode.json`) live under
+  `/results/opencode-workspace/` (the container's one read-write bind mount),
+  written once on first launch (`if [ ! -f ... ]` — an existing file is never
+  overwritten, so editing either by hand sticks; also means a code change to
+  `_AGENTS_MD`/`_OPENCODE_JSON` needs the old file deleted to take effect).
+  **and gated by that `opencode.json`'s `permission.bash` config**
+  (`src/ui/terminal_launch.py::_OPENCODE_JSON`) — `hydra`/`ncrack`/
   `evil-winrm`/`masscan`/aggressive-scan flags require an explicit approval
   inside OpenCode's own UI before they run; everything else stays `allow`.
   This is a real, tool-enforced gate (unlike `AGENTS.md`, which is prompt-only
-  advice the model isn't forced to follow).
+  advice the model isn't forced to follow) — on top of the container sandbox
+  itself, which is the hard boundary regardless of what the gate decides.
+- **"LLM Nmap"** (`LlmNmapPanel` + its own `RawOutputTab`) — a gated suggestion
+  panel: suggests an nmap command via `src.core.llm_nmap_suggest`, never runs
+  it itself; a confirmed command routes through the same `ConfirmationGate`
+  as Direct Tool Mode and streams into this tab's own output terminal.
 
 ### Title bar
 - **Sidebar toggle** (left) — hides the sidebar + divider.
@@ -256,7 +275,8 @@ the Wizard Console. No imports from GUI code. Runs all 6 tools directly via
 now route through `src/core/confirmation_gate.py` when launched `--gui` (see
 §6), same audit trail as every other execution path.
 
-**Flow:** target → mode (AUTO/SEMI) → scan (nmap/masscan) → impact-ranked plan →
+**Flow:** target → scan (nmap/masscan) → impact-ranked plan (AUTO only —
+SEMI removed 2026-08-29) →
 per-step confirm → execute → harvest credentials → in-scope post-exploit.
 
 Every interactive point (menus, free-text prompts, multi-select pickers, the
@@ -270,9 +290,9 @@ stdout stays reserved exclusively for the JSON protocol.
 
 | Module | Purpose |
 |--------|---------|
-| `wizard/main.py` | Entry; prompts (or the GUI's `--target/--mode/--*-wordlist --gui` preset); loop control |
+| `wizard/main.py` | Entry; prompts (or the GUI's `--target/--*-wordlist --gui` preset); loop control |
 | `wizard/chain.py` | Orchestration: scan → plan → confirm → run → parse creds → post-exploit |
-| `wizard/pipeline.py` | `build_plan()` (AUTO/SEMI), `step_priority()` (impact ranking) |
+| `wizard/pipeline.py` | `build_plan()` (AUTO only), `step_priority()` (impact ranking) |
 | `library/scanner.py` | nmap quick/full/stealth + masscan |
 | `library/attack_map.py` + `.json` | port → attack (which tool + command template) |
 | `library/post_exploit.py` + `.json` | service → post-exploit action |
@@ -323,14 +343,15 @@ not routed through `resource_loader`.
   quote-aware scanner, exact-`yes`, Windows→WSL path rewrite.
 - **`test_confirmation_gate.py`** — request/reject, scope enforce/bypass, exact
   `"yes"`, **single-use replay protection**, secret masking, cancel logging.
-- **`test_terminal_launch.py`** — launch-script builders (shell/llm/opencode),
-  Windows→WSL path derivation, `_SCOPE_TOOLS`.
+- **`test_terminal_launch.py`** — launch-script builders (shell/opencode,
+  the latter now a `docker exec` into `therecon-tools`), Windows→WSL path
+  derivation, `_SCOPE_TOOLS`.
 - **`test_gui_smoke.py`** — headless (offscreen Qt) real-window build: page
   count/types, sidebar nav, warhead repopulation, dropdown.
 - **`conftest.py`** — puts the repo root on `sys.path`; stubs the audit logger
   so tests never write to `logs/`.
 
-`python -m pytest chain_wizard/tests/` — 11 tests (separate suite, its own
+`python -m pytest chain_wizard/tests/` — 14 tests (separate suite, its own
 `conftest.py` puts `chain_wizard/` on `sys.path` since its modules use
 absolute imports like `from core.display import ...`):
 - **`test_ui_driver.py`** — `IpcUI`'s JSON request/reply shapes for every
@@ -349,13 +370,19 @@ absolute imports like `from core.display import ...`):
   the same `ConfirmationGate` (`channel="wizard"`) as Direct Tool Mode.
 
 **Ungated (intentional trade-offs, documented, not oversights):**
-1. **LLM Mode "LLM" tab** — real shell, no gate. Review the threat model before
-   real targets. The **"OpenCode" tab** now has a real gate for its riskiest
-   commands (`opencode.json` `permission.bash` — see §4), plus soft PATH/dir
-   confinement; everything else in that tab is still ungated.
-2. **Direct Tool Mode uses `skip_scope=True`** — `AUTHORIZED_SCOPE` is not
-   enforced on the main GUI path (targets are assumed to be the user's own lab).
-   The gate is still the enforcement.
+1. **LLM Mode "OpenCode" tab and the plain Shell tab** — no `ConfirmationGate`,
+   no exact-`"yes"` on the Qt side. `OpenCode` has its own real gate for its
+   riskiest commands (`opencode.json` `permission.bash` — see §4). Both tabs'
+   actual backstop is the Docker sandbox (§1) — every command either one runs
+   is contained inside `therecon-tools`, not on the real host, regardless of
+   whether OpenCode's own gate or a human catches it first.
+2. **Direct Tool Mode *and* Wizard Console both use `skip_scope=True`** —
+   `AUTHORIZED_SCOPE` is not enforced on either main GUI path (targets are
+   assumed to be the user's own lab, typed in directly). It *is* enforced on
+   the one path where the target isn't human-typed: the gated "LLM Nmap"
+   AI-suggestion panel (`main_window._on_llm_nmap_execute_requested`,
+   `skip_scope` stays `False` there on purpose). The confirmation dialog is
+   still the enforcement on the other two paths.
 
 **Polish / open work (not safety):**
 - Hardcoded UI strings remain in `config.py` / `main_window.py` (STYLESHEET,
@@ -378,23 +405,23 @@ clean — this only fires on `kill`-style termination.
 
 ## 13. Deleted / never-scaffolded (so nobody re-adds them)
 
-- Old UI: `wizard_terminal.py`, `wizard_console.py`, `tool_selection.py`,
-  `llm_mode.py`, `CommandEditorTab`, `src/wizard/engine.py`.
-- Dead core: `auto_chain.py`, `api_key_manager.py`, the
-  `llm-tools-nmap.py` direct-exec script.
-- 2026-08-27: the Wizard Console's old PTY-terminal path — `terminal_tabs.py`'s
-  `"wizard"` profile, `start_wizard_scan`/`_panel_to_wizard_args`,
-  `TerminalTabsWidget`'s `form_driven` mode + empty-state placeholder, and
-  `terminal_launch.py`'s `_wizard_arg_str` — all removed once the Qt-dialog
-  rewrite (`wizard_runner.py`/`wizard_dialogs.py`/`wizard_driver.py`) meant
-  nothing called them. `MainContentArea.wizard_tab` → `wizard_runner`; the
-  startup-splash readiness signal moved from it to `llm_tab.firstTabReady`
-  (still a real WSL-boot proxy; the wizard PTY's version of that signal was
-  firing instantly regardless of WSL state in `form_driven` mode anyway).
-- `nmap/builder.py` + `validator.py` (never wired).
-- Cleaned 2026-08-07: `llm_keys.has_llm_key` (uncalled), an unused `QComboBox`
-  import, `ACCENT_YELLOW`/`ACCENT_CYAN` constants, and `gobuster`/`dirb` from
-  the validator whitelist (never wired anywhere).
-- **Do not** scaffold `builder.py`/`validator.py`/`parser.py`/`analyzer.py`
-  placeholders "to preserve the layout" — add a module only when something real
-  will call it.
+**The rule, not the full history:** never scaffold `builder.py`/`validator.py`/
+`parser.py`/`analyzer.py` "to preserve the layout" — add a module in
+`src/tools/<tool>/` only once something real will call it (see §7). The same
+goes for UI pages, terminal profiles, and CLI flags: if nothing calls it, delete
+it, don't leave it "just in case." Full removal history lives in `git log` and
+`docs/PROGRESS.md` (append-only, session-by-session) — not duplicated here.
+Most recent/most likely to matter to a fresh reader:
+
+- **`chain_wizard`'s SEMI scan mode** (pick-per-port, as opposed to AUTO)
+  was removed end-to-end 2026-08-29 → 2026-09-22 — the wizard is AUTO-only now,
+  with no `mode` value left anywhere in the GUI↔CLI plumbing (`wizard_panel.py`,
+  `wizard_driver.py`, `wizard/main.py`'s `--mode` flag, `pipeline.py::build_plan`).
+- **The raw "LLM Nmap (raw)" shell tab** (`llm_tab`, a plain confined `llm` CLI
+  shell) was removed 2026-08-29 — the gated `LlmNmapPanel` is the only LLM-Nmap
+  path now. OpenCode moved from host-side PATH-scoping into the Docker sandbox
+  the same day (§1, §4).
+- `nmap/builder.py` + `validator.py`, and the original `wizard_terminal.py`/
+  `tool_selection.py`/`llm_mode.py`/`CommandEditorTab`/`auto_chain.py`/
+  `api_key_manager.py`/`llm-tools-nmap.py` direct-exec script — all dead code
+  from early iterations, never wired to anything, deleted.

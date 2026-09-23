@@ -36,17 +36,19 @@ def _wizard_console_page(panel: WizardControlPanel,
 
 
 def _llm_mode_page(opencode_tab: TerminalTabsWidget, panel: LlmNmapPanel,
-                    output_tab: RawOutputTab, llm_tab: TerminalTabsWidget) -> QWidget:
+                    output_tab: RawOutputTab) -> QWidget:
     """LLM Mode page: a top-level tab switcher (one sub-page visible at a
     time, full width) instead of cramming OpenCode + the gated panel + its
-    output + the raw LLM Nmap shell into one row of tiny columns — that
-    earlier layout is what looked cluttered. Three tabs:
+    output into one row of tiny columns — that earlier layout is what
+    looked cluttered. Two tabs:
       - "OpenCode" — its own terminal, full width.
       - "LLM Nmap" — the gated suggestion panel + its own output terminal
         (where a confirmed command actually runs — stays on this page
         instead of jumping to Raw Output). `panel` only emits
         `executeRequested`; it never runs anything itself.
-      - "LLM Nmap (raw)" — the plain confined `llm` CLI shell, full width.
+
+    A third tab, "LLM Nmap (raw)" (the plain confined `llm` CLI shell), was
+    removed 2026-08-29 as unused — see `docs/CURRENT_STATE.md`.
     """
     page = QWidget()
     root = QVBoxLayout(page)
@@ -57,7 +59,6 @@ def _llm_mode_page(opencode_tab: TerminalTabsWidget, panel: LlmNmapPanel,
     tabbar.setObjectName("LlmModeTabBar")
     tabbar.addTab("OpenCode")
     tabbar.addTab("LLM Nmap")
-    tabbar.addTab("LLM Nmap (raw)")
     tabbar.setDrawBase(False)
     tabbar.setExpanding(False)
 
@@ -72,8 +73,6 @@ def _llm_mode_page(opencode_tab: TerminalTabsWidget, panel: LlmNmapPanel,
     gated_row.addWidget(panel)
     gated_row.addWidget(output_tab, 1)
     stack.addWidget(gated_page)
-
-    stack.addWidget(wrap_in_terminal(llm_tab))
 
     tabbar.currentChanged.connect(stack.setCurrentIndex)
 
@@ -123,23 +122,15 @@ class MainContentArea(QWidget):
         self.input_tab = InputManagementTab()
         self.raw_output_tab = RawOutputTab()
         self.results_tab = ResultsDisplayTab()
-        # LLM page — same tabbed-terminal container class as Wizard Console,
-        # but each profile now gets its own single-tab column instead of
-        # sharing one tab bar (was: one TerminalTabsWidget with both
-        # "llm-nmap"/"opencode" profiles; a real tab-switcher wasn't wanted
-        # here, so each is now its own always-visible terminal):
+        # LLM page — same tabbed-terminal container class as Wizard Console.
         #  - "opencode" (the OpenCode agent CLI, PATH-restricted to
         #    TheRecon's 6 authorized tools — see terminal_tabs._opencode_launch)
-        #  - "llm-nmap" (auto-cd's into tools/llm-tools-nmap, offers to set
-        #    an API key if none is stored yet)
-        # Both ungated by design, same as before (see docs/CURRENT_STATE.md).
+        # Ungated by design, same as before (see docs/CURRENT_STATE.md). The
+        # raw "llm-nmap" shell tab was removed 2026-08-29 as unused.
         self.opencode_tab = TerminalTabsWidget(fixed=True, profiles=[
             ("New OpenCode tab", "opencode", "OpenCode"),
         ])
-        self.llm_tab = TerminalTabsWidget(fixed=True, profiles=[
-            ("New LLM Nmap tab", "llm-nmap", "LLM"),
-        ])
-        # Gated "LLM Nmap" suggestion panel, between the two raw terminals —
+        # Gated "LLM Nmap" suggestion panel, beside its own output terminal —
         # see _llm_mode_page. Suggestion-only; execution routes through
         # main_window's ConfirmationGate handler via executeRequested.
         self.llm_nmap_panel = LlmNmapPanel()
@@ -154,4 +145,4 @@ class MainContentArea(QWidget):
         self.stack.addWidget(self.raw_output_tab)
         self.stack.addWidget(self.results_tab)
         self.stack.addWidget(_llm_mode_page(
-            self.opencode_tab, self.llm_nmap_panel, self.llm_output_tab, self.llm_tab))
+            self.opencode_tab, self.llm_nmap_panel, self.llm_output_tab))

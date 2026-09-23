@@ -1,7 +1,15 @@
 """
 Wizard control panel — the always-visible form on the left of the Wizard
-Console. A beginner fills target / mode / wordlists here and presses Start
-scan instead of answering the chain CLI's raw text prompts one at a time.
+Console. A beginner fills target / wordlists here and presses Start scan
+instead of answering the chain CLI's raw text prompts one at a time. The
+scan mode is always AUTO — the SEMI (pick-per-port) mode was removed
+2026-08-29 as unused; there's nothing left to pick, so no mode control is
+shown.
+
+Save Profile / Load Profile round-trip target + both wordlist paths through
+a JSON file the user picks — a pre-fill convenience only, no command/flags
+baked in; loading one still requires pressing Start scan and answering
+every per-step confirmation same as typing the fields in fresh.
 
 The panel only *collects* choices and emits `scanRequested(dict)`; it never
 builds or runs a command. `main_content.py` wires that signal to
@@ -13,17 +21,18 @@ per-step confirmation once a scan starts, now routed through
 gate, so no safety path is bypassed.
 
 Styling reuses the app's own controls so the panel reads as part of the
-mission bar: fields carry the `MissionInput` object name and the mode picker
-is the same `DropdownButton` (▾) the TOOLS/WARHEAD combos use, both of which
-pick up the global stylesheet — only panel-specific chrome is styled locally.
+mission bar: fields carry the `MissionInput` object name, which picks up the
+global stylesheet — only panel-specific chrome is styled locally.
 """
 
 from __future__ import annotations
 
+import json
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QFileDialog,
+    QFileDialog, QMessageBox,
 )
 
 from src.config import (
@@ -43,11 +52,6 @@ class WizardControlPanel(QWidget):
         self.setObjectName("WizardPanel")
         self.setFixedWidth(280)
 
-        # Lazy import: widgets.py imports this module at load time, so a
-        # top-level `from src.ui.widgets import DropdownButton` would be a
-        # circular import. By construction time widgets is fully loaded.
-        from src.ui.widgets import DropdownButton
-
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(9)
@@ -56,7 +60,12 @@ class WizardControlPanel(QWidget):
         heading.setObjectName("WizHeading")
         root.addWidget(heading)
 
-        sub = QLabel("Fill these in, then press Start — every step shows up as a dialog beside this.")
+        sub = QLabel(
+            "1. Fill in the target below (wordlists are optional).\n"
+            "2. Press Start scan.\n"
+            "3. Pick a scan type, then confirm each step — every one shows up "
+            "as a dialog beside this panel."
+        )
         sub.setObjectName("WizSub")
         sub.setWordWrap(True)
         root.addWidget(sub)
@@ -70,15 +79,6 @@ class WizardControlPanel(QWidget):
         self.target.setPlaceholderText("192.168.1.100")
         self.target.returnPressed.connect(self._on_start)
         root.addWidget(self.target)
-
-        root.addSpacing(2)
-
-        # Mode — same DropdownButton (▾) as the mission-bar combos.
-        root.addWidget(self._field_label("Scan mode"))
-        self.mode = DropdownButton(["AUTO — auto-pick per port",
-                                    "SEMI — pick per port"])
-        self.mode.setObjectName("MissionCombo")
-        root.addWidget(self.mode)
 
         root.addSpacing(2)
 
@@ -97,6 +97,30 @@ class WizardControlPanel(QWidget):
         self.pass_wl.setObjectName("MissionInput")
         self.pass_wl.setPlaceholderText("blank = same as user")
         root.addLayout(self._browse_row(self.pass_wl))
+
+        root.addSpacing(6)
+
+        # Profile import/export — saves target + both wordlist paths as one
+        # JSON file, so a repeat engagement against the same lab doesn't
+        # mean re-typing/re-browsing everything. Deliberately just these
+        # three fields (no command/flags baked in) — actually building and
+        # running anything from a loaded profile still goes through Start
+        # scan -> the normal scan-type menu -> ConfirmationGate, same as
+        # typing it in fresh; a profile file can't skip that.
+        profile_row = QHBoxLayout()
+        profile_row.setContentsMargins(0, 0, 0, 0)
+        profile_row.setSpacing(6)
+        self.save_profile_btn = QPushButton("Save Profile…")
+        self.save_profile_btn.setObjectName("WizBrowse")
+        self.save_profile_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_profile_btn.clicked.connect(self._on_save_profile)
+        profile_row.addWidget(self.save_profile_btn)
+        self.load_profile_btn = QPushButton("Load Profile…")
+        self.load_profile_btn.setObjectName("WizBrowse")
+        self.load_profile_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.load_profile_btn.clicked.connect(self._on_load_profile)
+        profile_row.addWidget(self.load_profile_btn)
+        root.addLayout(profile_row)
 
         root.addStretch(1)
 
@@ -148,8 +172,51 @@ class WizardControlPanel(QWidget):
         if path:
             edit.setText(path)
 
-    def _current_mode(self) -> str:
-        return "auto" if self.mode.currentText().startswith("AUTO") else "semi"
+    def _on_save_profile(self) -> None:
+        """Write target + both wordlist paths to a JSON file the user picks.
+        Wordlists are saved as whatever path is currently in each field —
+        if that's a Windows path, loading the profile back in still goes
+        through the normal `_win_to_wsl_path` conversion at scan-launch
+        time (`wizard/main.py::_parse_args`), same as typing it fresh."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save profile", "", "TheRecon profile (*.json)")
+        if not path:
+            return
+        if not path.lower().endswith(".json"):
+            path += ".json"
+        profile = {
+            "target": self.target.text().strip(),
+            "user_wordlist": self.user_wl.text().strip(),
+            "pass_wordlist": self.pass_wl.text().strip(),
+        }
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(profile, f, indent=2)
+        except OSError as exc:
+            QMessageBox.warning(self, "Save Profile Failed", str(exc))
+
+    def _on_load_profile(self) -> None:
+        """Read a profile JSON back into the three fields — never touches
+        `scanRequested` itself, so loading a profile only pre-fills the
+        form; Start scan still has to be pressed and every step still
+        needs its own confirmation, same as any other scan."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load profile", "", "TheRecon profile (*.json);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                profile = json.load(f)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Load Profile Failed", str(exc))
+            return
+        if not isinstance(profile, dict):
+            QMessageBox.warning(self, "Load Profile Failed",
+                                 "Not a valid TheRecon profile file.")
+            return
+        self.target.setText(str(profile.get("target", "")))
+        self.user_wl.setText(str(profile.get("user_wordlist", "")))
+        self.pass_wl.setText(str(profile.get("pass_wordlist", "")))
 
     def _on_start(self) -> None:
         target = self.target.text().strip()
@@ -161,7 +228,6 @@ class WizardControlPanel(QWidget):
         self.hint.setVisible(False)
         self.scanRequested.emit({
             "target": target,
-            "mode": self._current_mode(),
             "user_wordlist": self.user_wl.text().strip(),
             "pass_wordlist": self.pass_wl.text().strip(),
         })

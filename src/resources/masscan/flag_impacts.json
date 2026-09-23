@@ -1,7 +1,7 @@
 {
-  "-p": "Sets the port range to scan — wider ranges (e.g. 1-65535) take longer and generate much more traffic",
-  "--rate": "Sets packets-per-second — higher is faster but more likely to be detected / disrupt the target network",
-  "--wait": "Delay after all packets are sent before collecting results — higher reduces packet loss but slows the scan",
-  "--banners": "Connects to open ports to grab real banners — more traffic/footprint than a bare scan",
-  "--shard": "Splits the scan into parallel shards — the target sees traffic from multiple sessions at once"
+  "-p": "Which ports to check — a wider range (like 1-65535) takes longer and sends much more traffic",
+  "--rate": "How many checks to send per second — higher is faster, but easier for the target (or its network) to notice or get overwhelmed",
+  "--wait": "How long to keep listening for replies after all checks are sent — waiting longer catches more results, but takes more time",
+  "--banners": "Connects to each open port to see what it says back — sends more traffic than a plain port check",
+  "--shard": "Splits the scan into several parallel pieces — the target sees traffic coming from more than one session at once"
 }

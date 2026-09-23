@@ -1,8 +1,8 @@
 {
-  "-v": "Raises verbosity — shows connection detail",
-  "-l": "Listen mode — opens a port on this machine waiting for inbound connections; risks exposing an entry point from outside",
-  "-e": "Wires the given program's stdin/stdout directly to the socket — commonly used for bind/reverse shells, very high risk, grants real execute access on the machine",
-  "--ssl": "Encrypts the connection with SSL/TLS",
-  "-w": "Sets the connection/read timeout",
-  "-z": "Zero-I/O mode — port-scan only, sends no real data"
+  "-v": "Shows more detail about the connection",
+  "-l": "Listens for incoming connections on this machine — opens a door that something else could connect into",
+  "-e": "Connects a program's input/output straight to the network — used to build shells; very high risk, gives real control of the machine to whoever connects",
+  "--ssl": "Encrypts the connection",
+  "-w": "How long to wait before giving up on the connection",
+  "-z": "Just checks whether the port is open — doesn't send or receive any real data"
 }

@@ -1,11 +1,11 @@
 {
-  "-i": "Sets the target IP/hostname to connect WinRM to",
-  "-u": "Sets the login username",
-  "-p": "Sets the login password — appears as plaintext in the command, watch for it leaking via logs/shell history",
-  "-s": "Sets an attacker-side script folder that can be uploaded/run on the target — opens a real code-execution path on the target",
-  "-e": "Sets an attacker-side executable folder ready to upload and run on the target — high risk, equivalent to delivering a payload onto the machine",
-  "-S": "Uses SSL/TLS for the WinRM connection (usually paired with port 5986)",
-  "-P": "Sets the port to connect to (default 5985, or 5986 for SSL)",
-  "-l": "Enables logging of the session's connections/commands",
-  "--no-colors": "Disables color in the session output"
+  "-i": "The target computer to connect to",
+  "-u": "The username to log in with",
+  "-p": "The password to log in with — this shows up as plain text, so watch out for it leaking into logs or shell history",
+  "-s": "A folder of scripts on your machine that get uploaded and can be run on the target — this is real code execution on the target",
+  "-e": "A folder of programs on your machine, ready to be sent and run on the target — high risk, same as delivering a payload onto the machine",
+  "-S": "Connects using an encrypted (SSL) connection, usually on port 5986",
+  "-P": "Which port to connect to (5985 normally, 5986 for SSL)",
+  "-l": "Saves a log of everything done in the session",
+  "--no-colors": "Turns off colored text in the output"
 }
