@@ -2,17 +2,22 @@
 # TheRecon — one-command installer (Linux native, Debian/Ubuntu/Kali apt-based).
 # Installs Docker Engine, builds + starts the sandboxed tool container
 # (docker/run.sh — the 6 authorized tools run only inside it, never on this
-# host directly, see docs/List การเเก้ไข.md item 5) + Python venv + deps.
+# host directly — see docs/DOCKER_SANDBOX_DEFENSE.md) + Python venv + deps.
 # Idempotent — safe to re-run.
 #
 # Two ways to run it:
-#   1. Already have a checkout: `cd TheRecon && ./install.sh`
+#   1. Already have a checkout: `cd PP-Reconnaissance-tools && ./install.sh`
 #   2. One-liner, no checkout yet:
-#      curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.sh | bash
-#      (clones into $THERECON_DIR, default ~/TheRecon)
+#      curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/for-linux-version/install.sh | bash
+#      (clones $BRANCH into $THERECON_DIR, default ~/PP-Reconnaissance-tools)
 set -euo pipefail
 
 REPO_URL="https://github.com/Daimond99/PP-Reconnaissance-tools.git"
+# Pinned to this branch on purpose: `main` doesn't have the Linux fixes this
+# script and docker/run.sh depend on (QtWebEngine libs, evil-winrm's
+# libreadline-dev, the /results permission fix). Bump this if/when those
+# land on main instead.
+BRANCH="for-linux-version"
 
 log()  { printf '\n[install.sh] %s\n' "$1"; }
 fail() { printf '\n[install.sh] ERROR: %s\n' "$1" >&2; exit 1; }
@@ -33,25 +38,27 @@ if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/CLAUDE.md" ] && [ -f "$SCRIPT_DIR/r
     REPO_DIR="$SCRIPT_DIR"
     log "running from existing checkout: $REPO_DIR"
 else
-    REPO_DIR="${THERECON_DIR:-$HOME/TheRecon}"
+    REPO_DIR="${THERECON_DIR:-$HOME/PP-Reconnaissance-tools}"
     # On WSL, cloning onto the Windows filesystem (/mnt/c/...) can fail
     # with "chmod on .git/config.lock failed: Operation not permitted" --
-    # DrvFs doesn't fully support the permissions git needs. $HOME/TheRecon
-    # (the default) is already a native Linux path, so this only fires if
-    # $THERECON_DIR was explicitly pointed at /mnt/...
+    # DrvFs doesn't fully support the permissions git needs. The default
+    # ($HOME/PP-Reconnaissance-tools) is already a native Linux path, so
+    # this only fires if $THERECON_DIR was explicitly pointed at /mnt/...
     case "$REPO_DIR" in
         /mnt/*)
             if grep -qi microsoft /proc/version 2>/dev/null; then
-                log "WARNING: \$THERECON_DIR ($REPO_DIR) is on the Windows filesystem (/mnt/...) -- 'git clone' there often fails on WSL (DrvFs permissions). Prefer a native Linux path, e.g. \$HOME/TheRecon."
+                log "WARNING: \$THERECON_DIR ($REPO_DIR) is on the Windows filesystem (/mnt/...) -- 'git clone' there often fails on WSL (DrvFs permissions). Prefer a native Linux path, e.g. \$HOME/PP-Reconnaissance-tools."
             fi
             ;;
     esac
     if [ -d "$REPO_DIR/.git" ]; then
-        log "repo already at $REPO_DIR, pulling latest"
+        log "repo already at $REPO_DIR, checking out $BRANCH and pulling latest"
+        git -C "$REPO_DIR" fetch origin "$BRANCH"
+        git -C "$REPO_DIR" checkout "$BRANCH"
         git -C "$REPO_DIR" pull --ff-only
     else
-        log "cloning into $REPO_DIR"
-        git clone "$REPO_URL" "$REPO_DIR"
+        log "cloning $BRANCH into $REPO_DIR"
+        git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
     fi
 fi
 

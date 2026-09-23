@@ -72,11 +72,18 @@ Every item below maps to code that ships in this repo — see the file reference
 
 **Prerequisites**: Python 3.10+; Windows users also need WSL2 + Ubuntu and Docker Engine inside it — not Docker Desktop (both auto-installed by `install.ps1`).
 
+> **Linux branch note:** the fixes that make this run cleanly on native
+> Linux (Kali/Debian/Ubuntu — QtWebEngine runtime libs, `evil-winrm`'s
+> `libreadline-dev` build dep, the `/results` bind-mount permission fix)
+> live on the [`for-linux-version`](https://github.com/Daimond99/PP-Reconnaissance-tools/tree/for-linux-version)
+> branch, not yet on `main`. The commands below install from that branch;
+> swap `for-linux-version` → `main` once it's merged.
+
 ### Quick install (one command)
 
-**Linux:**
+**Linux** (Debian/Ubuntu/Kali, apt-based):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/for-linux-version/install.sh | bash
 ```
 
 **Windows** (run from **elevated** PowerShell the first time — WSL install needs admin + reboot):
@@ -84,47 +91,70 @@ curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/m
 irm https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.ps1 | iex
 ```
 
-Both installers are idempotent: install Docker Engine, build + start the sandboxed tool container (`docker/run.sh`), clone the repo, create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`.
+Both installers are idempotent: install Docker Engine, build + start the sandboxed tool container (`docker/run.sh`), clone the repo (default `~/PP-Reconnaissance-tools`; override with `$THERECON_DIR`), create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`. `install.sh` will prompt for your `sudo` password (Docker install, group membership) — run it in a real terminal, not piped into something non-interactive.
 
-### Manual install
+### Manual install (Linux)
 
 ```bash
-# 1. Windows only: WSL2 + Ubuntu
-wsl --install -d Ubuntu   # reboot if prompted, open Ubuntu once
+# 1. Clone this branch
+git clone --branch for-linux-version https://github.com/Daimond99/PP-Reconnaissance-tools.git
+cd PP-Reconnaissance-tools
 
-# 2. Install Docker Engine (inside WSL Ubuntu on Windows, or native shell on Linux)
-#    -- NOT Docker Desktop, the native package
+# 2. Install Docker Engine -- NOT Docker Desktop, the native apt package
 sudo apt-get update
 sudo apt-get install -y docker.io
 sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"   # log out/in (or open a fresh WSL terminal) to pick this up
+sudo usermod -aG docker "$USER"   # log out/in (or open a fresh terminal) to pick this up
 
-# 3. Clone + Python deps (windows)
+# 3. QtWebEngine runtime libs (Wizard Console's terminal needs these to open)
+sudo apt-get install -y \
+    libnss3 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+    libxkbcommon0 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
+    libxshmfence1
+
+# 4. Build + start the sandboxed tool container
+chmod +x docker/run.sh
+./docker/run.sh
+
+# 5. Python venv + deps
+python3 -m venv .venv
+source .venv/bin/activate      # or call .venv/bin/pip / .venv/bin/python directly
+pip install -r requirements.txt
+
+# 6. Run
+python -m src.main
+```
+
+### Manual install (Windows, from `main`)
+
+```powershell
+# 1. WSL2 + Ubuntu
+wsl --install -d Ubuntu   # reboot if prompted, open Ubuntu once
+
+# 2. Install Docker Engine inside WSL Ubuntu -- NOT Docker Desktop
+sudo apt-get update
+sudo apt-get install -y docker.io
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+
+# 3. Clone + Python deps
 git clone https://github.com/Daimond99/PP-Reconnaissance-tools.git
 cd PP-Reconnaissance-tools
 python -m venv .venv
-# Windows (PowerShell): .venv\Scripts\Activate.ps1
-# Windows (cmd.exe):    .venv\Scripts\activate.bat
-# Linux/WSL/macOS:      source .venv/bin/activate
+.venv\Scripts\Activate.ps1     # or .venv\Scripts\activate.bat / .venv\Scripts\pip
 pip install -r requirements.txt
 
-# Or without activating, call pip/python inside .venv directly:
-# Windows:         .venv\Scripts\pip install -r requirements.txt
-# Linux/WSL/macOS: .venv/bin/pip install -r requirements.txt
-
-# 4. Build + start the sandboxed tool container (inside WSL Ubuntu on
-#    Windows, or the native shell on Linux)
+# 4. Build + start the sandboxed tool container (inside WSL Ubuntu)
 chmod +x docker/run.sh
 ./docker/run.sh
 
 # 5. Run
-python -m src.main
 .\.venv\Scripts\python -m src.main
 ```
 
-Standalone preflight check:
+Standalone preflight check (either OS):
 ```bash
-python -m src.preflight
+python -m src.preflight     # or: .venv/bin/python -m src.preflight
 ```
 
 ---
