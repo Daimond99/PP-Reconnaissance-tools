@@ -20,7 +20,9 @@ def parse_gnmap(filepath: str) -> list[ScanResult]:
     try:
         with open(filepath) as f:
             for line in f:
-                if not line.startswith("Host:") or "Ports:" not in line:
+                # nmap -oG lines start with "Host:"; masscan -oG lines start
+                # with "Timestamp: ...<tab>Host: ..." -- match the field anywhere.
+                if "Host:" not in line or "Ports:" not in line:
                     continue
                 _, ports_part = line.split("Ports:", 1)
                 for match in pattern.finditer(ports_part):

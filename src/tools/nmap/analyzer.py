@@ -99,25 +99,80 @@ def generate_impact_description(flags: List[str], target: str, tool: str = "nmap
     return "\n".join(bullets)
 
 
+# Short meanings for the nmap options the wizard and warheads actually use.
+_FLAG_NOTES = {
+    "-sS": "SYN scan", "-sT": "full TCP connect", "-sU": "UDP scan",
+    "-sV": "detect versions", "-sC": "default scripts", "-sn": "ping only",
+    "-Pn": "skip ping", "-O": "detect OS", "-A": "OS + versions + scripts",
+    "-F": "fast, top 100", "-f": "split packets", "-oG": "grey output file",
+    "-oX": "XML output file", "-oN": "normal output file",
+    "-T0": "slowest timing", "-T1": "slow timing", "-T2": "polite timing",
+    "-T3": "normal timing", "-T4": "fast timing", "-T5": "fastest timing",
+}
+
+
+def _explain_flags(command: str) -> str:
+    """One readable line of what the known options in `command` mean."""
+    parts = command.split()
+    notes = []
+    for i, tok in enumerate(parts):
+        if tok in _FLAG_NOTES:
+            notes.append(f"{tok} {_FLAG_NOTES[tok]}")
+        elif tok == "--top-ports" and i + 1 < len(parts):
+            notes.append(f"--top-ports {parts[i + 1]} = top {parts[i + 1]} ports")
+        elif tok == "-p" and i + 1 < len(parts):
+            notes.append(f"-p {parts[i + 1]} = these ports")
+        elif tok == "--script" and i + 1 < len(parts):
+            notes.append(f"--script {parts[i + 1]} = run scripts")
+    return " · ".join(notes)
+
+
+def _noise_level(command: str) -> str:
+    """Rough 'how easy is this to notice' rating from the options used.
+    Heuristic only: fast timing, many ports, OS/script probes and vuln scripts
+    make a scan louder; slow timing and few ports keep it quiet."""
+    parts = command.split()
+    score = 0
+    if any(t in ("-T4", "-T5") for t in parts):
+        score += 1
+    if any(t in ("-A", "-O", "-sC") for t in parts) or "--script" in parts:
+        score += 1
+    if "-p-" in parts or "-sU" in parts or any(
+            parts[i] == "--top-ports" and i + 1 < len(parts) and parts[i + 1].isdigit()
+            and int(parts[i + 1]) >= 1000 for i in range(len(parts))):
+        score += 1
+    if any(t in ("-T0", "-T1", "-T2", "-F") for t in parts):
+        score -= 1
+    if score <= 0:
+        return "LOW - few packets, unlikely to stand out"
+    if score == 1:
+        return "MEDIUM - visible in target logs"
+    return "HIGH - easy to notice, may trigger alerts"
+
+
 def format_confirmation_box(command: str, target: str, impact: str) -> str:
-    """Render the Human Confirmation Gate preview box — one short bullet per
-    line under a plain "What this does" heading, so it reads in a few
-    seconds instead of as a wall of bracketed flag text."""
-    bullets = "\n".join(f"   - {line}" for line in impact.splitlines() if line.strip())
-    return (
-        "─────────────────────────────────────────\n"
-        " COMMAND PREVIEW\n"
-        "─────────────────────────────────────────\n"
-        f" Command : {command}\n"
-        f" Target  : {target}\n"
-        "\n"
-        " In plain terms, this will:\n"
-        f"{bullets}\n"
-        "\n"
-        " Double-check: is this target inside your own authorized lab?\n"
-        "─────────────────────────────────────────\n"
-        ' Type "yes" to run it, or "no" to cancel'
-    )
+    """Short preview for a human: tool, target, what it does, the command, and
+    what its options mean."""
+    words = [w for w in command.split() if w != "sudo"]
+    tool = words[0] if words else "?"
+    what = " ".join(line.strip() for line in impact.splitlines() if line.strip())
+    flags = _explain_flags(command)
+    lines = [
+        "COMMAND PREVIEW",
+        "────────────────────────────────────────",
+        f" Tool    : {tool}",
+        f" Target  : {target}",
+        f" Does    : {what}",
+        f" Command : {command}",
+    ]
+    if flags:
+        lines.append(f" Flags   : {flags}")
+    lines.append(f" Impact  : {_noise_level(command)}")
+    lines += [
+        "────────────────────────────────────────",
+        " Run = execute   |   Skip / No = cancel",
+    ]
+    return "\n".join(lines)
 
 
 def is_target_in_scope(target: str, scope: str) -> Tuple[bool, str]:

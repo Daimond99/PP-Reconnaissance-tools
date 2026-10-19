@@ -21,6 +21,7 @@ import argparse
 from dataclasses import dataclass
 from core.display import banner, section, info, ok, warn, fail, bold, cyan, green, yellow
 from core.ui_driver import get_ui, set_ui, IpcUI
+from core.executor import resolve_container_wordlist, wordlist_visible
 from wizard.chain import run_chain
 
 try:
@@ -36,6 +37,18 @@ _WORDLIST_DIRS = [
     "/usr/share/wordlists",
     "/usr/share/seclists/Passwords",
 ]
+
+
+def _warn_missing_wordlists(user_wl: str, pass_wl: str) -> None:
+    """Say so up front when a wordlist can't be used, instead of letting every
+    brute-force step fail later. Two checks: the file exists on the host, and
+    the container can read it under its read-only wordlists mount."""
+    for label, wl in (("User", user_wl), ("Pass", pass_wl)):
+        if not os.path.isfile(wl):
+            warn(f"{label} wordlist not found on host: {wl} — brute-force steps will fail")
+        elif not wordlist_visible(resolve_container_wordlist(wl)):
+            warn(f"{label} wordlist not visible in the container: {resolve_container_wordlist(wl)} — "
+                 "add it to docker/run.sh (folder or single-file mount). Brute-force steps will be skipped.")
 
 
 def _win_to_wsl_path(path: str) -> str:
@@ -214,6 +227,7 @@ def _interactive(
         ok(f"Target: {preset.target}")
         ok(f"User wordlist: {preset.user_wl}")
         ok(f"Pass wordlist: {preset.pass_wl}")
+        _warn_missing_wordlists(preset.user_wl, preset.pass_wl)
         print()
         run_chain(preset.target, preset.user_wl, preset.pass_wl)
         return preset
@@ -240,6 +254,7 @@ def _interactive(
 
     user_wl = _resolve_wordlist("User wordlist", default_wl, found)
     pass_wl = _resolve_wordlist("Pass wordlist (leave blank for same)", user_wl, found)
+    _warn_missing_wordlists(user_wl, pass_wl)
 
     # ─── Execute ────────────────────────────────────────────────
     run_chain(target, user_wl, pass_wl)

@@ -82,7 +82,7 @@ Flag ที่ตั้งไว้ใน `docker run` และเหตุผ�
 | `--read-only` (root filesystem) | เขียนไฟล์ระบบไม่ได้เลย ยกเว้นจุดที่เปิดไว้ชัดเจน |
 | `--tmpfs /tmp`, `--tmpfs /run` | เปิดจุดเขียนที่จำเป็นจริง (temp file ของเครื่องมือ, sudo runtime) — หายไปเมื่อ container ตาย |
 | `-v <results>:/results:rw` | จุดเดียวที่แลกเปลี่ยนข้อมูลกับ host — เฉพาะ output ผลสแกน |
-| `-v <wordlists>:/results/wordlists:ro` | wordlist ผู้ใช้เอง mount แบบ read-only |
+| `-v <wordlists>:/results/wordlists:ro` | โฟลเดอร์ wordlist เดียว mount แบบ read-only — ค่าเริ่มต้นคือ `~/Downloads/rockyou.txt-main` (แทนได้ด้วย `THERECON_WORDLISTS`) ไม่ mount ทั้ง `~/Downloads` เพราะมีไฟล์ส่วนตัวอย่าง VPN config |
 | `--memory=1g --cpus=2 --pids-limit=256` | จำกัด resource กัน DoS ตัวเอง (fork bomb, memory exhaustion) จากคำสั่งที่ถูกหลอกให้รัน |
 | `--restart unless-stopped` | container รันค้างไว้ (long-lived), `docker exec` เรียกซ้ำได้เร็ว ไม่ต้อง spawn ใหม่ทุกครั้ง |
 

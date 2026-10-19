@@ -10,14 +10,14 @@
   ],
   "22": [
     {
-      "name": "SSH brute-force (hydra) — recommended",
+      "name": "SSH brute-force (hydra)",
       "tool": "hydra",
       "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_ssh.txt ssh://{target} -V",
       "impact": "SSH server logs every attempt; Fail2Ban / DenyHosts may block your IP.",
       "is_recommended": true
     },
     {
-      "name": "SSH brute-force (ncrack) — alternative",
+      "name": "SSH brute-force (ncrack)",
       "tool": "ncrack",
       "command_template": "ncrack -U {userlist} -P {passlist} -p SSH --log=ncrack_ssh.log {target}",
       "impact": "Same as hydra — faster but equally noisy.",
@@ -124,14 +124,14 @@
       "is_recommended": true
     },
     {
-      "name": "SMB brute-force (hydra) — recommended",
+      "name": "SMB brute-force (hydra)",
       "tool": "hydra",
       "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_smb.txt smb://{target} -V",
       "impact": "CRITICAL: Account lockout policy may lock domain users.",
       "is_recommended": true
     },
     {
-      "name": "SMB brute-force (ncrack) — alternative",
+      "name": "SMB brute-force (ncrack)",
       "tool": "ncrack",
       "command_template": "ncrack -U {userlist} -P {passlist} -p SMB --log=ncrack_smb.log {target}",
       "impact": "Security Event ID 4625 volume may trigger EDR alerts.",
@@ -158,7 +158,7 @@
   ],
   "3389": [
     {
-      "name": "RDP brute-force (hydra) — stable, recommended",
+      "name": "RDP brute-force (hydra) — stable",
       "tool": "hydra",
       "command_template": "hydra -L {userlist} -P {passlist} -t 4 -o hydra_rdp.txt rdp://{target} -V",
       "impact": "CRITICAL: Account lockout policy may lock domain users entirely.",

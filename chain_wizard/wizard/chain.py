@@ -6,7 +6,7 @@ This is the main logic that the CLI (or future GUI) calls.
 import re
 import shlex
 from core.display import section, info, ok, warn, bold, cyan, green
-from core.executor import run_cmd
+from core.executor import resolve_container_wordlist, run_cmd, wordlist_visible
 from core.models import AttackPlan, Step
 from core.ui_driver import get_ui
 from library.scanner import scan_target
@@ -90,7 +90,7 @@ def _select_steps(
         for port, service, step in ranked
     ]
     raw = get_ui().multiselect(
-        "Attack plan — ranked by impact (pick what to run)", items,
+        "Attack plan — ranked by impact (pick ONE step; each step asks before it runs)", items,
     ).strip().lower()
 
     if raw in ("a", ""):
@@ -143,10 +143,20 @@ def _execute_step(
     # runs through subprocess shell=True (core/executor.run_cmd). An
     # unquoted space in the path silently truncates the wordlist arg and
     # was reproduced causing a false "file not found"-shaped hydra failure.
+    # Wordlists are referenced by their path inside the container (the
+    # read-only /results/wordlists mount), not the host path.
+    user_c = resolve_container_wordlist(plan.user_wordlist)
+    pass_c = resolve_container_wordlist(plan.pass_wordlist)
+    if "{userlist}" in step.command_template or "{passlist}" in step.command_template:
+        for path in dict.fromkeys((user_c, pass_c)):
+            if not wordlist_visible(path):
+                warn(f"Wordlist not visible in the container: {path} — "
+                     "put the file in the mounted wordlists folder (docker/run.sh). Skipping step.")
+                return "skipped"
     cmd = step.command_template.format(
         target=plan.target,
-        userlist=shlex.quote(plan.user_wordlist),
-        passlist=shlex.quote(plan.pass_wordlist),
+        userlist=shlex.quote(user_c),
+        passlist=shlex.quote(pass_c),
     )
 
     title = f"Port {port} ({service}) — {step.name} [{step.tool}]"

@@ -20,6 +20,44 @@ from core.display import info, ok, warn
 # process ever touching a real password.
 CONTAINER = os.environ.get("THERECON_CONTAINER", "therecon-tools")
 
+# Where docker/run.sh mounts the wordlists folder (read-only) inside the
+# container. Host paths like /usr/share/wordlists/x.txt don't exist in there,
+# so every wordlist is referenced by filename under this mount point.
+WORDLIST_MOUNT = "/results/wordlists"
+
+
+# Single files mounted outside the folder (docker/run.sh), checked after it.
+EXTRA_WORDLIST_MOUNT = "/tmp/wordlists-extra"
+
+
+def container_wordlist(host_path: str) -> str:
+    """Map a wordlist picked on the host to its primary path inside the container."""
+    return f"{WORDLIST_MOUNT}/{os.path.basename(host_path)}"
+
+
+def resolve_container_wordlist(host_path: str) -> str:
+    """Path inside the container where this wordlist is actually readable: the
+    read-only folder first, then the single-file mounts. Falls back to the
+    primary path, which the caller's visibility check will then reject."""
+    name = os.path.basename(host_path)
+    for mount in (WORDLIST_MOUNT, EXTRA_WORDLIST_MOUNT):
+        candidate = f"{mount}/{name}"
+        if wordlist_visible(candidate):
+            return candidate
+    return container_wordlist(host_path)
+
+
+def wordlist_visible(container_path: str) -> bool:
+    """True when the container can read `container_path` (checked inside it)."""
+    try:
+        proc = subprocess.run(
+            ["docker", "exec", "-i", CONTAINER, "test", "-r", container_path],
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    return proc.returncode == 0
+
 
 def run_cmd(
     cmd: str,

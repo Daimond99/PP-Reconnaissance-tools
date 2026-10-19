@@ -28,12 +28,12 @@ def _confirm_impact(cmd: str, impact: str, title: str = "Port scan") -> bool:
 _SIMPLE_SCAN_PROFILES = {
     "5": (
         "nmap -sV -p 80,443,8080,8443 -oG {gnmap} {target}",
-        "Version-probes only ports 80/443/8080/8443 — light footprint, minimal noise.",
+        "Checks only the web ports (80, 443, 8080, 8443) and what software runs on them. Very little traffic.",
     ),
     "6": (
         "nmap -sV --script vuln -oG {gnmap} {target}",
-        "Runs intrusive NSE vulnerability-detection scripts on top of a version scan — "
-        "sends extra probes some services may log loudly or even crash on; slower than a plain scan.",
+        "Checks the top 1000 ports for known vulnerabilities. Some checks send attack-like requests, "
+        "which the target will log and which can crash weak services. Slower than a plain scan.",
     ),
     # -Pn skips the ping-based host check (many firewalls silently drop
     # ICMP, which would otherwise make nmap think the host is down and
@@ -44,14 +44,13 @@ _SIMPLE_SCAN_PROFILES = {
     # speed so it still finishes in a reasonable time.
     "7": (
         "sudo nmap -sS -sV -Pn -f --source-port 53 -T3 --top-ports 200 -oG {gnmap} {target}",
-        "Skips the ping check and fragments packets to get past basic firewalls, while "
-        "checking the ~200 most common ports at normal speed — still a real, loggable scan, "
-        "just less likely to be dropped outright by simple filtering.",
+        "Checks the 200 most common ports at normal speed. It skips the ping check and splits "
+        "packets, which can get past simple firewalls. The target can still log it.",
     ),
     "8": (
         "sudo nmap -A -T4 --top-ports 100 -oG {gnmap} {target}",
-        "Combines OS detection, version detection, default NSE scripts, and traceroute in one "
-        "scan — the most thorough single-pass option here, and the easiest for a target to notice.",
+        "Checks the top 100 ports and tries to identify the operating system, the software "
+        "versions, and the route to the target. Very thorough, and very easy for the target to notice.",
     ),
     # UDP needs its own scan type (-sU) -- it can't be combined with -sS in
     # one nmap invocation. Capped to the top 100 UDP ports rather than a
@@ -62,11 +61,41 @@ _SIMPLE_SCAN_PROFILES = {
     # menu option instead of needing its own timing sub-prompt like choice 4.
     "10": (
         "sudo nmap -sU -sV --top-ports 100 -T4 -oG {gnmap} {target}",
-        "UDP scan of the 100 most common UDP ports (DNS, DHCP, SNMP, etc.) -- much slower "
-        "than a TCP scan of the same size, and closed vs. filtered ports are often "
-        "indistinguishable (both just get no reply).",
+        "Checks the 100 most common UDP services (DNS, DHCP, SNMP). This is much slower than a TCP "
+        "scan, and a closed port and a filtered port look the same, so the results can be unclear.",
+    ),
+    # ─── Basic everyday scans (11-16) ───
+    "11": (
+        "nmap -sT -T4 --top-ports 1000 -oG {gnmap} {target}",
+        "Completes a full TCP connection to the top 1000 ports. Works without root, but every connection "
+        "is logged by the target's services, so it is easy to see.",
+    ),
+    "12": (
+        "nmap -sC -sV --top-ports 100 -oG {gnmap} {target}",
+        "Checks the top 100 ports, identifies the software, and runs nmap's default safe scripts "
+        "(banners, page titles, basic info). A good all-round first look.",
+    ),
+    "13": (
+        "sudo nmap -O --top-ports 100 -oG {gnmap} {target}",
+        "Checks the top 100 ports and tries to guess the target's operating system from its replies. Needs sudo.",
+    ),
+    "14": (
+        "nmap -sV -p 21,22,23,25,53,80,110,139,143,443,445,3306,3389,5432,5900,8080 -oG {gnmap} {target}",
+        "Checks the 16 most common service ports (FTP, SSH, web, SMB, databases, remote desktop) and "
+        "identifies their software versions. Light traffic.",
+    ),
+    "15": (
+        "nmap -F -oG {gnmap} {target}",
+        "Fastest scan: checks the 100 most common ports without identifying the software. Short and quiet.",
+    ),
+    "16": (
+        "nmap -sV -p 80,443,139,445 --script http-title,smb-os-discovery -oG {gnmap} {target}",
+        "Checks web and file-sharing ports (80, 443, 139, 445) and reads the web page title and "
+        "the Windows/Samba OS name. Light traffic.",
     ),
 }
+
+_SCAN_MENU_MAX = 16
 
 
 def scan_target(target: str) -> list[ScanResult]:
@@ -88,7 +117,7 @@ def scan_target(target: str) -> list[ScanResult]:
             "Select scanner:",
             [
                 "1. nmap quick     (top 1000 ports, -sS -sV -T4)",
-                "2. nmap top100    (100 most common ports, -sS -sV -T4 — fastest useful sweep)",
+                "2. nmap top100  [RECOMMENDED]  (100 most common ports, -sS -sV -T4 — fastest useful sweep)",
                 "3. nmap full      (all 65535 ports, -sS -sV -T4)",
                 "4. nmap stealth   (ninja mode — slow, fragmented, decoys; evades IDS/firewall)",
                 "5. nmap web       (web ports only: 80,443,8080,8443, -sV)",
@@ -97,10 +126,16 @@ def scan_target(target: str) -> list[ScanResult]:
                 "8. nmap aggressive (top 100 ports + OS/version/script/traceroute in one pass — thorough, easy to detect)",
                 "9. masscan        (fast raw-socket scanner — pick a profile next)",
                 "10. nmap UDP       (top 100 UDP ports, -sU -sV — DNS/DHCP/SNMP-style services, slower than TCP)",
+                "11. nmap TCP connect (top 1000 ports, no root needed — full TCP handshake, easy to see in logs)",
+                "12. nmap default scripts (top 100 ports, -sC -sV — banners, titles, basic info)",
+                "13. nmap OS detect  (top 100 ports, sudo -O — guesses the target operating system)",
+                "14. nmap common services (16 common service ports, -sV — FTP/SSH/web/SMB/DB/RDP)",
+                "15. nmap fast      (top 100 ports, -F — quickest, no version detection)",
+                "16. nmap web + SMB (80,443,139,445, -sV + http-title / smb-os-discovery)",
             ],
         )
-        if choice not in ("1", "2", "3", "4", "5", "6", "7", "8", "9", "10"):
-            warn(f"'{choice}' is not a valid choice — enter 1-10.")
+        if choice not in [str(n) for n in range(1, _SCAN_MENU_MAX + 1)]:
+            warn(f"'{choice}' is not a valid choice — enter 1-{_SCAN_MENU_MAX}.")
             continue
 
         if choice in ("1", "2", "3"):
@@ -110,9 +145,9 @@ def scan_target(target: str) -> list[ScanResult]:
                 f"{flags} -oG {gnmap_file} {target}"
             )
             impact = {
-                "1": "SYN + version-probe packets against the top 1000 ports — may be detected/logged by target IDS/firewall.",
-                "2": "SYN + version-probe packets against the 100 most common ports — lighter footprint than quick/full.",
-                "3": "SYN + version-probe packets against all 65535 ports — much slower and noisier, higher detection chance.",
+                "1": "Checks the top 1000 ports and asks each open one what software it runs. The target may log it.",
+                "2": "Checks the 100 most common ports. This is the fastest useful scan and makes less traffic than option 1 or 3.",
+                "3": "Checks all 65535 ports. This takes a long time and makes a lot of traffic, so it is easy for the target to notice.",
             }[choice]
             if not _confirm_impact(cmd, impact):
                 warn("Scan declined — back to scanner menu.")
@@ -151,8 +186,8 @@ def scan_target(target: str) -> list[ScanResult]:
             elif tval in ("4", "5"):
                 warn(f"-T{tval} is fast but LOUD — stealth evasion is largely defeated at this timing.")
             impact = (
-                f"Fragmented, decoy-padded half-open SYN scan at -T{tval} against the top 1000 ports — "
-                "quieter than a plain scan but still a real, loggable probe, not invisible."
+                f"Slow, quiet scan of the top 1000 ports (timing level {tval} of 0-5, lower is slower). "
+                "It splits packets and adds fake sender addresses, but it is not invisible: the target can still log it."
             )
             if not _confirm_impact(cmd, impact):
                 warn("Scan declined — back to scanner menu.")
@@ -211,18 +246,17 @@ def _masscan_scan(target: str, logfile: str, gnmap_file: str) -> str | None:
 
     profiles = {
         "1": ("-p 21,22,23,25,53,80,110,143,443,445,3389,8080 --rate 5000",
-              "Moderate-rate SYN blast against common service ports — noticeable but not extreme."),
+              "Sends a medium-speed burst of probes to 12 common service ports. Noticeable, but not extreme."),
         "2": ("-p 1-65535 --rate 100000",
-              "Extremely high packet rate across all 65535 ports — very loud, near-certain IDS/IPS alert, "
-              "traffic pattern can resemble a DoS."),
+              "Sends a very fast burst of probes to all 65535 ports. Very loud and almost certain to trigger "
+              "an intrusion alert. It can look like a denial-of-service attack."),
         "3": ("-p 1-65535 --rate 25000 --banners",
-              "All 65535 ports plus live connections for service banners — loud, and the banner grabs "
-              "themselves show up in target service logs."),
+              "Probes all 65535 ports and connects to read each service's banner (its name and version). "
+              "Loud, and the banner requests show up in the target's service logs."),
         "4": ("-p 1-1000 --rate 50 --wait 5",
-              "Low, deliberately slow rate — quietest full-range masscan profile here, still a real unencrypted probe."),
+              "Slow probes to ports 1-1000. The quietest option that covers a full port range here, but still real traffic."),
         "5": ("-p 22,80,443 --rate 20 --wait 3",
-              "Only checks SSH/HTTP/HTTPS at a very low rate — the quietest option here, useful when even "
-              "a slow full sweep is too much noise."),
+              "Very slowly checks only SSH, HTTP and HTTPS. The quietest choice here, for when even a slow sweep is too noisy."),
     }
     if choice in profiles:
         flags, impact = profiles[choice]
@@ -255,7 +289,7 @@ def _masscan_scan(target: str, logfile: str, gnmap_file: str) -> str | None:
                  "the target's own network don't get knocked over too.")
             rate = _MAX_MASSCAN_RATE
         flags = f"-p {ports} --rate {rate}"
-        impact = f"Custom masscan sweep — {ports} at {rate} pkts/s. Higher rate = louder, more detectable."
+        impact = f"Checks ports {ports} at {rate} packets per second. A higher rate means more traffic and is easier to detect."
     else:
         warn(f"'{choice}' is not valid — defaulting to Common services.")
         flags, impact = profiles["1"]

@@ -23,10 +23,27 @@ mkdir -p "$RESULTS_DIR"
 # read-write mount shared with the sandboxed container by design.
 chmod 777 "$RESULTS_DIR"
 
-# Optional wordlists directory — drop rockyou.txt etc here yourself; not
-# baked into the image (see Dockerfile comment). Mounted read-only.
-WORDLISTS_DIR="$SCRIPT_DIR/wordlists"
-mkdir -p "$WORDLISTS_DIR"
+# Wordlists folder shared READ-ONLY into the container at /results/wordlists.
+# Only this one folder is exposed -- never $HOME or Downloads as a whole
+# (Downloads can hold VPN configs and other private files). Override with
+# THERECON_WORDLISTS=/path/to/folder; falls back to docker/wordlists/.
+WORDLISTS_DIR="${THERECON_WORDLISTS:-$HOME/Downloads/rockyou.txt-main}"
+if [ ! -d "$WORDLISTS_DIR" ]; then
+    WORDLISTS_DIR="$SCRIPT_DIR/wordlists"
+    mkdir -p "$WORDLISTS_DIR"
+fi
+
+# Single wordlist files outside that folder: each one is mounted on its own,
+# read-only, under /tmp/wordlists-extra (nothing else from its folder is
+# shared). Not under /results/wordlists: that mount is read-only, so Docker
+# can't create the mount point inside it.
+EXTRA_WORDLIST_FILES=("$HOME/Downloads/pwlist.txt")
+EXTRA_MOUNTS=()
+for f in "${EXTRA_WORDLIST_FILES[@]}"; do
+    if [ -f "$f" ]; then
+        EXTRA_MOUNTS+=(-v "$f:/tmp/wordlists-extra/$(basename "$f"):ro")
+    fi
+done
 
 docker network inspect "$NETWORK" >/dev/null 2>&1 \
     || docker network create "$NETWORK" >/dev/null
@@ -72,12 +89,14 @@ docker run -d \
     --tmpfs /tmp:rw,size=256m \
     --tmpfs /run:rw,size=64m \
     --tmpfs /opt/oc-tmp:rw,exec,nosuid,nodev,mode=1777,size=64m \
+    -e TMPDIR=/opt/oc-tmp \
     --memory=1g \
     --cpus=2 \
     --pids-limit=256 \
     --restart unless-stopped \
     -v "$RESULTS_DIR:/results:rw" \
     -v "$WORDLISTS_DIR:/results/wordlists:ro" \
+    ${EXTRA_MOUNTS[@]+"${EXTRA_MOUNTS[@]}"} \
     "$IMAGE" >/dev/null
 
 echo "[+] $CONTAINER running — exec in with:"

@@ -4,6 +4,7 @@ Recon Tool - Main Window Module
 """
 
 import os
+import re
 import shlex
 import sys
 import uuid
@@ -14,9 +15,10 @@ from typing import Optional, Tuple
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFrame, QHBoxLayout, QVBoxLayout, QLabel,
     QPushButton, QMessageBox, QMenu, QFileDialog, QSplitter, QInputDialog, QLineEdit,
+    QDialog, QPlainTextEdit,
 )
 from PySide6.QtCore import Qt, QEvent, QTimer
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QFont, QTextCursor
 
 from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
@@ -26,6 +28,7 @@ from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab,
 from src.ui.terminal_launch import _SUDO_IN_CONTAINER
 from src.core.confirmation_gate import ConfirmationGate
 from src.core.llm_keys import set_llm_key, remove_llm_key
+from src.core.wordlist_store import save_wordlist, share_dir
 from src.tools.nmap.parser import parse_nmap_xml
 from src.tools.hydra.parser import parse_hydra_output
 from src.tools.ncrack.parser import parse_ncrack_output
@@ -459,6 +462,10 @@ class ReconMainWindow(QMainWindow):
             ("Set LLM API Key…", "", self._on_set_llm_key),
             ("Remove LLM API Key…", "", self._on_remove_llm_key),
             (None, None, None),
+            ("Save Wordlist to Shared Folder…", "", self._on_save_wordlist),
+            ("View Wizard Log…", "", self._on_view_wizard_log),
+            ("Clear Wizard Logs…", "", self._on_clear_wizard_logs),
+            (None, None, None),
             ("Quit", "Ctrl+Q", self.close),
         ]
         for label, shortcut, handler in entries:
@@ -471,6 +478,96 @@ class ReconMainWindow(QMainWindow):
             action.triggered.connect(handler)
         btn = self.settings_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _on_view_wizard_log(self):
+        """Settings ▸ View Wizard Log… — read-only view of a chain_wizard log
+        file (the per-run chain_*.log / scan_*.log). Closing a log returns to
+        the file picker so another log can be opened; Cancel in the picker
+        ends it. Large logs show only the last part so the window stays
+        responsive."""
+        log_dir = os.path.abspath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "chain_wizard"))
+        while True:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "View Wizard Log", log_dir, "Wizard logs (*.log);;All files (*)")
+            if not path:
+                return
+            log_dir = os.path.dirname(path)
+            self._show_log_file(path)
+
+    def _show_log_file(self, path: str) -> None:
+        try:
+            size = os.path.getsize(path)
+            with open(path, "rb") as f:
+                if size > self._LOG_VIEW_MAX_BYTES:
+                    f.seek(size - self._LOG_VIEW_MAX_BYTES)
+                    f.readline()  # drop the partial first line
+                text = f.read().decode("utf-8", errors="replace")
+        except OSError as exc:
+            QMessageBox.warning(self, "View Wizard Log", f"Could not read the log:\n{exc}")
+            return
+        note = ""
+        if size > self._LOG_VIEW_MAX_BYTES:
+            note = f"(showing the last {self._LOG_VIEW_MAX_BYTES // 1024} KB of {size // 1024} KB)\n\n"
+        dlg = QDialog(self)
+        dlg.setWindowTitle(os.path.basename(path))
+        dlg.resize(900, 600)
+        root = QVBoxLayout(dlg)
+        close = QPushButton("Close")
+        close.clicked.connect(dlg.accept)
+        root.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        view.setFont(QFont("monospace"))
+        view.setPlainText(note + text)
+        view.moveCursor(QTextCursor.MoveOperation.End)
+        root.addWidget(view, 1)
+        dlg.exec()
+
+    def _on_clear_wizard_logs(self):
+        """Settings ▸ Clear Wizard Logs… — deletes the wizard's own run logs
+        (chain_*.log and scan_*.log) directly inside chain_wizard/. Nothing else
+        is touched; asks once before deleting."""
+        log_dir = os.path.abspath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "chain_wizard"))
+        targets = sorted(
+            os.path.join(log_dir, name) for name in os.listdir(log_dir)
+            if re.fullmatch(r"(chain|scan)_.*\.log", name)
+            and os.path.isfile(os.path.join(log_dir, name)))
+        if not targets:
+            QMessageBox.information(self, "Clear Wizard Logs", "No wizard logs to clear.")
+            return
+        answer = QMessageBox.question(
+            self, "Clear Wizard Logs",
+            f"Delete {len(targets)} wizard log file(s) from chain_wizard/?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        failed = []
+        for path in targets:
+            try:
+                os.remove(path)
+            except OSError:
+                failed.append(os.path.basename(path))
+        if failed:
+            QMessageBox.warning(self, "Clear Wizard Logs",
+                                "Could not delete: " + ", ".join(failed))
+        else:
+            QMessageBox.information(self, "Clear Wizard Logs", f"Deleted {len(targets)} log file(s).")
+
+    def _on_save_wordlist(self):
+        """Settings ▸ Save Wordlist to Shared Folder… — copies a wordlist file
+        into the folder docker/run.sh mounts at /results/wordlists, so Wizard
+        and OpenCode can use it immediately. Copies that one file only."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Save Wordlist", "", "Wordlists (*.txt *.lst);;All files (*)")
+        if not path:
+            return
+        ok, message = save_wordlist(path)
+        if ok:
+            QMessageBox.information(self, "Save Wordlist", message)
+        else:
+            QMessageBox.warning(self, "Save Wordlist", f"{message}\n\nFolder: {share_dir()}")
 
     def _on_set_llm_key(self):
         """Settings ▸ Set LLM API Key… — stores a key via `llm keys set`
