@@ -30,22 +30,39 @@
 
 ---
 
-## Key Features & Security Controls
+## What this app does
 
-Every item below maps to code that ships in this repo — see the file reference in each bullet.
+PP-Reconnaissance-tools is a desktop app that helps you run common network scans and tests. It wraps the tools in a guided wizard, a command preview, and an approval step, so you always see what will run before it runs.
 
-- **Whitelist enforcement (6-tool allow-list)** — `ALLOWED_PROGRAMS = {nmap, masscan, hydra, ncrack, ncat, evil-winrm}` in `src/validation/common.py`. Any other program (including `bash`, `sh`, `curl`, `python`) is rejected before execution. Bare `sudo` prefix is permitted only when the elevated program is still one of the 6.
-- **Quote-aware shell-injection guard** — `_has_unquoted_shell_metachar()` scans char-by-char honoring `'...'` / `"..."` regions; blocks `; | & \` \` $ ( ) < > \` when they appear **outside** a quoted region. Lets Hydra's `http-post-form "…&pass=…"` payloads through; still rejects `foo; rm -rf /`.
-- **Exact-`yes` confirmation contract** — `validate_exact_confirmation()`: only the case-sensitive literal string `"yes"` counts. `y`, `Yes`, `YES`, whitespace, empty Enter all cancel. Enforced by `ConfirmationGate.confirm()` and the wizard-step gate.
-- **Single-use replay protection** — `ConfirmationGate` sets `_pending = False` after every `confirm()` (success or failure), so a stale `"yes"` cannot re-fire the same argv (`src/core/confirmation_gate.py:145`).
-- **Secret masking via `argv_override`** — the preview string / audit-log entry can be a masked version (`****`) of the command while the real argv still executes. Real credentials never touch `self.command`, the preview box, or the audit log (`confirmation_gate.py:82-86`).
-- **Append-only JSONL audit log with size-based rotation** — `src/report/audit_log.py` writes every gated decision (channel, command, target, response, executed, provider, exit_code) to `logs/audit_log.jsonl`. Rotates at 5 MB × 3 backups so a long-lived install can't fill the disk; history is preserved, never overwritten mid-write.
-- **Sandboxed execution (Docker)** — all 6 tools run inside a non-root, `--cap-drop=ALL`, `--read-only`-rootfs container (`docker/Dockerfile` + `docker/run.sh`), never directly on the WSL2/Linux host. Specifically defends against indirect prompt injection: a scanned target's banner tricking an LLM into suggesting a `sudo`-prefixed command that a human then approves still only damages the disposable container. See `docs/DOCKER_SANDBOX_DEFENSE.md` for the full threat model + live test evidence.
-- **Scope enforcement (least-privilege target)** — `is_target_in_scope()` checks the target against `AUTHORIZED_SCOPE` (CIDR, defaults to `192.168.1.0/24`) before validation runs. Off-scope targets are rejected with `[!] Scope violation`. In practice `skip_scope=True` is used for Direct Tool Mode and the Wizard Console (both take a target the human typed in directly — the human typing it is treated as the scope decision); it's actively enforced on the one path where the target is AI-suggested rather than human-typed (the "LLM Nmap" panel).
-- **Windows→WSL path rewrite** — `convert_windows_paths_to_wsl()` transparently rewrites `C:\wordlists\rockyou.txt` → `/mnt/c/wordlists/rockyou.txt` before validation, because commands actually execute inside WSL bash which has no drive-letter concept. Runs before the injection guard sees a bare backslash.
-- **Per-flag impact preview** — `generate_impact_description(flags, target, tool)` reads `src/resources/flag_impacts.json` (all 6 tools) and produces a human-readable "this will…" block shown in the confirmation dialog. Detects bare `sudo` and appends an explicit root-privilege warning.
-- **Non-repudiable channel tagging** — audit entries carry `channel` (`plain` / `ai` / `wizard`) and `provider` (`openai` / `gemini`) so an AI-suggested run is distinguishable from a human-typed one post-hoc.
-- **Startup preflight doctor** — `python -m src.preflight` verifies WSL availability, all 6 tools installed, and both Python runtimes; runs at app launch with a non-blocking warning and the exact fix command.
+**Use it only on systems you have permission to test**, such as your own lab machines.
+
+## Features
+
+- **Wizard** — enter a target, run a scan, pick steps from a ranked plan, and approve each step.
+- **Direct Tool Mode** — choose or type a command, see the preview, then approve it.
+- **Basic scan presets** — ready-made nmap scans (quick scan, common services, web ports, and more).
+- **Results** — open ports, detected services, and any login found.
+- **Wordlists** — use your own password lists. Save a file into the shared folder from Settings.
+- **Logs** — view or clear the wizard's run logs from Settings.
+- **AI helper (optional)** — suggests one nmap command for a goal. It never runs by itself.
+- **OpenCode (optional)** — an AI agent that works inside the tool container.
+
+## How it keeps things safe
+
+- **Tools run in Docker, not on your computer.** The container is locked down: read-only, limited permissions, and it only sees the results folder and the wordlists folder.
+- **Only 6 tools are allowed:** nmap, masscan, hydra, ncrack, ncat and evil-winrm. Anything else is refused.
+- **Shell tricks are blocked.** Characters like `;`, `&&`, `|` and `$( )` in targets or commands are refused.
+- **You approve every command.** Each one shows the tool, the target, what it does, the flags and a rough noise level. It runs only when you click **Run** (or **Yes**).
+- **Logs are kept.** Wizard runs are saved in `chain_wizard/` and you can clear them from Settings.
+
+## Known limits
+
+- **The target scope check is not enforced right now.** The app can run against any target you type, so checking that you are allowed to test it is your responsibility.
+- **Stop does not always stop a running tool.** A brute-force tool can keep running inside the container after you press Stop.
+- **OpenCode does not show the preview step.** It is protected only by the Docker container.
+- **The AI helper needs setup.** It needs the `llm` command and an API key before it can suggest commands.
+
+For developers: validation is in `src/validation/common.py`, the approval gate is in `src/core/confirmation_gate.py`, and the container setup is in `docker/run.sh` and `docker/Dockerfile`.
 
 ---
 
