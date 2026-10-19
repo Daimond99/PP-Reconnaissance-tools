@@ -127,6 +127,15 @@ def _explain_flags(command: str) -> str:
     return " · ".join(notes)
 
 
+def _script_warning(command: str) -> str:
+    """Warning shown when an nmap command runs NSE scripts (--script or -sC)."""
+    parts = command.split()
+    if "--script" in parts or "-sC" in parts:
+        return ("Runs NSE scripts. Some send attack-like requests and can crash "
+                "weak services. Only run them on systems you are allowed to test.")
+    return ""
+
+
 def _noise_level(command: str) -> str:
     """Rough 'how easy is this to notice' rating from the options used.
     Heuristic only: fast timing, many ports, OS/script probes and vuln scripts
@@ -157,6 +166,7 @@ def format_confirmation_box(command: str, target: str, impact: str) -> str:
     tool = words[0] if words else "?"
     what = " ".join(line.strip() for line in impact.splitlines() if line.strip())
     flags = _explain_flags(command)
+    warning = _script_warning(command)
     lines = [
         "COMMAND PREVIEW",
         "────────────────────────────────────────",
@@ -168,6 +178,8 @@ def format_confirmation_box(command: str, target: str, impact: str) -> str:
     if flags:
         lines.append(f" Flags   : {flags}")
     lines.append(f" Impact  : {_noise_level(command)}")
+    if warning:
+        lines.append(f" Warning : {warning}")
     lines += [
         "────────────────────────────────────────",
         " Run = execute   |   Skip / No = cancel",
