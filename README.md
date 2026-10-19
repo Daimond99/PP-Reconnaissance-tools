@@ -79,51 +79,67 @@ Every item below maps to code that ships in this repo — see the file reference
 > branch, not yet on `main`. The commands below install from that branch;
 > swap `for-linux-version` → `main` once it's merged.
 
-### Quick install (one command)
+### Linux (Kali / Debian / Ubuntu)
 
-**Linux** (Debian/Ubuntu/Kali, apt-based):
+**One command** (asks for your `sudo` password; run it in a real terminal):
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/for-linux-version/install.sh | bash
 ```
+It installs Docker, builds the tool container, clones the repo to `~/PP-Reconnaissance-tools`, and sets up a Python venv. Safe to run again.
 
-**Windows** (run from **elevated** PowerShell the first time — WSL install needs admin + reboot):
-```powershell
-irm https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.ps1 | iex
-```
-
-Both installers are idempotent: install Docker Engine, build + start the sandboxed tool container (`docker/run.sh`), clone the repo (default `~/PP-Reconnaissance-tools`; override with `$THERECON_DIR`), create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`. `install.sh` will prompt for your `sudo` password (Docker install, group membership) — run it in a real terminal, not piped into something non-interactive.
-
-### Manual install (Linux)
-
+**Step by step**
 ```bash
-# 1. Clone this branch
+# 1. Get the code
 git clone --branch for-linux-version https://github.com/Daimond99/PP-Reconnaissance-tools.git
 cd PP-Reconnaissance-tools
 
-# 2. Install Docker Engine -- NOT Docker Desktop, the native apt package
+# 2. Install Docker (the apt package, not Docker Desktop)
 sudo apt-get update
 sudo apt-get install -y docker.io
 sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"   # log out/in (or open a fresh terminal) to pick this up
+sudo usermod -aG docker "$USER"    # then open a NEW terminal
 
-# 3. QtWebEngine runtime libs (Wizard Console's terminal needs these to open)
+# 3. Libraries the GUI's terminal needs
 sudo apt-get install -y \
     libnss3 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
     libxkbcommon0 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
     libxshmfence1
 
-# 4. Build + start the sandboxed tool container
+# 4. Build and start the tool container (needs internet on the first build)
 chmod +x docker/run.sh
 ./docker/run.sh
 
-# 5. Python venv + deps
+# 5. Python environment
 python3 -m venv .venv
-source .venv/bin/activate      # or call .venv/bin/pip / .venv/bin/python directly
-pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt
 
-# 6. Run
-python -m src.main
+# 6. Start the app
+.venv/bin/python -m src.main
 ```
+
+**Check that everything is ready** (optional):
+```bash
+.venv/bin/python -m src.preflight
+```
+
+**The tools run inside Docker, not on your computer.** nmap, masscan, hydra, ncrack, ncat and evil-winrm live only in the `therecon-tools` container. The container is read-only, has minimal Linux capabilities, and only sees the results folder and the wordlists folder described below.
+
+#### Wordlists
+
+`docker/run.sh` shares **one folder** with the container, read-only, at `/results/wordlists`. Default folder:
+`~/Downloads/rockyou.txt-main`
+
+- To use another folder: `THERECON_WORDLISTS=/path/to/folder ./docker/run.sh`
+- Files you copy into that folder appear in the container straight away (no restart).
+- Or use **Settings → Save Wordlist to Shared Folder…** in the app to copy a file there.
+- Your home folder and `Downloads` are **not** shared as a whole.
+
+#### Troubleshooting
+
+- **`permission denied` when using docker:** you must open a new terminal (or log out and back in) after `usermod -aG docker`.
+- **The build fails at the OpenCode step (`curl https://opencode.ai/install`):** the first build needs internet access. If it still fails, the image is not rebuilt.
+- **`run.sh` removes the old container before it builds.** If the build fails, the old container is also gone. Check with `docker ps -a`. Once the build works again, run `./docker/run.sh` to create the container again.
+- **OpenCode shows `cannot open shared object file` / OpenTUI error:** run it with the container's temporary folder: `docker exec -it -e TMPDIR=/opt/oc-tmp therecon-tools /home/recon/.opencode/bin/opencode`. The normal `run.sh` sets this for you, so re-create the container with `./docker/run.sh` if it is an older one.
 
 ### Manual install (Windows, from `main`)
 
