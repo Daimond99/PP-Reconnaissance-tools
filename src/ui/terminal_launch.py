@@ -13,6 +13,7 @@ machine's `D:\\TheRecon`, which would break on any other clone location.
 from __future__ import annotations
 
 import os
+import re
 
 # What the plain Shell tab's PATH is restricted to on the WSL host
 # (`~/.recon_docker_bin`, see `_tool_wrapper_snippet`) — the 6 authorized
@@ -218,8 +219,13 @@ def _win_to_wsl_path(win_path: str) -> str:
     mapping `validation.common.convert_windows_paths_to_wsl` uses for
     user-supplied command paths, applied here once to the repo's own
     on-disk location instead of scanning a whole command string."""
-    drive, rest = os.path.splitdrive(os.path.abspath(win_path))
-    return f"/mnt/{drive.rstrip(':').lower()}/{rest.replace(chr(92), '/').lstrip('/')}"
+    # Drive-letter paths are converted as plain text so the result is the same
+    # on Windows and Linux (os.path.abspath would prepend the current directory
+    # on Linux, where a "D:\\..." path is not absolute).
+    m = re.match(r"^([A-Za-z]):[\\/]*(.*)$", win_path)
+    if m:
+        return f"/mnt/{m.group(1).lower()}/{m.group(2).replace(chr(92), '/')}"
+    return win_path
 
 
 def _wsl_root_dir() -> str:
