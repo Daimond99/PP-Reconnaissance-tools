@@ -1,9 +1,9 @@
 {
-  "-l": "Sets a single username to try",
-  "-L": "Sets a wordlist file of usernames — login attempts scale with the number of lines in the file",
-  "-p": "Sets a single password to try",
-  "-P": "Sets a password wordlist file — larger files take longer and raise the risk of account lockout / IDS-fail2ban detection",
-  "-t": "Number of parallel threads — higher speeds things up but raises the risk of account lockout/detection",
-  "-w": "Wait time (seconds) between attempts — higher helps evade lockout/IDS but slows things down",
-  "-M": "Sets a file listing multiple targets — attacks several hosts at once in a single command"
+  "-l": "Tries one specific username",
+  "-L": "Tries every username in this list file — more usernames means more login attempts",
+  "-p": "Tries one specific password",
+  "-P": "Tries every password in this list file — a bigger list takes longer and is more likely to lock the account or get noticed",
+  "-t": "How many login attempts to run at the same time — faster, but more likely to lock the account or get noticed",
+  "-w": "Seconds to wait between attempts — waiting longer helps avoid detection, but is slower",
+  "-M": "Attacks every target listed in this file, one after another, in a single run"
 }

@@ -15,11 +15,35 @@ NETWORK="therecon-net"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RESULTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/chain_wizard/results"
 mkdir -p "$RESULTS_DIR"
+# Host UID (this script's caller) rarely matches the container's `recon`
+# UID, and root inside the container can't fall back on DAC override to
+# write anyway (--cap-drop=ALL below strips CAP_DAC_OVERRIDE on purpose).
+# world-writable is fine here -- /results only ever holds scan output /
+# the OpenCode workspace, nothing sensitive, and it's already the one
+# read-write mount shared with the sandboxed container by design.
+chmod 777 "$RESULTS_DIR"
 
-# Optional wordlists directory — drop rockyou.txt etc here yourself; not
-# baked into the image (see Dockerfile comment). Mounted read-only.
-WORDLISTS_DIR="$SCRIPT_DIR/wordlists"
-mkdir -p "$WORDLISTS_DIR"
+# Wordlists folder shared READ-ONLY into the container at /results/wordlists.
+# Only this one folder is exposed -- never $HOME or Downloads as a whole
+# (Downloads can hold VPN configs and other private files). Override with
+# THERECON_WORDLISTS=/path/to/folder; falls back to docker/wordlists/.
+WORDLISTS_DIR="${THERECON_WORDLISTS:-$HOME/Downloads/rockyou.txt-main}"
+if [ ! -d "$WORDLISTS_DIR" ]; then
+    WORDLISTS_DIR="$SCRIPT_DIR/wordlists"
+    mkdir -p "$WORDLISTS_DIR"
+fi
+
+# Single wordlist files outside that folder: each one is mounted on its own,
+# read-only, under /tmp/wordlists-extra (nothing else from its folder is
+# shared). Not under /results/wordlists: that mount is read-only, so Docker
+# can't create the mount point inside it.
+EXTRA_WORDLIST_FILES=("$HOME/Downloads/pwlist.txt")
+EXTRA_MOUNTS=()
+for f in "${EXTRA_WORDLIST_FILES[@]}"; do
+    if [ -f "$f" ]; then
+        EXTRA_MOUNTS+=(-v "$f:/tmp/wordlists-extra/$(basename "$f"):ro")
+    fi
+done
 
 docker network inspect "$NETWORK" >/dev/null 2>&1 \
     || docker network create "$NETWORK" >/dev/null
@@ -37,6 +61,21 @@ docker build -t "$IMAGE" "$SCRIPT_DIR"
 # setuid-root included, so without adding these back sudo itself fails
 # with "unable to change to root gid" before it even reaches the sudoers
 # check. Still nowhere near full root capabilities.
+#
+# CHOWN: the OpenCode workspace setup pass (terminal_launch.py) runs
+# `chown -R recon:recon` on /results/opencode-{workspace,home} as root, to
+# hand those dirs to the `recon` user OpenCode itself runs as (their UIDs
+# rarely match the host UID that owns the /results bind mount). Root's
+# own uid=0 isn't enough for that once cap-drop=ALL strips CAP_CHOWN too.
+#
+# /opt/oc-tmp: a second, `exec`-enabled tmpfs used ONLY as OpenCode's
+# `$TMPDIR` (src/ui/terminal_launch.py::_opencode_launch) -- its OpenTUI
+# render library extracts and `dlopen()`s a native `.so` into whatever
+# `$TMPDIR` resolves to at startup, which fails outright
+# ("failed to map segment from shared object") on the main `/tmp` above,
+# mounted `noexec` on purpose. Kept separate from `/tmp` instead of just
+# dropping `noexec` there, so nothing else in the container (nmap,
+# masscan, ...) gains the ability to execute a file written to `/tmp`.
 docker run -d \
     --name "$CONTAINER" \
     --network "$NETWORK" \
@@ -45,15 +84,19 @@ docker run -d \
     --cap-add=NET_ADMIN \
     --cap-add=SETUID \
     --cap-add=SETGID \
+    --cap-add=CHOWN \
     --read-only \
     --tmpfs /tmp:rw,size=256m \
     --tmpfs /run:rw,size=64m \
+    --tmpfs /opt/oc-tmp:rw,exec,nosuid,nodev,mode=1777,size=512m \
+    -e TMPDIR=/opt/oc-tmp \
     --memory=1g \
     --cpus=2 \
     --pids-limit=256 \
     --restart unless-stopped \
     -v "$RESULTS_DIR:/results:rw" \
     -v "$WORDLISTS_DIR:/results/wordlists:ro" \
+    ${EXTRA_MOUNTS[@]+"${EXTRA_MOUNTS[@]}"} \
     "$IMAGE" >/dev/null
 
 echo "[+] $CONTAINER running — exec in with:"

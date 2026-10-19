@@ -116,9 +116,9 @@ class ConfirmationGate:
         flags = [tok for tok in argv[tool_idx + 1:] if tok != target]
         impact = generate_impact_description(flags, target, tool)
         if sudo_prefixed:
-            impact = f"{impact}\n              [!] Running as root (sudo) — this command has full system access"
+            impact += "\nRuns as root (sudo) — full system access, not just this one command"
         if extra_impact:
-            impact = f"{impact}\n              {extra_impact}"
+            impact += f"\n{extra_impact}"
         preview = format_confirmation_box(command, target, impact)
 
         self.command = command  # masked display string — this is what gets logged, never the secret

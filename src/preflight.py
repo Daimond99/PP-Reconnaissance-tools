@@ -169,9 +169,21 @@ def _check_windows_stack(rep: Report) -> None:
 
 
 def _check_linux_stack(rep: Report) -> None:
+    _reqs = ".venv/bin/pip install -r requirements.txt"
+    _check_import(rep, "PySide6", "PySide6", _reqs)
+    # Importable != launchable: the PySide6-Addons wheel bundles Chromium's
+    # own .so, which links against system libs (libnss3, libgbm1, ...) that
+    # pip can't install. A fresh Kali/Debian box commonly has PySide6 import
+    # fine while this one fails with an ImportError naming the missing
+    # shared object — catch it here with the exact fix, instead of the app
+    # only discovering it when the Wizard Console tries to open its
+    # QWebEngineView and crashes.
     _check_import(
-        rep, "PySide6", "PySide6",
-        ".venv/bin/pip install -r requirements.txt",
+        rep, "QtWebEngine (terminal)", "PySide6.QtWebEngineWidgets",
+        "Missing system libs for QtWebEngine — try: sudo apt-get install -y "
+        "libnss3 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 "
+        "libxkbcommon0 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 "
+        "libxshmfence1",
     )
     _check_wsl_python(rep, prefix=["bash", "-lc"])
     _check_docker(rep, prefix=["bash", "-lc"])

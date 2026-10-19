@@ -1,13 +1,24 @@
-# PP-Reconnaissance-tools
+<h1 align="center">PP-Reconnaissance-tools</h1>
 
-> **Safety-gated GUI orchestrator for authorized network reconnaissance.**
-> Solves the "one wrong flag away from scanning the wrong subnet" problem by forcing every command through validation → preview → exact-`yes` confirmation → audited execution, all behind a single desktop app.
+<p align="center">
+  <b>A guided, approval-first desktop app for authorized network reconnaissance.</b><br>
+  Wizard and Direct Tool commands are previewed and run only after you approve them.
+</p>
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)
-![PySide6](https://img.shields.io/badge/PySide6-6.6%2B-41CD52?logo=qt)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey)
-![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="PySide6" src="https://img.shields.io/badge/GUI-PySide6-41CD52?logo=qt&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black">
+  <img alt="Sandbox" src="https://img.shields.io/badge/Tools-Docker%20sandbox-2496ED?logo=docker&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg">
+</p>
+
+<p align="center">
+  <a href="#how-to-run--setup">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#how-it-keeps-things-safe">Safety</a> ·
+  <a href="#disclaimer">Disclaimer</a>
+</p>
 
 ---
 
@@ -17,175 +28,115 @@
 |---|---|
 | ![Wizard Mode](img-gui/wizardmode.png) | ![Direct Tool Mode](img-gui/direct-tool-mode.png) |
 
-| Confirmation Gate (exact-`yes` required) | Parsed Results Display |
+| Confirmation Gate (Run / Skip) | Parsed Results Display |
 |---|---|
 | ![Confirm Dialog](img-gui/warring-confirm.png) | ![Results](img-gui/results-display.png) |
 
-| LLM-assisted Mode (ungated by design) | Wizard Step 2 |
+| LLM-assisted Mode (you approve before it runs) | Wizard Step 2 |
 |---|---|
 | ![LLM Mode](img-gui/llm-ai-agent.png) | ![Wizard 2](img-gui/wizardmode2.png) |
 
-> Additional screenshots in [`img-gui/`](img-gui/): `input-management.png`, `setting.png`, `llm-nmap-mode.png`, `llm-agent2.png`.
-> <!-- TODO: record a short GIF demo of the full Wizard chain (scan → plan → brute → post-exploit) and replace this line. -->
+> More screenshots in [`img-gui/`](img-gui/): `input-management.png`, `setting.png`, `llm-nmap-mode.png`, `llm-agent2.png`.
 
 ---
 
-## Key Features & Security Controls
+## What this app does
 
-Every item below maps to code that ships in this repo — see the file reference in each bullet.
+PP-Reconnaissance-tools is a desktop app that helps you run common network scans and tests. It wraps the tools in a guided wizard, a command preview, and an approval step, so you always see what will run before it runs.
 
-- **Whitelist enforcement (6-tool allow-list)** — `ALLOWED_PROGRAMS = {nmap, masscan, hydra, ncrack, ncat, evil-winrm}` in `src/validation/common.py`. Any other program (including `bash`, `sh`, `curl`, `python`) is rejected before execution. Bare `sudo` prefix is permitted only when the elevated program is still one of the 6.
-- **Quote-aware shell-injection guard** — `_has_unquoted_shell_metachar()` scans char-by-char honoring `'...'` / `"..."` regions; blocks `; | & \` \` $ ( ) < > \` when they appear **outside** a quoted region. Lets Hydra's `http-post-form "…&pass=…"` payloads through; still rejects `foo; rm -rf /`.
-- **Exact-`yes` confirmation contract** — `validate_exact_confirmation()`: only the case-sensitive literal string `"yes"` counts. `y`, `Yes`, `YES`, whitespace, empty Enter all cancel. Enforced by `ConfirmationGate.confirm()` and the wizard-step gate.
-- **Single-use replay protection** — `ConfirmationGate` sets `_pending = False` after every `confirm()` (success or failure), so a stale `"yes"` cannot re-fire the same argv (`src/core/confirmation_gate.py:145`).
-- **Secret masking via `argv_override`** — the preview string / audit-log entry can be a masked version (`****`) of the command while the real argv still executes. Real credentials never touch `self.command`, the preview box, or the audit log (`confirmation_gate.py:82-86`).
-- **Append-only JSONL audit log with size-based rotation** — `src/report/audit_log.py` writes every gated decision (channel, command, target, response, executed, provider, exit_code) to `logs/audit_log.jsonl`. Rotates at 5 MB × 3 backups so a long-lived install can't fill the disk; history is preserved, never overwritten mid-write.
-- **Scope enforcement (least-privilege target)** — `is_target_in_scope()` checks the target against `AUTHORIZED_SCOPE` (CIDR, defaults to `192.168.1.0/24`) before validation runs. Off-scope targets are rejected with `[!] Scope violation`. `skip_scope=True` exists only for local-bind operations (Ncat listen mode) that have no remote target.
-- **Windows→WSL path rewrite** — `convert_windows_paths_to_wsl()` transparently rewrites `C:\wordlists\rockyou.txt` → `/mnt/c/wordlists/rockyou.txt` before validation, because commands actually execute inside WSL bash which has no drive-letter concept. Runs before the injection guard sees a bare backslash.
-- **Per-flag impact preview** — `generate_impact_description(flags, target, tool)` reads `src/resources/flag_impacts.json` (all 6 tools) and produces a human-readable "this will…" block shown in the confirmation dialog. Detects bare `sudo` and appends an explicit root-privilege warning.
-- **Non-repudiable channel tagging** — audit entries carry `channel` (`plain` / `ai` / `wizard`) and `provider` (`openai` / `gemini`) so an AI-suggested run is distinguishable from a human-typed one post-hoc.
-- **Startup preflight doctor** — `python -m src.preflight` verifies WSL availability, all 6 tools installed, and both Python runtimes; runs at app launch with a non-blocking warning and the exact fix command.
+**Use it only on systems you have permission to test**, such as your own lab machines.
 
----
+## Features
 
-## Tech Stack
+- **Wizard** — enter a target, run a scan, pick steps from a ranked plan, and approve each step.
+- **Direct Tool Mode** — choose or type a command, see the preview, then approve it.
+- **Basic scan presets** — ready-made nmap scans (quick scan, common services, web ports, and more).
+- **Results** — open ports, detected services, and any login found.
+- **Wordlists** — use your own password lists. Save a file into the shared folder from Settings.
+- **Logs** — view or clear the wizard's run logs from Settings.
+- **AI helper (optional)** — suggests one nmap command for a goal. It never runs by itself.
+- **OpenCode (optional)** — an AI agent that works inside the tool container.
 
-| Layer | Choice | Where |
-|---|---|---|
-| Language | Python 3.10+ | — |
-| GUI framework | PySide6 ≥ 6.6 (Qt6) | `src/ui/` |
-| Terminal (primary) | xterm.js in `QWebEngineView` + real PTY | `src/ui/webterm/` |
-| Terminal (fallback) | pyte VT emulator + ConPTY/pywinpty | `src/ui/pty_terminal.py` |
-| Terminal (last resort) | `QProcess` pipe | `src/ui/terminal.py` |
-| Execution env (Windows) | WSL2 / Ubuntu | via `wsl.exe` |
-| Execution env (Linux) | native shell | — |
-| Wrapped tools | Nmap · Masscan · Hydra · Ncrack · Ncat · Evil-WinRM | 6-tool whitelist |
-| Test framework | pytest | `tests/` |
-| Audit format | JSONL, append-only, size-rotated | `logs/audit_log.jsonl` |
-| Optional LLM | `llm` CLI (OpenAI / Gemini/ Claude), OpenCode agent | LLM Mode page |
+## How it keeps things safe
 
----
+- **Tools run in Docker, not on your computer.** The container is locked down: read-only, limited permissions, and it only sees the results folder and the wordlists folder.
+- **Only 6 tools are allowed:** nmap, masscan, hydra, ncrack, ncat and evil-winrm. Anything else is refused.
+- **Shell tricks are blocked.** Characters like `;`, `&&`, `|` and `$( )` in targets or commands are refused.
+- **You approve every command.** Each one shows the tool, the target, what it does, the flags and a rough noise level. It runs only when you click **Run** (or **Yes**).
+- **Logs are kept.** Wizard runs are saved in `chain_wizard/` and you can clear them from Settings.
+
+## Known limits
+
+- **The target scope check is not enforced right now.** The app can run against any target you type, so checking that you are allowed to test it is your responsibility.
+- **Stop does not always stop a running tool.** A brute-force tool can keep running inside the container after you press Stop.
+- **OpenCode does not show the preview step.** It is protected only by the Docker container.
+- **The AI helper needs setup.** It needs the `llm` command and an API key before it can suggest commands.
 
 ## How to Run / Setup
 
-**Prerequisites**: Python 3.10+; Windows users also need WSL2 + Ubuntu and Docker Engine inside it — not Docker Desktop (both auto-installed by `install.ps1`).
+**Requirements:** Linux (Kali, Debian or Ubuntu), Python 3.10+, and internet access for the first install.
 
-### Quick install (one command)
+### Linux (Kali / Debian / Ubuntu)
 
-**Linux:**
+**One command** (asks for your `sudo` password; run it in a real terminal):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/for-linux-version/install.sh | bash
 ```
+It installs Docker, builds the tool container, clones the repo to `~/PP-Reconnaissance-tools`, and sets up a Python venv. Safe to run again.
 
-**Windows** (run from **elevated** PowerShell the first time — WSL install needs admin + reboot):
-```powershell
-irm https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.ps1 | iex
-```
-
-Both installers are idempotent: install Docker Engine, build + start the sandboxed tool container (`docker/run.sh`), clone the repo, create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`.
-
-### Manual install
-
+**Step by step**
 ```bash
-# 1. Windows only: WSL2 + Ubuntu
-wsl --install -d Ubuntu   # reboot if prompted, open Ubuntu once
+# 1. Get the code
+git clone --branch for-linux-version https://github.com/Daimond99/PP-Reconnaissance-tools.git
+cd PP-Reconnaissance-tools
 
-# 2. Install Docker Engine (inside WSL Ubuntu on Windows, or native shell on Linux)
-#    -- NOT Docker Desktop, the native package
+# 2. Install Docker (the apt package, not Docker Desktop)
 sudo apt-get update
 sudo apt-get install -y docker.io
 sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"   # log out/in (or open a fresh WSL terminal) to pick this up
+sudo usermod -aG docker "$USER"    # then open a NEW terminal
 
-# 3. Clone + Python deps (windows)
-git clone https://github.com/Daimond99/PP-Reconnaissance-tools.git
-cd PP-Reconnaissance-tools
-python -m venv .venv
-# Windows (PowerShell): .venv\Scripts\Activate.ps1
-# Windows (cmd.exe):    .venv\Scripts\activate.bat
-# Linux/WSL/macOS:      source .venv/bin/activate
-pip install -r requirements.txt
+# 3. Libraries the GUI's terminal needs
+sudo apt-get install -y \
+    libnss3 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 \
+    libxkbcommon0 libpango-1.0-0 libcairo2 libasound2 libatspi2.0-0 \
+    libxshmfence1
 
-# Or without activating, call pip/python inside .venv directly:
-# Windows:         .venv\Scripts\pip install -r requirements.txt
-# Linux/WSL/macOS: .venv/bin/pip install -r requirements.txt
-
-# 4. Build + start the sandboxed tool container (inside WSL Ubuntu on
-#    Windows, or the native shell on Linux)
+# 4. Build and start the tool container (needs internet on the first build)
 chmod +x docker/run.sh
 ./docker/run.sh
 
-# 5. Run
-python -m src.main
-.\.venv\Scripts\python -m src.main
+# 5. Python environment
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# 6. Start the app
+.venv/bin/python -m src.main
 ```
 
-Standalone preflight check:
+**Check that everything is ready** (optional):
 ```bash
-python -m src.preflight
+.venv/bin/python -m src.preflight
 ```
 
----
+**The tools run inside Docker, not on your computer.** nmap, masscan, hydra, ncrack, ncat and evil-winrm live only in the `therecon-tools` container. The container is read-only, has minimal Linux capabilities, and only sees the results folder and the wordlists folder described below.
 
-## Test Coverage
+#### Wordlists
 
-```bash
-python -m pytest tests/ -q
-```
+`docker/run.sh` shares **one folder** with the container, read-only, at `/results/wordlists`. Default folder:
+`~/Downloads/rockyou.txt-main`
 
-**53 tests** across 4 files, all covering safety-critical paths:
+- To use another folder: `THERECON_WORDLISTS=/path/to/folder ./docker/run.sh`
+- Files you copy into that folder appear in the container straight away (no restart).
+- Or use **Settings → Save Wordlist to Shared Folder…** in the app to copy a file there.
+- Your home folder and `Downloads` are **not** shared as a whole.
 
-| File | Tests | Covers |
-|---|---:|---|
-| `tests/test_validation.py` | 21 | 6-tool whitelist, quote-aware injection guard, exact-`yes` rule, Windows→WSL path rewrite, `sudo` prefix handling, `shlex` parse errors |
-| `tests/test_confirmation_gate.py` | 13 | Scope enforcement, preview/argv separation, single-use replay protection, secret masking via `argv_override`, audit-log side effects, cancel path |
-| `tests/test_terminal_launch.py` | 12 | Cross-platform launcher script builders (WSL vs native), terminal fallback chain |
-| `tests/test_gui_smoke.py` | 7 | Headless PySide6 widget construction — imports don't break, main window builds |
+#### Troubleshooting
 
-No external target is required — the safety layer is fully unit-testable.
-
----
-
-## Repo Layout
-
-```
-src/
-├── main.py                       # entry point, splash → ReconMainWindow
-├── preflight.py                  # startup doctor: WSL + 6 tools + Python
-├── config.py, theme.py           # constants, AUTHORIZED_SCOPE, palette
-├── core/
-│   ├── confirmation_gate.py      # THE gate — request/confirm/cancel + audit
-│   ├── tool_manager.py           # installed-tool detection
-│   └── llm_keys.py
-├── validation/common.py          # whitelist + injection guard + WSL rewrite
-├── tools/                        # parsers/analyzers per tool
-│   ├── nmap/     (parser, analyzer)
-│   ├── hydra/    (parser)
-│   └── ncrack/   (parser)
-├── report/audit_log.py           # append-only JSONL + rotation
-├── ui/
-│   ├── main_window.py, wizard_panel.py
-│   ├── widgets/  (sidebar, topbar, results, raw_output, input_management)
-│   ├── webterm/  (xterm.js + PTY — primary terminal)
-│   ├── pty_terminal.py, terminal.py, terminal_tabs.py, terminal_launch.py
-└── utils/resource_loader.py      # single JSON-loader chokepoint (cached)
-
-chain_wizard/                     # standalone guided-chain CLI (subprocess)
-tests/                            # 53 tests, safety-critical paths
-docs/                             # architecture + Thai overview + change log
-img-gui/                          # GUI screenshots
-```
-
----
-
-## Docs
-
-- [`CLAUDE.md`](CLAUDE.md) — architecture rules, layer discipline, hard constraints
-- [`docs/CURRENT_STATE.md`](docs/CURRENT_STATE.md) — file-by-file map of what's implemented
-- [`docs/OVERVIEW_TH.md`](docs/OVERVIEW_TH.md) — Thai-language deep-dive
-- [`docs/PROGRESS.md`](docs/PROGRESS.md) — running change log
-
----
+- **`permission denied` when using docker:** you must open a new terminal (or log out and back in) after `usermod -aG docker`.
+- **The build fails at the OpenCode step (`curl https://opencode.ai/install`):** the first build needs internet access. If it still fails, the image is not rebuilt.
+- **`run.sh` removes the old container before it builds.** If the build fails, the old container is also gone. Check with `docker ps -a`. Once the build works again, run `./docker/run.sh` to create the container again.
+- **OpenCode shows `cannot open shared object file` / OpenTUI error:** run it with the container's temporary folder: `docker exec -it -e TMPDIR=/opt/oc-tmp therecon-tools /home/recon/.opencode/bin/opencode`. The normal `run.sh` sets this for you, so re-create the container with `./docker/run.sh` if it is an older one.
 
 ## Disclaimer
 

@@ -1,11 +1,10 @@
 """
-Pipeline — maps scan results to executable attack steps based on the selected mode.
+Pipeline — maps scan results to executable attack steps.
 """
 
 from core.models import ScanResult, Step, AttackPlan
 from library.attack_map import steps_for_port, recommended_steps_for_port
 from core.display import info, warn
-from core.ui_driver import get_ui
 
 # Tools that are follow-up actions requiring a credential first — never queued
 # as standalone plan steps. They are only reached AFTER a brute-force step
@@ -47,13 +46,9 @@ def build_plan(
     user_wordlist: str,
     pass_wordlist: str,
     scan_results: list[ScanResult],
-    mode: str,  # "auto" or "semi"
 ) -> AttackPlan:
-    """
-    Build an AttackPlan from scan results.
-    - auto: auto-selects only is_recommended steps per port.
-    - semi: presents all available steps and lets user choose.
-    """
+    """Build an AttackPlan from scan results, auto-selecting only the
+    `is_recommended` step(s) per open port."""
     plan = AttackPlan(
         target=target,
         user_wordlist=user_wordlist,
@@ -69,31 +64,11 @@ def build_plan(
             warn(f"Port {port} ({service}) — no registered attack steps.")
             continue
 
-        if mode == "auto":
-            selected = _primary_steps(recommended_steps_for_port(port))
-            if not selected:
-                selected = all_steps  # fallback
-            for step in selected:
-                plan.steps.append((port, service, step))
-            info(f"Port {port}: {len(selected)} recommended step(s) queued.")
-
-        elif mode == "semi":
-            items = [
-                {"tool": step.tool, "name": step.name, "is_recommended": step.is_recommended}
-                for step in all_steps
-            ]
-            picks = get_ui().multiselect(
-                f"Port {port} ({service}) — available steps "
-                f"(numbers, e.g. 1,2, or 0 to skip)", items,
-            ).strip()
-            if picks == "0":
-                warn(f"Skipping port {port}.")
-                continue
-            for part in picks.split(","):
-                part = part.strip()
-                if part.isdigit():
-                    idx = int(part) - 1
-                    if 0 <= idx < len(all_steps):
-                        plan.steps.append((port, service, all_steps[idx]))
+        selected = _primary_steps(recommended_steps_for_port(port))
+        if not selected:
+            selected = all_steps  # fallback
+        for step in selected:
+            plan.steps.append((port, service, step))
+        info(f"Port {port}: {len(selected)} recommended step(s) queued.")
 
     return plan

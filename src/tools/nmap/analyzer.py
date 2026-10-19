@@ -50,20 +50,29 @@ def _estimate_host_count(target: str) -> Optional[int]:
     return 1
 
 
+# Tools that actually send scan probes at a target (vs. hydra/ncrack login
+# attempts, ncat connections, evil-winrm sessions — those get their own
+# specific warning via `extra_impact`, so the generic "sends packets" note
+# would just be noise repeated on every single confirmation box).
+_SCAN_TOOLS = {"nmap", "masscan"}
+
+
 def generate_impact_description(flags: List[str], target: str, tool: str = "nmap") -> str:
-    """Auto-generate a plain-language impact summary for the confirmation gate.
+    """Plain-language, one-thing-per-line summary of what a command will do,
+    for the confirmation gate. Kept short on purpose: only flags that
+    actually change behavior are listed, and only scan tools get the
+    generic "sends real traffic" reminder — everything else is redundant
+    with the Target line already shown in the box.
 
     `tool` picks which flag_impacts.json to read (defaults to nmap for
     backward compatibility with existing callers) — each of the 6
     authorized tools has its own flag vocabulary."""
     flag_impact = _flag_impact_map(tool)
-    notes: List[str] = []
+    bullets: List[str] = []
 
     host_count = _estimate_host_count(target)
     if host_count and host_count > 1:
-        notes.append(f"Will scan approximately {host_count} hosts across {target}")
-    else:
-        notes.append(f"Will scan a single target: {target}")
+        bullets.append(f"This hits about {host_count} computers (a range), not just one")
 
     idx = 0
     seen_flags: List[str] = []
@@ -75,30 +84,107 @@ def generate_impact_description(flags: List[str], target: str, tool: str = "nmap
             if token == "--script" and idx + 1 < len(flags):
                 desc += f" (script: {flags[idx + 1]})"
                 idx += 1
-            notes.append(f"[{token}] {desc}")
+            bullets.append(f"{token} — {desc}")
         idx += 1
 
     if "-A" in seen_flags or "-O" in seen_flags:
-        notes.append("[!] This command is intrusive — higher chance of IDS/IPS detection than usual")
+        bullets.append("Easy for the target's security tools to notice")
 
-    notes.append(
-        "Sends real packets to the target host(s) — may be detected or logged by the target's monitoring"
-    )
-    return "\n              ".join(notes)
+    if tool in _SCAN_TOOLS:
+        bullets.append("Sends real traffic to the target — it may show up in the target's own logs")
+
+    if not bullets:
+        bullets.append("Nothing risky here — a plain run against the target above")
+
+    return "\n".join(bullets)
+
+
+# Short meanings for the nmap options the wizard and warheads actually use.
+_FLAG_NOTES = {
+    "-sS": "SYN scan", "-sT": "full TCP connect", "-sU": "UDP scan",
+    "-sV": "detect versions", "-sC": "default scripts", "-sn": "ping only",
+    "-Pn": "skip ping", "-O": "detect OS", "-A": "OS + versions + scripts",
+    "-F": "fast, top 100", "-f": "split packets", "-oG": "grey output file",
+    "-oX": "XML output file", "-oN": "normal output file",
+    "-T0": "slowest timing", "-T1": "slow timing", "-T2": "polite timing",
+    "-T3": "normal timing", "-T4": "fast timing", "-T5": "fastest timing",
+}
+
+
+def _explain_flags(command: str) -> str:
+    """One readable line of what the known options in `command` mean."""
+    parts = command.split()
+    notes = []
+    for i, tok in enumerate(parts):
+        if tok in _FLAG_NOTES:
+            notes.append(f"{tok} {_FLAG_NOTES[tok]}")
+        elif tok == "--top-ports" and i + 1 < len(parts):
+            notes.append(f"--top-ports {parts[i + 1]} = top {parts[i + 1]} ports")
+        elif tok == "-p" and i + 1 < len(parts):
+            notes.append(f"-p {parts[i + 1]} = these ports")
+        elif tok == "--script" and i + 1 < len(parts):
+            notes.append(f"--script {parts[i + 1]} = run scripts")
+    return " · ".join(notes)
+
+
+def _script_warning(command: str) -> str:
+    """Warning shown when an nmap command runs NSE scripts (--script or -sC)."""
+    parts = command.split()
+    if "--script" in parts or "-sC" in parts:
+        return ("Runs NSE scripts. Some send attack-like requests and can crash "
+                "weak services. Only run them on systems you are allowed to test.")
+    return ""
+
+
+def _noise_level(command: str) -> str:
+    """Rough 'how easy is this to notice' rating from the options used.
+    Heuristic only: fast timing, many ports, OS/script probes and vuln scripts
+    make a scan louder; slow timing and few ports keep it quiet."""
+    parts = command.split()
+    score = 0
+    if any(t in ("-T4", "-T5") for t in parts):
+        score += 1
+    if any(t in ("-A", "-O", "-sC") for t in parts) or "--script" in parts:
+        score += 1
+    if "-p-" in parts or "-sU" in parts or any(
+            parts[i] == "--top-ports" and i + 1 < len(parts) and parts[i + 1].isdigit()
+            and int(parts[i + 1]) >= 1000 for i in range(len(parts))):
+        score += 1
+    if any(t in ("-T0", "-T1", "-T2", "-F") for t in parts):
+        score -= 1
+    if score <= 0:
+        return "LOW - few packets, unlikely to stand out"
+    if score == 1:
+        return "MEDIUM - visible in target logs"
+    return "HIGH - easy to notice, may trigger alerts"
 
 
 def format_confirmation_box(command: str, target: str, impact: str) -> str:
-    """Render the Human Confirmation Gate preview box."""
-    return (
-        "─────────────────────────────────────────\n"
-        " COMMAND PREVIEW\n"
-        f" Command : {command}\n"
-        f" Target  : {target}\n"
-        f" Impact  : {impact}\n"
-        " Scope Check : confirmed that the target is within the authorized scope (sandbox/lab)?\n"
-        "─────────────────────────────────────────\n"
-        ' Type "yes" to confirm and run the command, or "no" to cancel and go back'
-    )
+    """Short preview for a human: tool, target, what it does, the command, and
+    what its options mean."""
+    words = [w for w in command.split() if w != "sudo"]
+    tool = words[0] if words else "?"
+    what = " ".join(line.strip() for line in impact.splitlines() if line.strip())
+    flags = _explain_flags(command)
+    warning = _script_warning(command)
+    lines = [
+        "COMMAND PREVIEW",
+        "────────────────────────────────────────",
+        f" Tool    : {tool}",
+        f" Target  : {target}",
+        f" Does    : {what}",
+        f" Command : {command}",
+    ]
+    if flags:
+        lines.append(f" Flags   : {flags}")
+    lines.append(f" Impact  : {_noise_level(command)}")
+    if warning:
+        lines.append(f" Warning : {warning}")
+    lines += [
+        "────────────────────────────────────────",
+        " Run = execute   |   Skip / No = cancel",
+    ]
+    return "\n".join(lines)
 
 
 def is_target_in_scope(target: str, scope: str) -> Tuple[bool, str]:

@@ -40,7 +40,7 @@ def test_run_chain_emits_scan_result_per_open_port():
          patch("wizard.chain.scan_target", return_value=scan_results), \
          patch("wizard.chain.build_plan", return_value=AttackPlan(
              target="10.0.0.1", user_wordlist="", pass_wordlist="", steps=[])):
-        chain.run_chain("10.0.0.1", "", "", "auto")
+        chain.run_chain("10.0.0.1", "", "")
 
     scan_events = [(t, d) for k, t, d in ui.statuses if k == "scan_result"]
     assert scan_events == [
@@ -59,7 +59,7 @@ def test_run_chain_emits_step_done_and_summary():
          patch("wizard.chain.scan_target", return_value=[ScanResult(port=22, service="ssh")]), \
          patch("wizard.chain.build_plan", return_value=plan), \
          patch("wizard.chain.run_cmd", return_value=("no creds here", "")):
-        chain.run_chain("10.0.0.1", "u.txt", "p.txt", "semi")
+        chain.run_chain("10.0.0.1", "u.txt", "p.txt")
 
     assert "step_start" in _kinds(ui)
     start_event = next(d for k, _, d in ui.statuses if k == "step_start")
@@ -88,7 +88,7 @@ def test_run_chain_emits_cred_found_for_each_harvested_credential():
          patch("wizard.chain.run_cmd", return_value=(hydra_output, "")), \
          patch("wizard.chain._save_loot", return_value="loot.txt"), \
          patch("wizard.chain._offer_post_exploit"):
-        chain.run_chain("10.0.0.1", "u.txt", "p.txt", "semi")
+        chain.run_chain("10.0.0.1", "u.txt", "p.txt")
 
     cred_events = [(t, d) for k, t, d in ui.statuses if k == "cred_found"]
     assert cred_events == [

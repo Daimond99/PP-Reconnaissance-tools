@@ -1,7 +1,7 @@
 {
-  "-u": "Sets a single username to try",
-  "-U": "Sets a wordlist file of usernames",
-  "-p": "Sets a single password to try",
-  "-P": "Sets a password wordlist file — larger files take longer and raise the risk of account lockout/detection",
-  "-T": "Timing template (0-5) — higher is faster but raises the risk of lockout/detection accordingly"
+  "-u": "Tries one specific username",
+  "-U": "Tries every username in this list file",
+  "-p": "Tries one specific password",
+  "-P": "Tries every password in this list file — a bigger list takes longer and is more likely to lock the account or get noticed",
+  "-T": "Speed setting (0-5) — higher is faster, but more likely to lock the account or get noticed"
 }

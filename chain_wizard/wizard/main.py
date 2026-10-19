@@ -3,7 +3,7 @@ Entry point for the chain wizard.
 
 Two ways to run it:
   - Standalone (`python3 -m wizard.main`): interactive terminal, prompts for
-    mode/target/wordlists via `CliUI`, loops so the terminal is always "the
+    target/wordlists via `CliUI`, loops so the terminal is always "the
     wizard" until Ctrl-D.
   - `--target ... --gui` (the Qt GUI's Wizard Console): the panel's choices
     come in as flags, `IpcUI` takes over every menu/confirmation as a JSON
@@ -21,6 +21,7 @@ import argparse
 from dataclasses import dataclass
 from core.display import banner, section, info, ok, warn, fail, bold, cyan, green, yellow
 from core.ui_driver import get_ui, set_ui, IpcUI
+from core.executor import resolve_container_wordlist, wordlist_visible
 from wizard.chain import run_chain
 
 try:
@@ -36,6 +37,18 @@ _WORDLIST_DIRS = [
     "/usr/share/wordlists",
     "/usr/share/seclists/Passwords",
 ]
+
+
+def _warn_missing_wordlists(user_wl: str, pass_wl: str) -> None:
+    """Say so up front when a wordlist can't be used, instead of letting every
+    brute-force step fail later. Two checks: the file exists on the host, and
+    the container can read it under its read-only wordlists mount."""
+    for label, wl in (("User", user_wl), ("Pass", pass_wl)):
+        if not os.path.isfile(wl):
+            warn(f"{label} wordlist not found on host: {wl} — brute-force steps will fail")
+        elif not wordlist_visible(resolve_container_wordlist(wl)):
+            warn(f"{label} wordlist not visible in the container: {resolve_container_wordlist(wl)} — "
+                 "add it to docker/run.sh (folder or single-file mount). Brute-force steps will be skipped.")
 
 
 def _win_to_wsl_path(path: str) -> str:
@@ -111,7 +124,6 @@ def _resolve_wordlist(prompt: str, default: str, choices: list[str]) -> str:
 class _Preset:
     """Choices supplied up front (by the GUI dialog) instead of prompted."""
     target: str
-    mode: str  # "auto" | "semi"
     user_wl: str
     pass_wl: str
 
@@ -122,7 +134,6 @@ def _parse_args(argv: list[str] | None = None) -> tuple[_Preset | None, bool]:
     `--gui` was passed)."""
     p = argparse.ArgumentParser(prog="wizard", add_help=True)
     p.add_argument("--target", help="IP / domain / CIDR to scan")
-    p.add_argument("--mode", choices=("auto", "semi"), default="auto")
     p.add_argument("--user-wordlist", dest="user_wl", default="")
     p.add_argument("--pass-wordlist", dest="pass_wl", default="")
     p.add_argument("--gui", action="store_true",
@@ -136,7 +147,7 @@ def _parse_args(argv: list[str] | None = None) -> tuple[_Preset | None, bool]:
     default_wl = "/usr/share/wordlists/rockyou.txt"
     user_wl = _win_to_wsl_path(a.user_wl) or default_wl
     pass_wl = _win_to_wsl_path(a.pass_wl) or user_wl
-    return _Preset(target=a.target, mode=a.mode, user_wl=user_wl, pass_wl=pass_wl), a.gui
+    return _Preset(target=a.target, user_wl=user_wl, pass_wl=pass_wl), a.gui
 
 
 def main() -> None:
@@ -163,7 +174,7 @@ def main() -> None:
 
     # Only the first pass honors the GUI-supplied preset; every run after
     # (the pane loops so it's always "the wizard") is fully interactive --
-    # but `last` carries the most recently used target/mode/wordlists
+    # but `last` carries the most recently used target/wordlists
     # forward as the *defaults* for those prompts (Enter reuses them), so
     # a GUI-launched target doesn't get thrown away and re-typed from
     # scratch on every loop.
@@ -179,7 +190,7 @@ def main() -> None:
         return
 
     # Run the wizard in a loop so the pane is always "the wizard":
-    #   Ctrl-C  → cancel the current step, restart at the mode menu.
+    #   Ctrl-C  → cancel the current step, restart at the target prompt.
     #   finish  → offer a fresh run (re-print the banner).
     #   Ctrl-D  → exit for real (the launcher drops to a shell as an escape).
     while True:
@@ -206,32 +217,20 @@ def _interactive(
     user aborted before a target was chosen."""
     banner(
         title="PENTEST CHAIN WIZARD",
-        subtitle="auto / semi · nmap masscan hydra ncrack ncat evil-winrm",
+        subtitle="nmap masscan hydra ncrack ncat evil-winrm",
     )
 
     print(f"  {yellow('You are authorized — no further permission required.')}\n")
 
     # ─── Preset path (GUI dialog) — skip prompts, summarize, run ─
     if preset is not None:
-        ok(f"Mode: {preset.mode.upper()}")
         ok(f"Target: {preset.target}")
         ok(f"User wordlist: {preset.user_wl}")
         ok(f"Pass wordlist: {preset.pass_wl}")
+        _warn_missing_wordlists(preset.user_wl, preset.pass_wl)
         print()
-        run_chain(preset.target, preset.user_wl, preset.pass_wl, preset.mode)
+        run_chain(preset.target, preset.user_wl, preset.pass_wl)
         return preset
-
-    # ─── Mode selection (defaults to the last-used mode) ─────────
-    default_mode = last.mode if last else "auto"
-    default_mode_num = "2" if default_mode == "semi" else "1"
-    mode_choice = get_ui().menu(
-        "Select mode:",
-        ["1. AUTO — auto-pick best tool per port, confirm each",
-         "2. SEMI — show all options, pick per port"],
-        default=default_mode_num,
-    )
-    mode = "auto" if mode_choice == "1" else "semi"
-    ok(f"Mode: {mode.upper()}")
 
     # ─── Target (defaults to the last-used target — blank reuses it) ─
     default_target = last.target if last else ""
@@ -255,10 +254,11 @@ def _interactive(
 
     user_wl = _resolve_wordlist("User wordlist", default_wl, found)
     pass_wl = _resolve_wordlist("Pass wordlist (leave blank for same)", user_wl, found)
+    _warn_missing_wordlists(user_wl, pass_wl)
 
     # ─── Execute ────────────────────────────────────────────────
-    run_chain(target, user_wl, pass_wl, mode)
-    return _Preset(target=target, mode=mode, user_wl=user_wl, pass_wl=pass_wl)
+    run_chain(target, user_wl, pass_wl)
+    return _Preset(target=target, user_wl=user_wl, pass_wl=pass_wl)
 
 
 if __name__ == "__main__":

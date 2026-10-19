@@ -1,4 +1,9 @@
 {
+  "Basic - Quick top 100 ports (recommended)": "sudo nmap -sS -sV -T4 --top-ports 100 192.168.1.0/24",
+  "Basic - Fast, no version check": "nmap -F 192.168.1.0/24",
+  "Basic - Common service ports + versions": "nmap -sV -p 21,22,23,25,53,80,110,139,143,443,445,3306,3389,5432,5900,8080 192.168.1.0/24",
+  "Basic - Default safe scripts (top 100)": "nmap -sC -sV --top-ports 100 192.168.1.0/24",
+  "Basic - Web and SMB ports": "nmap -sV -p 80,443,139,445 192.168.1.0/24",
   "Nmap - Ghost SYN Sweep": "sudo nmap -sS -T2 -f --data-length 16 --randomize-hosts -Pn 192.168.1.0/24",
   "Nmap - Evasive Ping Sweep": "sudo nmap -sn -PE -PP -PY -PA80,443 -T2 -f --ttl 64 --data-length 16 --randomize-hosts --source-port 53 192.168.1.0/24",
   "Nmap - Aggressive Top100": "sudo nmap -A -T4 --top-ports 100 192.168.1.0/24",
@@ -8,5 +13,6 @@
   "Nmap - Service + Script Scan": "nmap -sV -sC --top-ports 100 192.168.1.0/24",
   "Nmap - Top100 Fast Scan": "nmap --top-ports 100 -T4 192.168.1.0/24",
   "Nmap - HTTP/HTTPS Version Scan": "nmap -sV -p 80,443 192.168.1.0/24",
-  "Nmap - Full Port Sweep (No Ping)": "nmap -p- -T4 -Pn 192.168.1.0/24"
+  "Nmap - Full Port Sweep (No Ping)": "nmap -p- -T4 -Pn 192.168.1.0/24",
+  "Nmap - HTTP Enum Scan": "nmap --script http-enum -p80,443 192.168.1.0/24"
 }

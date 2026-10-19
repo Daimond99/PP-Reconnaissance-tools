@@ -6,24 +6,37 @@ This is the main logic that the CLI (or future GUI) calls.
 import re
 import shlex
 from core.display import section, info, ok, warn, bold, cyan, green
-from core.executor import run_cmd
+from core.executor import resolve_container_wordlist, run_cmd, wordlist_visible
 from core.models import AttackPlan, Step
 from core.ui_driver import get_ui
 from library.scanner import scan_target
 from library.post_exploit import post_action_for
 from wizard.pipeline import build_plan, step_priority
 
+# Target forms the wizard accepts: IPv4 / IPv6, hostnames, CIDR, and ranges
+# like 10.0.0.1-20. Command templates put {target} unquoted into a shell
+# string (core/executor.py runs bash -c), so anything else -- spaces,
+# ; | & $ ` ( ) quotes -- is refused before any command is built.
+_TARGET_RE = re.compile(r"[A-Za-z0-9._:/\-]+")
+
+
+def valid_target(target: str) -> bool:
+    return bool(_TARGET_RE.fullmatch(target)) and len(target) <= 253
+
 
 def run_chain(
     target: str,
     user_wordlist: str,
     pass_wordlist: str,
-    mode: str,
 ) -> None:
     """
     Full chain attack lifecycle:
     Scan → Build plan → Execute each step with impact confirmation → Summary.
     """
+    if not valid_target(target):
+        warn(f"Refusing target {target!r}: use an IP, hostname, CIDR or range (no spaces or shell characters).")
+        raise SystemExit(2)  # non-zero, so the GUI shows a failed run
+
     # ─── Phase 1: Scan ──────────────────────────────────────────
     scan_results = scan_target(target)
     if not scan_results:
@@ -37,19 +50,14 @@ def run_chain(
                         {"port": r.port, "service": r.service or "unknown"})
 
     # ─── Phase 2: Build attack plan ─────────────────────────────
-    plan = build_plan(target, user_wordlist, pass_wordlist, scan_results, mode)
+    plan = build_plan(target, user_wordlist, pass_wordlist, scan_results)
     if not plan.steps:
         warn("No attack steps to execute.")
         return
 
     # ─── Phase 2b: Order by exploitation impact ─────────────────
-    # AUTO: show the ranked menu and let the user pick what to run.
-    # SEMI: the user already chose per-port in build_plan, so don't ask
-    #       again — just order the chosen steps highest-impact first.
-    if mode == "auto":
-        plan.steps = _select_steps(plan.steps)
-    else:
-        plan.steps = sorted(plan.steps, key=lambda t: (-step_priority(t[2]), t[0]))
+    # Show the ranked menu and let the user pick what to run.
+    plan.steps = _select_steps(plan.steps)
     if not plan.steps:
         warn("No steps selected — nothing to run.")
         return
@@ -96,7 +104,7 @@ def _select_steps(
         for port, service, step in ranked
     ]
     raw = get_ui().multiselect(
-        "Attack plan — ranked by impact (pick what to run)", items,
+        "Attack plan — ranked by impact (pick ONE step; each step asks before it runs)", items,
     ).strip().lower()
 
     if raw in ("a", ""):
@@ -149,10 +157,20 @@ def _execute_step(
     # runs through subprocess shell=True (core/executor.run_cmd). An
     # unquoted space in the path silently truncates the wordlist arg and
     # was reproduced causing a false "file not found"-shaped hydra failure.
+    # Wordlists are referenced by their path inside the container (the
+    # read-only /results/wordlists mount), not the host path.
+    user_c = resolve_container_wordlist(plan.user_wordlist)
+    pass_c = resolve_container_wordlist(plan.pass_wordlist)
+    if "{userlist}" in step.command_template or "{passlist}" in step.command_template:
+        for path in dict.fromkeys((user_c, pass_c)):
+            if not wordlist_visible(path):
+                warn(f"Wordlist not visible in the container: {path} — "
+                     "put the file in the mounted wordlists folder (docker/run.sh). Skipping step.")
+                return "skipped"
     cmd = step.command_template.format(
         target=plan.target,
-        userlist=shlex.quote(plan.user_wordlist),
-        passlist=shlex.quote(plan.pass_wordlist),
+        userlist=shlex.quote(user_c),
+        passlist=shlex.quote(pass_c),
     )
 
     title = f"Port {port} ({service}) — {step.name} [{step.tool}]"

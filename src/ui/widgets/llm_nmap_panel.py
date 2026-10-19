@@ -1,9 +1,8 @@
 """
-LLM Nmap panel — the control panel on the LLM Mode page, between the raw
-"OpenCode" and "LLM Nmap" shell terminals (`main_content.py`'s
-`self.opencode_tab`/`self.llm_tab`), which stay untouched: those are plain,
-ungated PTY shells by design (see docs/CURRENT_STATE.md). This panel is the
-gated path — it only
+LLM Nmap panel — the control panel on the LLM Mode page's "LLM Nmap" tab,
+beside the "OpenCode" terminal tab (`main_content.py`'s `self.opencode_tab`),
+which stays untouched: a plain, ungated PTY shell by design (see
+docs/CURRENT_STATE.md). This panel is the gated path — it only
 *suggests* a command via `src.core.llm_nmap_suggest.suggest_nmap_command()`,
 never runs anything itself. `executeRequested` is the sole way this widget
 reaches outside itself; the container wires it to a handler that runs the
@@ -34,13 +33,14 @@ class _SuggestWorker(QThread):
 
     done = Signal(bool, str)
 
-    def __init__(self, goal: str, target: str, parent=None):
+    def __init__(self, goal: str, target: str, model: str = "", parent=None):
         super().__init__(parent)
         self._goal = goal
         self._target = target
+        self._model = model or None
 
     def run(self) -> None:
-        ok, text = suggest_nmap_command(self._goal, self._target)
+        ok, text = suggest_nmap_command(self._goal, self._target, self._model)
         self.done.emit(ok, text)
 
 
@@ -90,6 +90,19 @@ class LlmNmapPanel(QWidget):
         self.goal.setObjectName("MissionInput")
         self.goal.setPlaceholderText("e.g. find open ports and service versions")
         root.addWidget(self.goal)
+
+        root.addSpacing(2)
+
+        # Model — blank uses the `llm` CLI's own configured default. Free
+        # text, not a dropdown: the actual choices depend on which `llm`
+        # provider plugins/keys the user has installed (see the Settings
+        # menu's "Set LLM API Key…"), which this panel has no way to
+        # enumerate up front.
+        root.addWidget(self._field_label("Model (optional)"))
+        self.model = QLineEdit()
+        self.model.setObjectName("MissionInput")
+        self.model.setPlaceholderText("blank = llm CLI default, e.g. gpt-4o / gemini-1.5-pro")
+        root.addWidget(self.model)
 
         root.addSpacing(6)
 
@@ -155,7 +168,7 @@ class LlmNmapPanel(QWidget):
         self.suggest_btn.setEnabled(False)
         self.suggest_btn.setText("Asking...")
 
-        self._worker = _SuggestWorker(goal, target, self)
+        self._worker = _SuggestWorker(goal, target, self.model.text().strip(), self)
         self._worker.done.connect(self._on_suggest_done)
         self._worker.start()
 

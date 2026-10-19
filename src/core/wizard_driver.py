@@ -31,7 +31,7 @@ from src.ui.terminal_launch import _repo_local_dir, _wsl_dir
 class WizardDriver(QObject):
     """One instance per wizard run. Usage:
 
-        driver = WizardDriver(target=..., mode=..., user_wl=..., pass_wl=...)
+        driver = WizardDriver(target=..., user_wl=..., pass_wl=...)
         driver.menuRequested.connect(...)
         driver.textRequested.connect(...)
         driver.multiselectRequested.connect(...)
@@ -54,11 +54,10 @@ class WizardDriver(QObject):
     finished = Signal(int)  # exit code
     errorOccurred = Signal(str)
 
-    def __init__(self, target: str, mode: str, user_wordlist: str,
+    def __init__(self, target: str, user_wordlist: str,
                  pass_wordlist: str, parent: QObject | None = None):
         super().__init__(parent)
         self._target = target
-        self._mode = mode
         self._user_wl = user_wordlist
         self._pass_wl = pass_wordlist
         self._gate = ConfirmationGate(channel="wizard")
@@ -73,7 +72,7 @@ class WizardDriver(QObject):
     # -- lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        args = ["--target", self._target, "--mode", self._mode, "--gui"]
+        args = ["--target", self._target, "--gui"]
         if self._user_wl:
             args += ["--user-wordlist", self._user_wl]
         if self._pass_wl:
