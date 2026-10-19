@@ -88,7 +88,7 @@ docker run -d \
     --read-only \
     --tmpfs /tmp:rw,size=256m \
     --tmpfs /run:rw,size=64m \
-    --tmpfs /opt/oc-tmp:rw,exec,nosuid,nodev,mode=1777,size=64m \
+    --tmpfs /opt/oc-tmp:rw,exec,nosuid,nodev,mode=1777,size=512m \
     -e TMPDIR=/opt/oc-tmp \
     --memory=1g \
     --cpus=2 \
