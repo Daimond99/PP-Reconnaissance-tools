@@ -13,6 +13,16 @@ from library.scanner import scan_target
 from library.post_exploit import post_action_for
 from wizard.pipeline import build_plan, step_priority
 
+# Target forms the wizard accepts: IPv4 / IPv6, hostnames, CIDR, and ranges
+# like 10.0.0.1-20. Command templates put {target} unquoted into a shell
+# string (core/executor.py runs bash -c), so anything else -- spaces,
+# ; | & $ ` ( ) quotes -- is refused before any command is built.
+_TARGET_RE = re.compile(r"[A-Za-z0-9._:/\-]+")
+
+
+def valid_target(target: str) -> bool:
+    return bool(_TARGET_RE.fullmatch(target)) and len(target) <= 253
+
 
 def run_chain(
     target: str,
@@ -23,6 +33,10 @@ def run_chain(
     Full chain attack lifecycle:
     Scan → Build plan → Execute each step with impact confirmation → Summary.
     """
+    if not valid_target(target):
+        warn(f"Refusing target {target!r}: use an IP, hostname, CIDR or range (no spaces or shell characters).")
+        raise SystemExit(2)  # non-zero, so the GUI shows a failed run
+
     # ─── Phase 1: Scan ──────────────────────────────────────────
     scan_results = scan_target(target)
     if not scan_results:
