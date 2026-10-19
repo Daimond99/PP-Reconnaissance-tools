@@ -1,5 +1,23 @@
 # PP-Reconnaissance-tools
 
+## Screenshots
+
+| Wizard Console (guided chain) | Direct Tool Mode (manual + validated) |
+|---|---|
+| ![Wizard Mode](img-gui/wizardmode.png) | ![Direct Tool Mode](img-gui/direct-tool-mode.png) |
+
+| Confirmation Gate (Run / Skip) | Parsed Results Display |
+|---|---|
+| ![Confirm Dialog](img-gui/warring-confirm.png) | ![Results](img-gui/results-display.png) |
+
+| LLM-assisted Mode (you approve before it runs) | Wizard Step 2 |
+|---|---|
+| ![LLM Mode](img-gui/llm-ai-agent.png) | ![Wizard 2](img-gui/wizardmode2.png) |
+
+> More screenshots in [`img-gui/`](img-gui/): `input-management.png`, `setting.png`, `llm-nmap-mode.png`, `llm-agent2.png`.
+
+---
+
 ## What this app does
 
 PP-Reconnaissance-tools is a desktop app that helps you run common network scans and tests. It wraps the tools in a guided wizard, a command preview, and an approval step, so you always see what will run before it runs.
