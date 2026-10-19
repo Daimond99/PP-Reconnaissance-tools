@@ -1,4 +1,26 @@
-# PP-Reconnaissance-tools
+<h1 align="center">PP-Reconnaissance-tools</h1>
+
+<p align="center">
+  <b>A guided, approval-first desktop app for authorized network reconnaissance.</b><br>
+  Wizard and Direct Tool commands are previewed and run only after you approve them.
+</p>
+
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="PySide6" src="https://img.shields.io/badge/GUI-PySide6-41CD52?logo=qt&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Linux-FCC624?logo=linux&logoColor=black">
+  <img alt="Sandbox" src="https://img.shields.io/badge/Tools-Docker%20sandbox-2496ED?logo=docker&logoColor=white">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green.svg">
+</p>
+
+<p align="center">
+  <a href="#how-to-run--setup">Install</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#how-it-keeps-things-safe">Safety</a> ·
+  <a href="#disclaimer">Disclaimer</a>
+</p>
+
+---
 
 ## Screenshots
 
