@@ -41,6 +41,8 @@ def run_cmd(
         )
     except subprocess.TimeoutExpired:
         warn(f"command timed out after {timeout}s — killed")
+        if logfile:
+            _append_log(logfile, cmd, f"(killed after {timeout}s)", "timeout")
         return "", 1
     except FileNotFoundError:
         warn("docker not found — is Docker Engine installed in this WSL distro?")
@@ -49,7 +51,7 @@ def run_cmd(
     output = proc.stdout + proc.stderr
 
     if logfile:
-        _append_log(logfile, cmd, output)
+        _append_log(logfile, cmd, output, str(proc.returncode))
 
     if proc.returncode != 0:
         warn(f"exit code {proc.returncode}")
@@ -59,9 +61,9 @@ def run_cmd(
     return output, proc.returncode
 
 
-def _append_log(logfile: str, cmd: str, output: str) -> None:
-    """Write a timestamped entry to the log file."""
+def _append_log(logfile: str, cmd: str, output: str, exit_marker: str) -> None:
+    os.makedirs(os.path.dirname(logfile) or ".", exist_ok=True)
     with open(logfile, "a", encoding="utf-8") as f:
-        f.write(f"# {datetime.now().isoformat()}\n")
+        f.write(f"# {datetime.now().isoformat()} exit={exit_marker}\n")
         f.write(f"$ {cmd}\n")
         f.write(f"{output}\n\n")

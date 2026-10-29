@@ -7,7 +7,8 @@ import re
 import shlex
 from core.display import section, info, ok, warn, bold, cyan, green
 from core.executor import run_cmd
-from core.models import AttackPlan, Step
+from core.checkpoint import Checkpoint
+from core.models import AttackPlan, ScanResult, Step
 from core.ui_driver import get_ui
 from library.scanner import scan_target
 from library.post_exploit import post_action_for
@@ -18,13 +19,23 @@ def run_chain(
     target: str,
     user_wordlist: str,
     pass_wordlist: str,
+    checkpoint_path: str | None = None,
+    resume: Checkpoint | None = None,
 ) -> None:
     """
     Full chain attack lifecycle:
     Scan → Build plan → Execute each step with impact confirmation → Summary.
+
+    With `checkpoint_path`, progress is written to that file after the scan,
+    after the step selection and after every step. `resume` continues a run
+    from such a file: the saved scan and selection are reused and steps that
+    already have an outcome are not run again. Every step still asks for its
+    own confirmation.
     """
-    # ─── Phase 1: Scan ──────────────────────────────────────────
-    scan_results = scan_target(target)
+    state = resume or Checkpoint(target=target, user_wordlist=user_wordlist,
+                                 pass_wordlist=pass_wordlist)
+
+    scan_results = _scan_for(state, checkpoint_path)
     if not scan_results:
         warn("No open ports found — target may be firewalled or down.")
         return
@@ -35,34 +46,48 @@ def run_chain(
         get_ui().status("scan_result", f"{r.port}/tcp → {r.service or 'unknown'}",
                         {"port": r.port, "service": r.service or "unknown"})
 
-    # ─── Phase 2: Build attack plan ─────────────────────────────
-    plan = build_plan(target, user_wordlist, pass_wordlist, scan_results)
+    plan = build_plan(state.target, state.user_wordlist, state.pass_wordlist, scan_results)
+    if state.logfile:
+        plan.logfile = state.logfile
     if not plan.steps:
         warn("No attack steps to execute.")
         return
+    state.logfile = plan.logfile
+    get_ui().status("logfile", plan.logfile, {"path": plan.logfile})
 
-    # ─── Phase 2b: Order by exploitation impact ─────────────────
-    # Show the ranked menu and let the user pick what to run.
-    plan.steps = _select_steps(plan.steps)
+    if state.selected is None:
+        plan.steps = _select_steps(plan.steps)
+        state.selected = [Checkpoint.step_key(port, service, step.tool, step.name)
+                          for port, service, step in plan.steps]
+    else:
+        plan.steps = _steps_from_keys(plan.steps, state.selected)
     if not plan.steps:
         warn("No steps selected — nothing to run.")
         return
+    _save(state, checkpoint_path)
 
     section("EXECUTING ATTACK PLAN")
-    done, skipped = 0, 0
-    creds_found: list[str] = []
+    keys = {Checkpoint.step_key(port, service, step.tool, step.name)
+            for port, service, step in plan.steps}
+    already = [key for key in state.outcomes if key in keys]
+    if already:
+        info(f"Resuming: {len(already)} step(s) already finished in an earlier run, not run again.")
 
     for port, service, step in plan.steps:
-        result = _execute_step(plan, port, service, step)
-        if result == "done":
-            done += 1
-        elif result == "skipped":
-            skipped += 1
-        elif result and result.startswith("cred:"):
-            creds_found.append(result.removeprefix("cred:"))
-            done += 1
+        key = Checkpoint.step_key(port, service, step.tool, step.name)
+        if key in state.outcomes:
+            continue
+        state.outcomes[key] = _execute_step(plan, port, service, step)
+        _save(state, checkpoint_path)
 
-    # ─── Summary ────────────────────────────────────────────────
+    outcomes = [state.outcomes[key] for key in keys if key in state.outcomes]
+    done = sum(1 for r in outcomes if r == "done" or r.startswith("cred:"))
+    skipped = sum(1 for r in outcomes if r == "skipped")
+    creds_found = [r.removeprefix("cred:") for r in outcomes if r.startswith("cred:")]
+
+    state.finished = True
+    _save(state, checkpoint_path)
+
     section("CHAIN COMPLETE")
     ok(f"Executed: {done}")
     warn(f"Skipped: {skipped}")
@@ -73,6 +98,29 @@ def run_chain(
     get_ui().status("summary", f"Executed: {done} · Skipped: {skipped}",
                     {"executed": done, "skipped": skipped,
                      "creds_found": creds_found, "logfile": plan.logfile})
+
+
+def _scan_for(state: Checkpoint, checkpoint_path: str | None) -> list[ScanResult]:
+    if state.scan is not None:
+        return [ScanResult(port=item["port"], service=item["service"]) for item in state.scan]
+    results = scan_target(state.target)
+    state.scan = [{"port": r.port, "service": r.service} for r in results]
+    _save(state, checkpoint_path)
+    return results
+
+
+def _steps_from_keys(
+    steps: list[tuple[int, str, Step]],
+    keys: list[str],
+) -> list[tuple[int, str, Step]]:
+    by_key = {Checkpoint.step_key(port, service, step.tool, step.name): (port, service, step)
+              for port, service, step in steps}
+    return [by_key[key] for key in keys if key in by_key]
+
+
+def _save(state: Checkpoint, checkpoint_path: str | None) -> None:
+    if checkpoint_path:
+        state.save(checkpoint_path)
 
 
 def _select_steps(
@@ -272,9 +320,10 @@ def _offer_winrm(
     )
     impact = ("Active WinRM session — Event IDs 4648 (logon), "
                "4672 (admin) are generated and auditable.")
-    if get_ui().confirm(ev_cmd, impact, title=f"Connect via evil-winrm — {plan.target}"):
-        out, _ = run_cmd(ev_cmd, plan.logfile)
-        _echo_output(out)
+    title = f"Connect via evil-winrm — {plan.target}"
+    if get_ui().confirm(ev_cmd, impact, title=title):
+        get_ui().open_shell(ev_cmd, title=title)
+        info("evil-winrm session opened in its own window — type `exit` there to return.")
     else:
         warn("evil-winrm connection skipped.")
     return None

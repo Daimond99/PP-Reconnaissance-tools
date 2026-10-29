@@ -202,22 +202,22 @@ class LlmNmapPanel(QWidget):
             background: {PANEL};
             border-right: 1px solid {BORDER};
         }}
-        QLabel#LlmHeading {{ color: {TEXT}; font-size: 16px; font-weight: 600; }}
+        QLabel#LlmHeading {{ color: {TEXT}; font-size: 16px;}}
         QLabel#LlmSub {{ color: {TEXT_DIM}; font-size: 11px; line-height: 16px; }}
         QLabel#LlmFieldLabel {{
-            color: {TEXT_DIM}; font-size: 11px; font-weight: 500;
-            text-transform: uppercase; letter-spacing: 1px;
+            color: {TEXT_DIM}; font-size: 11px;
+
         }}
         QLabel#LlmHint {{ color: {ACCENT_RED}; font-size: 11px; }}
         QPushButton#LlmSuggest {{
             background: {BG_INPUT}; color: {TEXT};
             border: 1px solid {BORDER}; border-radius: 8px;
-            padding: 9px; font-size: 12px; font-weight: 600;
+            padding: 9px; font-size: 12px;
         }}
         QPushButton#LlmSuggest:hover {{ border: 1px solid {PURPLE_DIM}; }}
         QPushButton#LlmExecute {{
             background: {PURPLE_DIM}; border: 1px solid {PURPLE};
-            color: {TEXT}; font-size: 13px; font-weight: 600;
+            color: {TEXT}; font-size: 13px;
             border-radius: 8px; padding: 11px;
         }}
         QPushButton#LlmExecute:hover {{ background: {PURPLE}; color: {BG_APP}; }}

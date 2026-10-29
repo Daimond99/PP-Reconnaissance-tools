@@ -12,6 +12,11 @@ import shlex
 from typing import List, Tuple
 
 _DANGEROUS_SHELL_CHARS = set(";|&`$()<>\\")
+_CONTROL_CHARS = frozenset(chr(c) for c in range(32) if chr(c) != "\t") | {"\x7f"}
+
+
+def _find_control_char(command: str) -> str | None:
+    return next((c for c in command if c in _CONTROL_CHARS), None)
 
 
 def _has_unquoted_shell_metachar(command: str) -> str | None:
@@ -97,6 +102,13 @@ def parse_command_line(command: str) -> Tuple[bool, str, List[str]]:
     command = command.strip()
     if not command:
         return False, "Empty command.", []
+
+    control = _find_control_char(command)
+    if control is not None:
+        return False, (
+            f"Command contains a line break or control character ({control!r}). "
+            "A command must be a single line."
+        ), []
 
     bad_char = _has_unquoted_shell_metachar(command)
     if bad_char:

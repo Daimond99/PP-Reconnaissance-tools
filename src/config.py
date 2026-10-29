@@ -29,6 +29,7 @@ from src.theme import (  # re-exported: theme split out of config 2026-08-07
 # corrupt resource just means an empty tool/warhead list, not a startup
 # crash.
 from src.utils.resource_loader import load_json as _load_json
+from src.core.warhead_store import apply_custom as _apply_custom_warheads
 
 TOOL_COMMANDS = _load_json("tool_commands.json").get("commands", {})
 
@@ -54,6 +55,7 @@ WARHEAD_COMMANDS = {
     for tool_profiles in WARHEAD_BY_TOOL.values()
     for profile, cmd in tool_profiles.items()
 }
+_apply_custom_warheads(WARHEAD_BY_TOOL, WARHEAD_COMMANDS)
 
 OPERATION_MODES = ["Wizard Mode", "Direct Tool Mode"]
 

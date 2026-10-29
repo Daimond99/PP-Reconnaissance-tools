@@ -55,11 +55,14 @@ class WizardDriver(QObject):
     errorOccurred = Signal(str)
 
     def __init__(self, target: str, user_wordlist: str,
-                 pass_wordlist: str, parent: QObject | None = None):
+                 pass_wordlist: str, parent: QObject | None = None,
+                 checkpoint: str | None = None, resume: str | None = None):
         super().__init__(parent)
         self._target = target
         self._user_wl = user_wordlist
         self._pass_wl = pass_wordlist
+        self._checkpoint = checkpoint
+        self._resume = resume
         self._gate = ConfirmationGate(channel="wizard")
         self._buf = b""
         self._proc = QProcess(self)
@@ -72,11 +75,16 @@ class WizardDriver(QObject):
     # -- lifecycle ----------------------------------------------------------
 
     def start(self) -> None:
-        args = ["--target", self._target, "--gui"]
-        if self._user_wl:
-            args += ["--user-wordlist", self._user_wl]
-        if self._pass_wl:
-            args += ["--pass-wordlist", self._pass_wl]
+        if self._resume:
+            args = ["--resume", self._resume, "--gui"]
+        else:
+            args = ["--target", self._target, "--gui"]
+            if self._user_wl:
+                args += ["--user-wordlist", self._user_wl]
+            if self._pass_wl:
+                args += ["--pass-wordlist", self._pass_wl]
+            if self._checkpoint:
+                args += ["--checkpoint", self._checkpoint]
 
         if os.name == "nt":
             wsl_dir = _wsl_dir()
@@ -90,6 +98,7 @@ class WizardDriver(QObject):
     def stop(self) -> None:
         if self._proc.state() != QProcess.ProcessState.NotRunning:
             self._proc.kill()
+            self._proc.waitForFinished(3000)
 
     # -- protocol -------------------------------------------------------
 

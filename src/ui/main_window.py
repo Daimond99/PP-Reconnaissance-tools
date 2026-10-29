@@ -4,11 +4,13 @@ Recon Tool - Main Window Module
 """
 
 import os
+import re
 import shlex
 import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Tuple
 
 from PySide6.QtWidgets import (
@@ -20,12 +22,16 @@ from PySide6.QtGui import QAction, QKeySequence
 
 from src.config import (
     WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
-    WARHEAD_COMMANDS, TOOL_COMMANDS,
+    WARHEAD_BY_TOOL, WARHEAD_COMMANDS, TOOL_COMMANDS,
 )
 from src.ui.widgets import Sidebar, TopBar, MainContentArea, InputManagementTab, RawOutputTab, svg_icon
+from src.ui.widgets.warhead_dialog import AddWarheadDialog, ManageWarheadDialog
+from src.core.warhead_store import add_profile, custom_profiles, delete_profile, update_profile
+from src.ui.log_viewer import LogViewerDialog, find_logs
 from src.ui.terminal_launch import _SUDO_IN_CONTAINER
 from src.core.confirmation_gate import ConfirmationGate
 from src.core.llm_keys import set_llm_key, remove_llm_key
+from src.core.wordlist_store import save_wordlist, share_dir
 from src.tools.nmap.parser import parse_nmap_xml
 from src.tools.hydra.parser import parse_hydra_output
 from src.tools.ncrack.parser import parse_ncrack_output
@@ -395,6 +401,8 @@ class ReconMainWindow(QMainWindow):
         self.top_bar.opmode_combo.currentTextChanged.connect(self._on_opmode_change)
         self.top_bar.warhead_combo.currentTextChanged.connect(self._on_warhead_change)
         self.top_bar.tool_combo.currentTextChanged.connect(self._on_tool_change)
+        self.top_bar.addProfileRequested.connect(self._on_add_profile)
+        self.top_bar.manageProfilesRequested.connect(self._on_manage_profiles)
         self.top_bar.execute_btn.clicked.connect(self._on_execute_clicked)
         self.top_bar.command_input.returnPressed.connect(self._on_execute_clicked)
         self.top_bar.target_input.textChanged.connect(self._on_target_changed)
@@ -459,6 +467,10 @@ class ReconMainWindow(QMainWindow):
             ("Set LLM API Key…", "", self._on_set_llm_key),
             ("Remove LLM API Key…", "", self._on_remove_llm_key),
             (None, None, None),
+            ("Save Wordlist to Shared Folder…", "", self._on_save_wordlist),
+            ("View Wizard Log…", "", self._on_view_wizard_log),
+            ("Clear Wizard Logs…", "", self._on_clear_wizard_logs),
+            (None, None, None),
             ("Quit", "Ctrl+Q", self.close),
         ]
         for label, shortcut, handler in entries:
@@ -471,6 +483,56 @@ class ReconMainWindow(QMainWindow):
             action.triggered.connect(handler)
         btn = self.settings_btn
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _on_view_wizard_log(self):
+        log_dir = os.path.abspath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "chain_wizard"))
+        LogViewerDialog(find_logs(Path(log_dir)), None, self).exec()
+
+    def _on_clear_wizard_logs(self):
+        """Settings ▸ Clear Wizard Logs… — deletes the wizard's own run logs
+        (chain_*.log and scan_*.log) directly inside chain_wizard/. Nothing else
+        is touched; asks once before deleting."""
+        log_dir = os.path.abspath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "chain_wizard"))
+        targets = sorted(
+            os.path.join(log_dir, name) for name in os.listdir(log_dir)
+            if re.fullmatch(r"(chain|scan)_.*\.log", name)
+            and os.path.isfile(os.path.join(log_dir, name)))
+        if not targets:
+            QMessageBox.information(self, "Clear Wizard Logs", "No wizard logs to clear.")
+            return
+        answer = QMessageBox.question(
+            self, "Clear Wizard Logs",
+            f"Delete {len(targets)} wizard log file(s) from chain_wizard/?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        failed = []
+        for path in targets:
+            try:
+                os.remove(path)
+            except OSError:
+                failed.append(os.path.basename(path))
+        if failed:
+            QMessageBox.warning(self, "Clear Wizard Logs",
+                                "Could not delete: " + ", ".join(failed))
+        else:
+            QMessageBox.information(self, "Clear Wizard Logs", f"Deleted {len(targets)} log file(s).")
+
+    def _on_save_wordlist(self):
+        """Settings ▸ Save Wordlist to Shared Folder… — copies a wordlist file
+        into the folder docker/run.sh mounts at /results/wordlists, so Wizard
+        and OpenCode can use it immediately. Copies that one file only."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Save Wordlist", "", "Wordlists (*.txt *.lst);;All files (*)")
+        if not path:
+            return
+        ok, message = save_wordlist(path)
+        if ok:
+            QMessageBox.information(self, "Save Wordlist", message)
+        else:
+            QMessageBox.warning(self, "Save Wordlist", f"{message}\n\nFolder: {share_dir()}")
 
     def _on_set_llm_key(self):
         """Settings ▸ Set LLM API Key… — stores a key via `llm keys set`
@@ -549,6 +611,62 @@ class ReconMainWindow(QMainWindow):
         if template:
             self.top_bar.command_input.setText(self._apply_command_template(template))
             self._last_target = self._get_target()
+
+    def _on_add_profile(self):
+        dialog = AddWarheadDialog(
+            list(WARHEAD_BY_TOOL), self.top_bar.tool_combo.currentText(),
+            set(WARHEAD_COMMANDS), self)
+        if dialog.exec() != AddWarheadDialog.DialogCode.Accepted:
+            return
+        errors = add_profile(WARHEAD_BY_TOOL, WARHEAD_COMMANDS,
+                             dialog.tool, dialog.name, dialog.command)
+        if errors:
+            QMessageBox.warning(self, "New warhead profile", "\n".join(errors))
+            return
+        self._refresh_profiles(dialog.tool, dialog.name)
+
+    def _on_manage_profiles(self):
+        while True:
+            manager = ManageWarheadDialog(custom_profiles(), self)
+            if manager.exec() != ManageWarheadDialog.DialogCode.Accepted:
+                return
+            tool, name = manager.tool, manager.name
+            if manager.action == "delete":
+                answer = QMessageBox.question(
+                    self, "Delete warhead profile", f"Delete “{name}” ({tool})?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    continue
+                errors = delete_profile(WARHEAD_BY_TOOL, WARHEAD_COMMANDS, tool, name)
+                if errors:
+                    QMessageBox.warning(self, "Delete warhead profile", "\n".join(errors))
+                    continue
+                self._refresh_profiles(tool, None)
+                continue
+            current = custom_profiles()[tool][name]
+            editor = AddWarheadDialog(list(WARHEAD_BY_TOOL), tool,
+                                      set(WARHEAD_COMMANDS) - {name}, self,
+                                      initial=(tool, name, current))
+            if editor.exec() != AddWarheadDialog.DialogCode.Accepted:
+                continue
+            errors = update_profile(WARHEAD_BY_TOOL, WARHEAD_COMMANDS, tool, name,
+                                    editor.tool, editor.name, editor.command)
+            if errors:
+                QMessageBox.warning(self, "Edit warhead profile", "\n".join(errors))
+                continue
+            self._refresh_profiles(editor.tool, editor.name)
+
+    def _refresh_profiles(self, tool, name):
+        if self.top_bar.tool_combo.currentText() == tool:
+            self.top_bar.set_warhead_profiles(tool)
+        else:
+            self.top_bar.tool_combo.setCurrentText(tool)
+        if name is not None and name in WARHEAD_COMMANDS:
+            self.top_bar.warhead_combo.setCurrentText(name)
+        elif name is None:
+            first = next(iter(WARHEAD_BY_TOOL.get(tool, {})), None)
+            if first is not None:
+                self.top_bar.warhead_combo.setCurrentText(first)
 
     def _on_tool_change(self, tool):
         self.top_bar.set_warhead_profiles(tool)
@@ -943,23 +1061,38 @@ class ReconMainWindow(QMainWindow):
             return False
 
     def closeEvent(self, event):
-        reply = QMessageBox.question(
-            self, "Quit",
-            "Close TheRecon? This will stop all running terminals.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        )
+        runner = self.main_area.wizard_runner
+        if runner.is_running():
+            # A running scan cannot be resumed after it is killed, so an
+            # accidental close here costs the whole run. Say so, and point at
+            # the log that keeps everything done up to now.
+            log = runner.current_log_path()
+            kept = f"\n\nWhat ran so far is kept in:\n{log}" if log else ""
+            reply = QMessageBox.warning(
+                self, "Scan running",
+                "A wizard scan is still running. Closing TheRecon stops it, and "
+                "a stopped scan cannot be resumed. You would need to start the "
+                f"scan again.{kept}\n\nClose anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+        else:
+            reply = QMessageBox.question(
+                self, "Quit",
+                "Close TheRecon? This will stop all running terminals.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
         if reply != QMessageBox.Yes:
             event.ignore()
             return
 
-        for tabs_widget in (self.main_area.opencode_tab,):
-            stop_all = getattr(tabs_widget, "stop_all", None)
-            if callable(stop_all):
-                stop_all()
-        for term in (self.main_area.raw_output_tab.terminal,):
-            stop = getattr(term, "stop", None)
-            if callable(stop):
-                stop()
-        self.main_area.wizard_runner.stop()
-
+        self.release_background_work()
         super().closeEvent(event)
+
+    def release_background_work(self) -> None:
+        self.main_area.opencode_tab.stop_all()
+        self.main_area.raw_output_tab.stop()
+        self.main_area.llm_output_tab.stop()
+        self.main_area.wizard_runner.stop()
+        worker = getattr(self, "_preflight_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.wait(3000)

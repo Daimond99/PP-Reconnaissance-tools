@@ -108,12 +108,23 @@ def _wsl_distros() -> list[str]:
     """Real (non-pseudo) WSL distros registered on this machine, or []."""
     if not shutil.which("wsl.exe"):
         return []
-    code, out = _run(["wsl.exe", "-l", "-q"], timeout=10)
-    if code != 0:
-        return []
-    # wsl.exe emits UTF-16LE with stray NULs even through a pipe.
-    names = {line.replace("\x00", "").strip() for line in out.splitlines()}
-    return sorted(n for n in names if n and n not in _WSL_PSEUDO_DISTROS)
+    # A cold WSL VM can take longer than a short timeout to answer the first
+    # `wsl -l`, and a timeout used to read as "no distro" -- a false alarm on
+    # a working install. Wait longer, then fall back to asking for the
+    # default distro directly before reporting anything missing.
+    code, out = _run(["wsl.exe", "-l", "-q"], timeout=_WSL_TIMEOUT)
+    if code == 124:
+        code, out = _run(["wsl.exe", "-l", "-q"], timeout=_WSL_TIMEOUT * 3)
+    if code == 0:
+        # wsl.exe emits UTF-16LE with stray NULs even through a pipe.
+        names = {line.replace("\x00", "").strip() for line in out.splitlines()}
+        found = sorted(n for n in names if n and n not in _WSL_PSEUDO_DISTROS)
+        if found:
+            return found
+    # Listing came back empty or failed: a default distro that answers a
+    # trivial command still counts as present.
+    code, _ = _run(["wsl.exe", "-e", "sh", "-c", "exit 0"], timeout=_WSL_TIMEOUT * 3)
+    return ["(default distro)"] if code == 0 else []
 
 
 def _check_gui_python(rep: Report) -> None:

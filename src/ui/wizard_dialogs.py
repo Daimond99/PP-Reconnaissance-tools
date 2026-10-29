@@ -27,7 +27,7 @@ from src.config import (
 _DIALOG_QSS = f"""
 QDialog {{ background: {PANEL}; }}
 QLabel {{ color: {TEXT}; }}
-QLabel#WizDialogTitle {{ font-size: 14px; font-weight: 600; }}
+QLabel#WizDialogTitle {{ font-size: 14px;}}
 QLabel#WizDialogHint {{ color: {TEXT_DIM}; font-size: 11px; }}
 QListWidget {{
     background: {BG_INPUT}; color: {TEXT}; border: 1px solid {BORDER};
@@ -66,6 +66,7 @@ def show_menu_dialog(parent, message: dict) -> str:
     """Single-choice numbered menu (scanner type, mode, masscan profile...).
     Returns the leading digit/letter of the chosen option (e.g. "1", "7")."""
     dlg = _base_dialog(parent, message.get("title", "Choose"))
+    dlg.setMinimumWidth(760)
     root = QVBoxLayout(dlg)
     title = QLabel(message.get("title", ""))
     title.setObjectName("WizDialogTitle")
@@ -73,6 +74,7 @@ def show_menu_dialog(parent, message: dict) -> str:
     root.addWidget(title)
 
     lst = QListWidget()
+    lst.setMinimumHeight(360)
     lst.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
     options = message.get("options", [])
     default = message.get("default", "")
@@ -129,9 +131,12 @@ def show_text_dialog(parent, message: dict) -> str:
 
 
 def show_multiselect_dialog(parent, message: dict) -> str:
-    """Checkable list of steps/ports. Returns the raw picks string the
-    original CLI parsers already understand ("1,3", "r", "a", "0")."""
+    """Checkable list of steps/ports, highest impact first. Returns the raw
+    picks string the CLI parsers already understand: comma-separated 1-based
+    row numbers ("1,3"), or "0" when nothing is picked or the dialog is
+    cancelled. Each picked step still asks for its own confirmation later."""
     dlg = _base_dialog(parent, message.get("title", "Select steps"))
+    dlg.setMinimumWidth(760)
     root = QVBoxLayout(dlg)
     title = QLabel(message.get("title", ""))
     title.setObjectName("WizDialogTitle")
@@ -140,6 +145,7 @@ def show_multiselect_dialog(parent, message: dict) -> str:
 
     items = message.get("items", [])
     lst = QListWidget()
+    lst.setMinimumHeight(360)
     has_priority = any("priority" in item for item in items)
     for item in items:
         port, service = item.get("port"), item.get("service")
@@ -156,15 +162,28 @@ def show_multiselect_dialog(parent, message: dict) -> str:
         lst.addItem(li)
     root.addWidget(lst)
 
+    count = QLabel()
+    count.setObjectName("WizDialogHint")
+    root.addWidget(count)
+
+    def _refresh_count() -> None:
+        count.setText(f"{_checked_count(lst)} of {lst.count()} selected")
+
+    lst.itemChanged.connect(lambda _item: _refresh_count())
+    _refresh_count()
+
     if has_priority:
-        hint = QLabel("Recommended = leads to creds / shell.")
+        hint = QLabel("Recommended = leads to creds / shell. Tick the steps to run, then OK. Each step asks you to confirm before it runs.")
         hint.setObjectName("WizDialogHint")
+        hint.setWordWrap(True)
         root.addWidget(hint)
 
     btn_row = QHBoxLayout()
     if has_priority:
-        rec_btn = QPushButton("Select recommended")
-        rec_btn.clicked.connect(lambda: _check_all(lst, items, "priority", 4))
+        # Adds the recommended rows to whatever is already ticked; it does not
+        # reset the rest. "Select none" clears everything first.
+        rec_btn = QPushButton("Add recommended")
+        rec_btn.clicked.connect(lambda: _check_matching(lst, items, "priority", 4))
         btn_row.addWidget(rec_btn)
     all_btn = QPushButton("Select all")
     all_btn.clicked.connect(lambda: _set_all_checked(lst, True))
@@ -187,17 +206,23 @@ def show_multiselect_dialog(parent, message: dict) -> str:
     return ",".join(picks) if picks else "0"
 
 
+def _checked_count(lst: QListWidget) -> int:
+    return sum(1 for i in range(lst.count())
+               if lst.item(i).checkState() == Qt.CheckState.Checked)
+
+
 def _set_all_checked(lst: QListWidget, checked: bool) -> None:
     state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
     for i in range(lst.count()):
         lst.item(i).setCheckState(state)
 
 
-def _check_all(lst: QListWidget, items: list[dict], key: str, min_value) -> None:
+def _check_matching(lst: QListWidget, items: list[dict], key: str, min_value) -> None:
+    """Tick every row whose `key` reaches `min_value`. Rows that do not match
+    keep their current state, so picks made by hand survive."""
     for i, item in enumerate(items):
-        state = (Qt.CheckState.Checked if item.get(key, 0) >= min_value
-                  else Qt.CheckState.Unchecked)
-        lst.item(i).setCheckState(state)
+        if item.get(key, 0) >= min_value:
+            lst.item(i).setCheckState(Qt.CheckState.Checked)
 
 
 def show_confirm_dialog(parent, message: dict) -> bool:
@@ -207,6 +232,7 @@ def show_confirm_dialog(parent, message: dict) -> bool:
     driver rejected the command before it ever reached this dialog — show
     the reason and offer only Cancel."""
     dlg = _base_dialog(parent, message.get("title", "Confirm"))
+    dlg.setMinimumWidth(680)  # room for the full command and options
     root = QVBoxLayout(dlg)
     title = QLabel(message.get("title", ""))
     title.setObjectName("WizDialogTitle")
@@ -220,7 +246,7 @@ def show_confirm_dialog(parent, message: dict) -> bool:
         box.setPlainText(message.get("preview_box") or message.get("impact", ""))
     else:
         box.setPlainText(message.get("reject_reason") or "Command rejected.")
-    box.setMinimumHeight(160)
+    box.setMinimumHeight(240)
     root.addWidget(box)
 
     buttons = QDialogButtonBox()

@@ -36,5 +36,5 @@ class AttackPlan:
     #  (port, service, step)
 
     logfile: str = field(default_factory=lambda: (
-        f"chain_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        f"results/logs/chain_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     ))

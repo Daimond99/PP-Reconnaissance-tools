@@ -25,7 +25,7 @@ import json
 import sys
 import textwrap
 from core.color import bold, cyan, green, magenta, yellow
-from core.display import _width, info, section, warn
+from core.display import _width, info, section
 
 
 class UI:
@@ -62,6 +62,9 @@ class UI:
 
     def sudo_password(self) -> str:
         """Only called when `needs_sudo_password` is True."""
+        raise NotImplementedError
+
+    def open_shell(self, cmd: str, title: str = "Interactive session") -> None:
         raise NotImplementedError
 
 
@@ -131,6 +134,12 @@ class CliUI(UI):
     def sudo_password(self) -> str:  # pragma: no cover - never called (needs_sudo_password=False)
         return getpass.getpass("  [sudo] password: ")
 
+    def open_shell(self, cmd: str, title: str = "Interactive session") -> None:
+        import subprocess
+        from core.executor import CONTAINER
+        info(f"opening interactive session: {title}")
+        subprocess.call(["docker", "exec", "-it", CONTAINER, "bash", "-lc", cmd])
+
 
 class IpcUI(UI):
     """JSON-lines protocol over real stdin/stdout for the GUI driver
@@ -180,6 +189,9 @@ class IpcUI(UI):
     def sudo_password(self) -> str:
         resp = self._send_recv({"type": "sudo_password"})
         return str(resp.get("reply", ""))
+
+    def open_shell(self, cmd: str, title: str = "Interactive session") -> None:
+        self.status("shell_request", title, {"cmd": cmd, "title": title})
 
 
 _ui: UI = CliUI()

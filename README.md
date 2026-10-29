@@ -70,21 +70,24 @@ Every item below maps to code that ships in this repo — see the file reference
 
 ## How to Run / Setup
 
-**Prerequisites**: Python 3.10+; Windows users also need WSL2 + Ubuntu and Docker Engine inside it — not Docker Desktop (both auto-installed by `install.ps1`).
+**Prerequisites**: Windows users need WSL2 with a Linux distro (Ubuntu) installed first — the one step the installer does not do. Docker Engine (not Docker Desktop), Python 3.10+ and the rest are installed by the installer.
 
-### Quick install (one command)
+### Windows: install and open
 
-**Linux:**
+1. Install WSL once, from an **Administrator** PowerShell (reboot if asked, then open Ubuntu once to create your user):
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+2. Download the repo ZIP from GitHub (or `git clone`), extract it, and double-click **`Install TheRecon.bat`**. It installs Python, Docker inside WSL, builds the sandboxed tool container, and creates the venv and shortcuts.
+3. Open **TheRecon** from the Desktop or Start Menu shortcut, or double-click **`TheRecon.bat`** in the repo folder.
+
+### Linux: one command
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.sh | bash
 ```
 
-**Windows** (run from **elevated** PowerShell the first time — WSL install needs admin + reboot):
-```powershell
-irm https://raw.githubusercontent.com/Daimond99/PP-Reconnaissance-tools/main/install.ps1 | iex
-```
-
-Both installers are idempotent: install Docker Engine, build + start the sandboxed tool container (`docker/run.sh`), clone the repo, create a venv, install Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`.
+`install.sh` is idempotent: installs Docker Engine, builds + starts the sandboxed tool container (`docker/run.sh`), clones the repo, creates a venv and installs Python deps (`requirements.txt` → `PySide6>=6.6.0`, `pyte>=0.8.2`, `pywinpty>=2.0` on Windows). The 6 authorized tools (nmap/masscan/hydra/ncrack/ncat/evil-winrm) run only inside that container, never installed on the host directly — see `docker/Dockerfile`.
 
 ### Manual install
 

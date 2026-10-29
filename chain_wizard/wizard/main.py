@@ -20,6 +20,7 @@ import glob
 import argparse
 from dataclasses import dataclass
 from core.display import banner, section, info, ok, warn, fail, bold, cyan, green, yellow
+from core.checkpoint import Checkpoint
 from core.ui_driver import get_ui, set_ui, IpcUI
 from wizard.chain import run_chain
 
@@ -113,6 +114,8 @@ class _Preset:
     target: str
     user_wl: str
     pass_wl: str
+    checkpoint: str | None = None
+    resume_state: Checkpoint | None = None
 
 
 def _parse_args(argv: list[str] | None = None) -> tuple[_Preset | None, bool]:
@@ -126,7 +129,21 @@ def _parse_args(argv: list[str] | None = None) -> tuple[_Preset | None, bool]:
     p.add_argument("--gui", action="store_true",
                     help="Talk the JSON IPC protocol on stdin/stdout instead "
                          "of prompting a terminal — set by the Qt GUI launcher.")
+    p.add_argument("--checkpoint", default=None,
+                    help="Write run progress to this file (set by the GUI).")
+    p.add_argument("--resume", default=None,
+                    help="Continue the run saved in this checkpoint file.")
     a = p.parse_args(argv)
+
+    if a.resume:
+        try:
+            state = Checkpoint.load(a.resume)
+        except (OSError, ValueError, KeyError) as exc:
+            raise SystemExit(f"Cannot resume: {a.resume} is not a valid checkpoint ({exc})")
+        preset = _Preset(target=state.target, user_wl=state.user_wordlist,
+                         pass_wl=state.pass_wordlist, checkpoint=a.resume,
+                         resume_state=state)
+        return preset, a.gui
 
     if not a.target:
         return None, a.gui
@@ -134,7 +151,8 @@ def _parse_args(argv: list[str] | None = None) -> tuple[_Preset | None, bool]:
     default_wl = "/usr/share/wordlists/rockyou.txt"
     user_wl = _win_to_wsl_path(a.user_wl) or default_wl
     pass_wl = _win_to_wsl_path(a.pass_wl) or user_wl
-    return _Preset(target=a.target, user_wl=user_wl, pass_wl=pass_wl), a.gui
+    return _Preset(target=a.target, user_wl=user_wl, pass_wl=pass_wl,
+                   checkpoint=a.checkpoint), a.gui
 
 
 def main() -> None:
@@ -215,7 +233,8 @@ def _interactive(
         ok(f"User wordlist: {preset.user_wl}")
         ok(f"Pass wordlist: {preset.pass_wl}")
         print()
-        run_chain(preset.target, preset.user_wl, preset.pass_wl)
+        run_chain(preset.target, preset.user_wl, preset.pass_wl,
+                  checkpoint_path=preset.checkpoint, resume=preset.resume_state)
         return preset
 
     # ─── Target (defaults to the last-used target — blank reuses it) ─

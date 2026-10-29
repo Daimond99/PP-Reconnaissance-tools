@@ -62,7 +62,7 @@ QMenuBar {{
     color: {TEXT};
     padding: 2px 12px;
     font-size: 13px;
-    font-weight: 600;
+
     border-bottom: 1px solid {BORDER};
 }}
 QMenuBar::item {{
@@ -115,7 +115,7 @@ QMenu::item:selected {{
 #BarLabel {{
     color: {TEXT};
     font-size: 13px;
-    font-weight: 600;
+
 }}
 
 QLineEdit {{
@@ -179,7 +179,7 @@ QPushButton {{
     border-radius: 6px;
     padding: 5px 11px;
     font-size: 12px;
-    font-weight: 600;
+
 }}
 
 #ContentCard {{
@@ -218,7 +218,7 @@ QPushButton:pressed {{
     padding: 6px 14px;
     border-radius: 6px;
     font-size: 12px;
-    font-weight: 600;
+
 }}
 #ExecuteButton:hover {{
     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -237,7 +237,7 @@ QPushButton:pressed {{
     padding: 9px 16px;
     border-radius: 8px;
     font-size: 13px;
-    font-weight: 700;
+
 }}
 #BrowseButton:hover {{
     background-color: #323945;
@@ -257,7 +257,7 @@ QPushButton:pressed {{
 #SidebarSection {{
     color: {TEXT};
     font-size: 14px;
-    font-weight: 600;
+
     padding: 16px 16px 8px 16px;
     background: transparent;
 }}
@@ -268,7 +268,7 @@ QPushButton:pressed {{
     text-align: left;
     padding: 9px 10px;
     border-radius: 8px;
-    font-weight: 500;
+
 }}
 #ChatItem:hover {{ background-color: #343b47; color: {TEXT}; }}
 #SidebarItem {{
@@ -279,7 +279,7 @@ QPushButton:pressed {{
     text-align: left;
     padding: 12px 14px;
     font-size: 13px;
-    font-weight: 600;
+
     border-radius: 8px;
     margin: 2px 0;
     min-height: 20px;
@@ -308,7 +308,7 @@ QTabBar::tab {{
     border: none;
     border-bottom: 2px solid transparent;
     font-size: 13px;
-    font-weight: 600;
+
     margin-right: 8px;
 }}
 QTabBar::tab:selected {{
@@ -357,7 +357,7 @@ QTabBar::tab:hover {{
     padding: 10px 20px;
     border-radius: 10px;
     font-size: 13px;
-    font-weight: 700;
+
     min-width: 130px;
 }}
 #ActionButton:hover {{
@@ -380,7 +380,7 @@ QTabBar::tab:hover {{
     color: {TEXT};
     font-size: 13px;
     padding: 4px 0;
-    font-weight: 600;
+
 }}
 
 #BottomPromptInput {{
@@ -431,13 +431,13 @@ QTabBar::tab:hover {{
     background-color: #516fc0;
     color: white;
     border-radius: 9px;
-    font-weight: 800;
+
     padding: 3px 8px;
 }}
 #TitleBarLabel {{
     color: {TEXT};
     font-size: 13px;
-    font-weight: 600;
+
 }}
 #WinControlBtn, #WinControlCloseBtn {{
     color: {TEXT};
@@ -473,7 +473,7 @@ QTabBar::tab:hover {{
     padding: 0 8px;
     border-radius: 6px;
     font-size: 12.5px;
-    font-weight: 600;
+
 }}
 #TitleSettingsBtn:hover {{ background-color: {PANEL_LIGHT}; color: {PURPLE}; }}
 
@@ -626,7 +626,7 @@ QSplitter#BodySplitter::handle:hover {{
     text-align: left;
     padding: 10px 10px;
     font-size: 13px;
-    font-weight: 600;
+
     border-radius: 8px;
 }}
 #SidebarNavItem:hover {{ background-color: {BG_PANEL_2}; color: {TEXT}; }}
@@ -642,7 +642,7 @@ QSplitter#BodySplitter::handle:hover {{
     text-align: left;
     padding: 10px 10px;
     font-size: 13px;
-    font-weight: 600;
+
     border-radius: 8px;
 }}
 #SidebarSettingsItem:hover {{ background-color: {BG_PANEL_2}; color: {TEXT}; }}
@@ -656,7 +656,7 @@ QSplitter#BodySplitter::handle:hover {{
     background: transparent;
     border: none;
     font-size: 10px;
-    font-weight: 600;
+
 }}
 #MissionInput, #MissionCombo {{
     background-color: {BG_INPUT};
@@ -696,7 +696,7 @@ QSplitter#BodySplitter::handle:hover {{
 #LogStatus {{
     color: {ORANGE};
     font-size: 12.5px;
-    font-weight: 600;
+
 }}
 #LogStatus[running="true"] {{ color: {ACCENT_GREEN}; }}
 #LogStatusDot {{
@@ -738,7 +738,7 @@ QSplitter#BodySplitter::handle:hover {{
     border: 1px solid {BORDER};
     border-radius: 4px;
 }}
-#ZmAccuracyLabel {{ color: #1c1d26; font-size: 10.5px; font-weight: 700; }}
+#ZmAccuracyLabel {{ color: #1c1d26; font-size: 10.5px;}}
 """
 
 # ============================================================================

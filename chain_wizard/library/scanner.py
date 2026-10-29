@@ -76,7 +76,7 @@ def scan_target(target: str) -> list[ScanResult]:
     """
     section("PHASE 1 — PORT SCANNING")
 
-    logfile = f"scan_{datetime.now():%Y%m%d_%H%M%S}.log"
+    logfile = f"results/logs/scan_{datetime.now():%Y%m%d_%H%M%S}.log"
     gnmap_file = "scan.gnmap"
 
     # Loop the menu itself: a sub-prompt (stealth timing, masscan profile)

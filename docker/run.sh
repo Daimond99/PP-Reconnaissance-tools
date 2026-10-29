@@ -58,6 +58,7 @@ docker run -d \
     --tmpfs /tmp:rw,size=256m \
     --tmpfs /run:rw,size=64m \
     --tmpfs /opt/oc-tmp:rw,exec,nosuid,nodev,mode=1777,size=64m \
+    --tmpfs /home/recon/.evil-winrm:rw,nosuid,nodev,uid=1001,gid=1001,mode=0700,size=16m \
     --memory=1g \
     --cpus=2 \
     --pids-limit=256 \

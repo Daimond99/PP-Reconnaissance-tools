@@ -55,7 +55,7 @@ class InputManagementTab(QWidget):
             QHeaderView::section {{
                 background-color: {BG_PANEL_2}; color: {TEXT_MUTE};
                 border: none; border-bottom: 1px solid {BORDER};
-                padding: 8px; font-size: 10.5px; font-weight: 700;
+                padding: 8px; font-size: 10.5px;
             }}
             QTableWidget::item:selected {{
                 background-color: {PURPLE}; color: {TEXT};

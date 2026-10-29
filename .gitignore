@@ -68,3 +68,6 @@ chain_wizard/smtp_enum.log
 # mounted into the container at runtime (docker/run.sh) -- not source.
 chain_wizard/results/
 docker/wordlists/
+
+# user-created warhead profiles (lab targets stay local)
+src/resources/warheads/custom.json

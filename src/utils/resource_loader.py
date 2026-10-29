@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict
 
@@ -46,3 +47,16 @@ def load_json(relative_path: str) -> dict:
 
     _cache[relative_path] = data
     return data
+
+
+def save_json(relative_path: str, data: dict) -> None:
+    """Write a resource JSON file atomically and refresh the cache so every
+    later load_json() call sees the new content."""
+    path = RESOURCES_ROOT / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+    _cache[relative_path] = data

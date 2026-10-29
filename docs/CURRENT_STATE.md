@@ -396,10 +396,28 @@ absolute imports like `from core.display import ...`):
 - No web-application scanning capability (no dir-brute / web-vuln / SQLi tools) —
   the 6-tool set reaches the network/service layer only.
 
-**Harmless leftover:** hard-killing the process mid-run on Linux (SIGTERM/
-`timeout`) trips `QThread: Destroyed while thread is still running` → SIGABRT
-during teardown (the PTY reader thread). A normal window close (`closeEvent`) is
-clean — this only fires on `kill`-style termination.
+**Shutdown (fixed 2026-10-29):** Qt aborts when a `QThread` or `QProcess` is
+destroyed while still running (`Fatal Python error: Aborted`, access violation in
+`pyside6.abi3.dll` in `logs/crash.log`). Closing now goes through
+`ReconMainWindow.release_background_work()`, which stops every terminal (Raw
+Output, LLM output, OpenCode tabs), kills the wizard process and waits for it,
+and waits briefly for the preflight thread. `src/main.py` then exits with
+`os._exit()` so Python finalization never destroys a live Qt thread.
+
+**Recently added (2026-10-29):**
+- Scan resume: `chain_wizard/core/checkpoint.py` saves progress after the scan,
+  after the step selection and after each step. `--resume <file>` continues the
+  run without rescanning and without repeating finished steps; each remaining
+  step still asks for confirmation. The GUI history dialog has a *Resume scan*
+  button for stopped, interrupted or failed runs that have not finished.
+- Warhead profiles: the **+** button adds a profile, **Edit** lists the profiles
+  you added and allows edit and delete. Your profiles live in
+  `src/resources/warheads/custom.json` (git-ignored). Built-in profiles stay fixed.
+- Run log viewer (`src/ui/log_viewer.py`): structured view with filters, regex
+  search, match navigation and a bounded render (`RENDER_LIMIT`) for very large
+  files.
+- Injection guard: validator rejects control characters and line breaks; the
+  Raw Output terminal accepts keystrokes only while a gated command runs.
 
 ---
 

@@ -1,6 +1,9 @@
-"""RawOutputTab — the output surface for Direct Tool Mode Execute
-(free-typing terminal backend, so interactive prompts like `sudo`'s
-password can always be answered)."""
+"""RawOutputTab — the output surface for Direct Tool Mode Execute.
+
+The terminal is display-only while idle, so nobody can type an arbitrary
+shell line here and bypass the confirmation gate. It accepts keystrokes
+only while a gated command is running, which is what lets an interactive
+prompt such as `sudo`'s password or an evil-winrm session be answered."""
 
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PySide6.QtCore import Signal, Qt
@@ -12,12 +15,12 @@ from src.ui.widgets.helpers import wrap_in_terminal
 
 class RawOutputTab(QWidget):
     """Output surface — same backend the Wizard Console uses (XtermTerminal
-    → PtyTerminal → InteractiveTerminal), kept free-typing (`read_only=False`)
-    so an interactive prompt the gated command raises (e.g. `sudo`'s password
-    prompt) can always be answered, not just for the duration of a
-    `run_command()` call. The top-bar Execute button sends its gated command
-    here instead of a QMessageBox, so the scan runs with real color/output in
-    a real terminal.
+    → PtyTerminal → InteractiveTerminal), read-only while idle
+    (`read_only=True`). Keystrokes reach the PTY only while a `run_command()`
+    call is in flight, so an interactive prompt the gated command raises
+    (e.g. `sudo`'s password, an evil-winrm shell) can be answered. The top-bar
+    Execute button sends its gated command here, so the scan runs with real
+    color/output in a real terminal.
 
     The terminal itself (one QWebEngineView = one Chromium renderer process,
     plus a real wsl.exe/bash PTY) is not spawned until this page is actually
@@ -45,7 +48,7 @@ class RawOutputTab(QWidget):
     def _ensure_terminal(self) -> None:
         if self.terminal is not None:
             return
-        self.terminal = make_terminal("shell", read_only=False)
+        self.terminal = make_terminal("shell", read_only=True)
         self.console = self.terminal
         self._layout.removeWidget(self._placeholder)
         self._placeholder.deleteLater()
@@ -71,6 +74,13 @@ class RawOutputTab(QWidget):
         if callable(write):
             write(command)
         return None
+
+    def stop(self) -> None:
+        if self.terminal is None:
+            return
+        stop = getattr(self.terminal, "stop", None)
+        if callable(stop):
+            stop()
 
     def interrupt(self) -> None:
         if self.terminal is None:

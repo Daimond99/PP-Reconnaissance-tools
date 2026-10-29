@@ -241,11 +241,11 @@ class WizardControlPanel(QWidget):
             background: {PANEL};
             border-right: 1px solid {BORDER};
         }}
-        QLabel#WizHeading {{ color: {TEXT}; font-size: 16px; font-weight: 600; }}
+        QLabel#WizHeading {{ color: {TEXT}; font-size: 16px;}}
         QLabel#WizSub {{ color: {TEXT_DIM}; font-size: 11px; line-height: 16px; }}
         QLabel#WizFieldLabel {{
-            color: {TEXT_DIM}; font-size: 11px; font-weight: 500;
-            text-transform: uppercase; letter-spacing: 1px;
+            color: {TEXT_DIM}; font-size: 11px;
+
         }}
         QLabel#WizHint {{ color: {ACCENT_RED}; font-size: 11px; }}
         QPushButton#WizBrowse {{
@@ -256,7 +256,7 @@ class WizardControlPanel(QWidget):
         QPushButton#WizBrowse:hover {{ color: {TEXT}; border: 1px solid {PURPLE_DIM}; }}
         QPushButton#WizStart {{
             background: {PURPLE_DIM}; border: 1px solid {PURPLE};
-            color: {TEXT}; font-size: 13px; font-weight: 600;
+            color: {TEXT}; font-size: 13px;
             border-radius: 8px; padding: 11px;
         }}
         QPushButton#WizStart:hover {{ background: {PURPLE}; color: {BG_APP}; }}
@@ -265,7 +265,7 @@ class WizardControlPanel(QWidget):
         }}
         QPushButton#WizStop {{
             background: {BG_INPUT}; border: 1px solid {ACCENT_RED};
-            color: {ACCENT_RED}; font-size: 13px; font-weight: 600;
+            color: {ACCENT_RED}; font-size: 13px;
             border-radius: 8px; padding: 11px;
         }}
         QPushButton#WizStop:hover {{ background: {ACCENT_RED}; color: {BG_APP}; }}

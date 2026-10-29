@@ -124,7 +124,11 @@ def main():
     window._preflight_worker = worker
     QTimer.singleShot(2500, worker.start)
 
-    sys.exit(app.exec())
+    exit_code = app.exec()
+    window.release_background_work()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -76,6 +76,10 @@ class DropdownButton(QPushButton):
     def currentText(self) -> str:
         return self._current
 
+    def setCurrentText(self, label: str) -> None:
+        if label in self._items:
+            self._select(label)
+
     def _refresh_text(self) -> None:
         self._label.setText(self._current)
 

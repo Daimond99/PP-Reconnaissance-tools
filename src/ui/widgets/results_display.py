@@ -2,7 +2,7 @@
 parsed nmap/masscan scans and hydra/ncrack credentials."""
 
 from PySide6.QtWidgets import (
-    QWidget, QFrame, QLabel, QHBoxLayout,
+    QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QComboBox, QLineEdit,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
 )
@@ -20,6 +20,9 @@ from src.config import PURPLE, TEXT_DIM, BORDER, TEXT_MUTE, ORANGE, ACCENT_GREEN
 # ---------------------------------------------------------------------------
 
 
+_KIND_FILTERS = ["All", "Scan results", "Credentials"]
+
+
 class ResultsDisplayTab(QWidget):
     """Tab สำหรับแสดง Results — Zenmap-style split view"""
 
@@ -28,11 +31,22 @@ class ResultsDisplayTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._hosts: list[dict] = []
+        self._visible: list[int] = []
         self._selected_index = 0
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(16)
+
+        self._search = QLineEdit()
+        self._search.setObjectName("MissionInput")
+        self._search.setPlaceholderText("Search…")
+        self._search.setClearButtonEnabled(True)
+        self._kind = QComboBox()
+        self._kind.setObjectName("ZmKindFilter")
+        self._kind.addItems(_KIND_FILTERS)
+        self._search.textChanged.connect(self._refresh_list)
+        self._kind.currentIndexChanged.connect(self._refresh_list)
 
         self.host_list = QListWidget()
         self.host_list.setObjectName("ZmHostList")
@@ -44,7 +58,16 @@ class ResultsDisplayTab(QWidget):
         self.host_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.host_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.host_list.currentRowChanged.connect(self._on_host_selected)
-        layout.addWidget(self.host_list)
+
+        left = QVBoxLayout()
+        left.setSpacing(8)
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(6)
+        filter_row.addWidget(self._search, 1)
+        filter_row.addWidget(self._kind)
+        left.addLayout(filter_row)
+        left.addWidget(self.host_list, 1)
+        layout.addLayout(left)
 
         self.detail_tree = QTreeWidget()
         self.detail_tree.setObjectName("ZmDetailTree")
@@ -62,34 +85,60 @@ class ResultsDisplayTab(QWidget):
         self.set_hosts([])
 
     def set_hosts(self, hosts: list[dict]) -> None:
-        """Replace the displayed host set (e.g. once real scan-result
-        parsing produces structured per-host data)."""
-        self._hosts = hosts
+        self._hosts = list(hosts)
+        self._refresh_list(select=0)
+
+    def _matches(self, entry: dict, kind: str, needle: str) -> bool:
+        is_credentials = entry.get("kind") == "credentials"
+        if kind == "Scan results" and is_credentials:
+            return False
+        if kind == "Credentials" and not is_credentials:
+            return False
+        if not needle:
+            return True
+        haystack = " ".join(str(entry.get(key, "")) for key in ("label", "host", "hostname")).lower()
+        return needle in haystack
+
+    def _refresh_list(self, select: int | None = None) -> None:
+        needle = self._search.text().strip().lower()
+        kind = self._kind.currentText()
+        self._visible = [i for i, entry in enumerate(self._hosts)
+                         if self._matches(entry, kind, needle)]
+        self.host_list.blockSignals(True)
         self.host_list.clear()
-        for host in hosts:
-            item = QListWidgetItem(host.get("label", host["host"]))
-            self.host_list.addItem(item)
-        if hosts:
-            self.host_list.setCurrentRow(0)
-        else:
+        for index in self._visible:
+            entry = self._hosts[index]
+            self.host_list.addItem(QListWidgetItem(entry.get("label", entry["host"])))
+        self.host_list.blockSignals(False)
+
+        if not self._hosts:
             self.detail_tree.clear()
             placeholder = QTreeWidgetItem(
                 self.detail_tree,
                 ["No results yet — run a scan or credential attack to see details here."],
             )
             placeholder.setDisabled(True)
+            return
+        if not self._visible:
+            self.detail_tree.clear()
+            placeholder = QTreeWidgetItem(self.detail_tree, ["No results match the filter."])
+            placeholder.setDisabled(True)
+            return
+
+        row = 0
+        if select is not None and select in self._visible:
+            row = self._visible.index(select)
+        elif self._selected_index in self._visible:
+            row = self._visible.index(self._selected_index)
+        self.host_list.setCurrentRow(row)
+        self._show_entry(self._visible[row])
 
     def add_scan_results(self, new_hosts: list[dict]) -> None:
-        """Append `new_hosts` (freshly parsed from one nmap/masscan scan) as
-        new rows — every scan run gets its own entry, even a repeat scan of
-        the same IP with different flags/warhead, so nothing gets silently
-        overwritten. Selects the first of the newly-added hosts."""
         if not new_hosts:
             return
-        first_new_row = len(self._hosts)
+        first_new = len(self._hosts)
         self._hosts.extend(new_hosts)
-        self.set_hosts(self._hosts)
-        self.host_list.setCurrentRow(first_new_row)
+        self._refresh_list(select=first_new)
 
     def add_credential_results(self, tool: str, target: str, creds: list[dict],
                                 stamp: str) -> None:
@@ -106,16 +155,18 @@ class ResultsDisplayTab(QWidget):
             "tool": tool,
             "credentials": creds,
         }
-        first_new_row = len(self._hosts)
+        first_new = len(self._hosts)
         self._hosts.append(entry)
-        self.set_hosts(self._hosts)
-        self.host_list.setCurrentRow(first_new_row)
+        self._refresh_list(select=first_new)
 
     def _on_host_selected(self, row: int) -> None:
-        if row < 0 or row >= len(self._hosts):
+        if row < 0 or row >= len(self._visible):
             return
-        self._selected_index = row
-        entry = self._hosts[row]
+        self._show_entry(self._visible[row])
+
+    def _show_entry(self, index: int) -> None:
+        self._selected_index = index
+        entry = self._hosts[index]
         if entry.get("kind") == "credentials":
             self._render_credentials_detail(entry)
         else:

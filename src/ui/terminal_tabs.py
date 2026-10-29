@@ -425,7 +425,7 @@ class TerminalTabsWidget(QWidget):
         borrowed from elsewhere in the app. */
         QTabBar#TermTabBar[blockStyle="true"]::tab {{
             font-size: 14px;
-            font-weight: 600;
+
             padding: 10px 14px;
         }}
         QTabBar#TermTabBar[blockStyle="true"]::tab:hover {{
@@ -441,7 +441,7 @@ class TerminalTabsWidget(QWidget):
         QToolButton#TermTabBtn {{
             color: {TERM_MUTE};
             font-size: 16px;
-            font-weight: 700;
+
             border: none;
             border-radius: 0;
             background: transparent;

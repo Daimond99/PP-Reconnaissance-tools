@@ -1,6 +1,7 @@
 """TopBar (Mission Bar) — Target / Operation Mode / Tool / Warhead profile +
 the Execute button. Direct Tool Mode's command-building surface."""
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QFrame, QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout, QSizePolicy,
 )
@@ -11,6 +12,9 @@ from src.ui.widgets.dropdown import DropdownButton
 
 
 class TopBar(QFrame):
+    addProfileRequested = Signal()
+    manageProfilesRequested = Signal()
+
     """แถบด้านบนสำหรับ Target, Mode และ Command"""
 
     def __init__(self, parent=None):
@@ -83,7 +87,22 @@ class TopBar(QFrame):
         self.warhead_combo.addItems(WARHEAD_BY_TOOL.get(tool_names[0] if tool_names else "", {}).keys())
         self.warhead_combo.setFixedWidth(220)
         self.warhead_combo.setFixedHeight(_FIELD_HEIGHT)
-        profile_col.addWidget(self.warhead_combo)
+        self.add_profile_btn = QPushButton("+")
+        self.add_profile_btn.setObjectName("AddProfileButton")
+        self.add_profile_btn.setToolTip("Add a new warhead profile for a tool")
+        self.add_profile_btn.setFixedSize(_FIELD_HEIGHT, _FIELD_HEIGHT)
+        self.add_profile_btn.clicked.connect(self.addProfileRequested.emit)
+        self.manage_profiles_btn = QPushButton("Edit")
+        self.manage_profiles_btn.setObjectName("ManageProfilesButton")
+        self.manage_profiles_btn.setToolTip("Edit or delete the profiles you added")
+        self.manage_profiles_btn.setFixedSize(64, _FIELD_HEIGHT)
+        self.manage_profiles_btn.clicked.connect(self.manageProfilesRequested.emit)
+        profile_row = QHBoxLayout()
+        profile_row.setSpacing(6)
+        profile_row.addWidget(self.warhead_combo)
+        profile_row.addWidget(self.add_profile_btn)
+        profile_row.addWidget(self.manage_profiles_btn)
+        profile_col.addLayout(profile_row)
         row1.addLayout(profile_col)
 
         row1.addStretch()
