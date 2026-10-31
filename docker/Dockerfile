@@ -30,7 +30,7 @@ RUN apt-get update \
         masscan \
         hydra \
         ncrack \
-        ruby ruby-dev build-essential libssl-dev \
+        ruby ruby-dev build-essential libssl-dev libreadline-dev \
         ca-certificates \
         curl unzip \
         sudo \
