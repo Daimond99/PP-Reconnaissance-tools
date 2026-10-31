@@ -46,7 +46,8 @@ class TestOpencodeLaunch:
     def test_execs_into_tool_container_and_respawns(self):
         s = t._opencode_launch()
         assert "therecon-tools" in s              # the shared tool container
-        assert "docker exec -i -u root therecon-tools bash -s" in s   # non-tty setup pass, root so it can always create/chown workspace+home
+        assert "docker exec -i -u root therecon-tools bash -s" in s   # non-tty setup pass, root so it can always create workspace+home
+        assert "chown" not in s                   # CAP_CHOWN is dropped and /results is 9p, so chown always failed
         assert "AGENTS.md" in s                   # scope note dropped
         assert "opencode.json" in s               # permission gate config
         assert "/results/opencode-workspace" in s  # under the rw bind mount

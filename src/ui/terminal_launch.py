@@ -398,13 +398,13 @@ def _opencode_launch() -> str:
     # below then failed with an opaque "chdir to cwd ... no such file or
     # directory" instead of ever explaining why. Setup now runs as root
     # (`-u root`, guaranteed write access regardless of host-side ownership)
-    # and `set -e` so a real failure surfaces instead of being swallowed,
-    # then hands the directories back to `recon` (the user OpenCode itself
-    # runs as, below) with `chown`.
+    # and `set -e` so a real failure surfaces instead of being swallowed.
+    # No `chown` here: the container drops CAP_CHOWN and `/results` is a 9p
+    # (drvfs) mount where chown is unsupported, so it always failed. The
+    # directories are left writable to `recon` by the mount itself.
     setup = (
         "set -e\n"
         f"mkdir -p '{workspace}' '{home}'\n"
-        f"chown -R recon:recon '{workspace}' '{home}'\n"
         f"cd '{workspace}'\n"
         "if [ ! -f AGENTS.md ]; then cat > AGENTS.md << 'AGENTSEOF'\n"
         f"{_AGENTS_MD}AGENTSEOF\n"
@@ -412,7 +412,6 @@ def _opencode_launch() -> str:
         "if [ ! -f opencode.json ]; then cat > opencode.json << 'OCJSONEOF'\n"
         f"{_OPENCODE_JSON}OCJSONEOF\n"
         "fi\n"
-        "chown recon:recon AGENTS.md opencode.json\n"
     )
     return (
         # Fail with a clear message rather than a confusing `docker exec`
@@ -429,7 +428,7 @@ def _opencode_launch() -> str:
         # is not a TTY"). Piped over stdin (`bash -s`) rather than a
         # quoted `bash -lc "..."` argument so the heredocs inside `setup`
         # don't have to survive a second layer of shell quoting. Runs as
-        # root (see comment above `setup`) so it can always create/chown
+        # root (see comment above `setup`) so it can always create
         # `workspace`/`home` regardless of the host-side bind-mount owner;
         # a failure here now aborts with a visible message instead of
         # silently leaving the directories missing.
